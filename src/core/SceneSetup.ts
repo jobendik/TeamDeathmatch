@@ -1,0 +1,37 @@
+import * as THREE from 'three';
+import * as YUKA from 'yuka';
+import { gameState } from './GameState';
+import { dom } from '@/ui/DOMElements';
+
+/**
+ * Initialize the Three.js scene, camera, renderer, and Yuka managers.
+ */
+export function initScene(): void {
+  const { scene, camera, renderer } = createSceneObjects();
+
+  gameState.scene = scene;
+  gameState.camera = camera;
+  gameState.renderer = renderer;
+  gameState.raycaster = new THREE.Raycaster();
+  gameState.time = new YUKA.Time();
+  gameState.entityManager = new YUKA.EntityManager();
+}
+
+function createSceneObjects() {
+  const scene = new THREE.Scene();
+  scene.fog = new THREE.FogExp2(0x020810, 0.008);
+  scene.background = new THREE.Color(0x020810);
+
+  const camera = new THREE.PerspectiveCamera(78, innerWidth / innerHeight, 0.05, 280);
+  camera.rotation.order = 'YXZ';
+
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+  dom.cw.appendChild(renderer.domElement);
+
+  return { scene, camera, renderer };
+}

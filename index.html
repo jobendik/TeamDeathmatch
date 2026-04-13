@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="no">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WARZONE TDM — Team Deathmatch</title>
+  <meta name="description" content="WARZONE TDM - Intense team deathmatch with AI bots. First to 10 kills wins.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Exo+2:wght@400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div id="cw"></div>
+  <div id="dmg"></div>
+  <div id="hlf"></div>
+  <div id="xh">
+    <div class="xh-line xh-top"></div>
+    <div class="xh-line xh-bot"></div>
+    <div class="xh-line xh-left"></div>
+    <div class="xh-line xh-right"></div>
+    <div class="xh-dot"></div>
+  </div>
+
+  <div id="lockHint" class="on">
+    <h2>WARZONE TDM</h2>
+    <p>Team Deathmatch · Først til 10 kills</p>
+    <p style="margin-top:8px;color:var(--text);font-size:11px">Klikk for å starte</p>
+    <div class="keys">
+      <span class="kbd">W</span><span class="kbd">A</span><span class="kbd">S</span><span class="kbd">D</span>
+      <span class="kbd">LMB</span><span class="kbd">R</span><span class="kbd">G</span>
+      <span class="kbd">1/2/3</span><span class="kbd">SCROLL</span><span class="kbd">TAB</span>
+    </div>
+  </div>
+
+  <div id="kn"></div>
+  <div id="ds"><h2>◆ ELIMINERT ◆</h2><p id="dsp">Respawner om 3s…</p></div>
+
+  <div id="killfeed"></div>
+
+  <div id="scoreboard">
+    <div class="sb-team sb-blue" id="sbBlue">0</div>
+    <div class="sb-mid">TDM</div>
+    <div class="sb-team sb-red" id="sbRed">0</div>
+  </div>
+
+  <div id="hud">
+    <div class="hb">
+      <div class="hl" id="weaponName">ASSAULT RIFLE</div>
+      <div class="hl">HELSE</div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <div class="hhw"><div class="hhf" id="hpFill" style="width:100%"></div></div>
+        <div class="hht" id="hpTxt">100</div>
+      </div>
+    </div>
+    <div class="hsep"></div>
+    <div class="hb">
+      <div class="hl">AMMO</div>
+      <div class="hamo" id="ammoTxt">30</div>
+      <div class="hksub" id="ammoMax">/ 30</div>
+    </div>
+    <div class="hsep"></div>
+    <div class="hb">
+      <div class="hl">GRENADES</div>
+      <div class="hkil" style="color:var(--accent)" id="grenadeTxt">🧨 2</div>
+    </div>
+    <div class="hsep"></div>
+    <div class="hb">
+      <div class="hl">KILLS</div>
+      <div class="hkil" style="color:var(--green)" id="killTxt">0</div>
+    </div>
+    <div class="hsep"></div>
+    <div class="hb">
+      <div class="hl">DEATHS</div>
+      <div class="hkil" style="color:var(--red)" id="deathTxt">0</div>
+    </div>
+  </div>
+
+  <div id="reloadBar"><div id="reloadFill"></div></div>
+  <div id="reloadText">RELOADING</div>
+
+  <div id="minimap"><canvas id="mmCanvas" width="300" height="300"></canvas></div>
+
+  <div id="tabboard">
+    <div class="tb-inner">
+      <div class="tb-title">◈ SCOREBOARD</div>
+      <div class="tb-header"><span>SPILLER</span><span>K</span><span>D</span><span>POENG</span></div>
+      <div id="tbBody"></div>
+    </div>
+  </div>
+
+  <div id="roundSummary">
+    <div class="rs-inner">
+      <div class="rs-result" id="rsResult"></div>
+      <div class="rs-team-score" id="rsTeamScore"></div>
+      <div class="rs-mvp" id="rsMvp"></div>
+      <div class="rs-podium" id="rsPodium"></div>
+      <div class="rs-stats" id="rsStats"></div>
+      <button class="rs-btn" id="rsBtn">PLAY AGAIN</button>
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
