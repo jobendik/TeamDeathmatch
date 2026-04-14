@@ -1,8 +1,8 @@
 import { defineConfig } from 'vite';
 import path from 'path';
 
-export default defineConfig({
-  base: '/TeamDeathmatch/',
+export default defineConfig(({ command }) => ({
+  base: command === 'build' ? '/TeamDeathmatch/' : '/',
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
@@ -12,4 +12,4 @@ export default defineConfig({
     port: 3000,
     open: true,
   },
-});
+}));
