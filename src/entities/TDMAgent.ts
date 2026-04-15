@@ -3,24 +3,6 @@ import * as YUKA from 'yuka';
 import { CLASS_CONFIGS, type BotClass } from '@/config/classes';
 import { TEAM_COLORS, type TeamId } from '@/config/constants';
 import { CLASS_DEFAULT_WEAPON, WEAPONS, type WeaponId } from '@/config/weapons';
-import type { AimPhase, EnemyMemory, PeekSide, TacticalRole, TeamCallout } from '@/ai/AITypes';
-
-function rand(min: number, max: number): number {
-  return min + Math.random() * (max - min);
-}
-
-function clamp01(v: number): number {
-  return Math.max(0, Math.min(1, v));
-}
-
-function pickRole(botClass: BotClass): TacticalRole {
-  switch (botClass) {
-    case 'sniper': return 'sniper';
-    case 'flanker': return Math.random() < 0.65 ? 'flanker' : 'lurker';
-    case 'assault': return Math.random() < 0.55 ? 'point' : 'support';
-    default: return Math.random() < 0.3 ? 'trader' : 'anchor';
-  }
-}
 
 /**
  * TDM Agent — extends YUKA Vehicle with combat stats, advanced AI, and rendering references.
@@ -105,71 +87,92 @@ export class TDMAgent extends YUKA.Vehicle {
   // Goal-driven brain
   brain: YUKA.Think<TDMAgent>;
 
-  // Advanced combat state
+  // ═══════════════════════════════════════════
+  //  ADVANCED AI PROPERTIES
+  // ═══════════════════════════════════════════
+
+  /** How long continuously tracking the current target (improves accuracy) */
   trackingTime: number;
+
+  /** Combat strafing direction: -1 = left, 1 = right */
   strafeDir: number;
+  /** Timer before changing strafe direction */
   strafeTimer: number;
+
+  /** World time when agent last took damage */
   lastDamageTime: number;
+  /** How much damage taken in the last 2 seconds (damage pressure) */
   recentDamage: number;
+
+  /** Enemy position shared by a teammate callout */
   teamCallout: YUKA.Vector3 | null;
+  /** When the callout was received */
   teamCalloutTime: number;
-  teamCalloutCertainty: number;
-  activeCallout: TeamCallout | null;
+
+  /** Whether the agent is actively navigating to a pickup */
   seekingPickup: boolean;
+  /** Position of the pickup being sought */
   seekPickupPos: YUKA.Vector3 | null;
+
+  /** Timer for combat micro-movement decisions */
   combatMoveTimer: number;
+
+  /** Confidence level (0-100): builds on kills, drops on deaths. Affects aggression. */
   confidence: number;
+
+  /** Preferred engagement distance for this class */
   preferredRange: number;
+
+  /** Number of nearby alive teammates (updated periodically) */
   nearbyAllies: number;
+  /** Timer for counting nearby allies */
   allyCheckTimer: number;
+
+  /** How long the agent has been in the current state */
   stateTime: number;
+
+  /** Whether the agent is peeking from cover to shoot */
   isPeeking: boolean;
+  /** Timer for peek duration */
   peekTimer: number;
+
+  /** The agent that last damaged this agent */
   lastAttacker: TDMAgent | null;
+
+  /** Accumulated kill streak (resets on death) */
   killStreak: number;
+
+  /** Current weapon */
   weaponId: WeaponId;
+  /** Number of grenades remaining */
   grenades: number;
+  /** Grenade cooldown timer */
   grenadeCooldown: number;
+  /** Whether seeking a weapon pickup */
   seekingWeapon: boolean;
+
+  /** Timer for proactive enemy hunting when idle */
   huntTimer: number;
+
+  /** Stuck detection: tracks how long the agent hasn't moved */
   stuckTime: number;
+  /** Last position sample for stuck detection */
   lastStuckCheckPos: YUKA.Vector3;
 
-  // Personality and humanization
-  tacticalRole: TacticalRole;
-  preferredPeekSide: PeekSide;
-  discipline: number;             // 0..1
-  bravery: number;                // 0..1
-  patience: number;               // 0..1
-  curiosity: number;              // 0..1
-  chaseBias: number;              // 0..1
-  peekBias: number;               // 0..1
-  communicationAccuracy: number;  // 0..1
-  calloutTrust: number;           // 0..1
-  motorSkill: number;             // 0..1
-  trackingSkill: number;          // 0..1
-  stress: number;                 // 0..100
-  tilt: number;                   // 0..100
-  routeCommitUntil: number;
-  intentCommitUntil: number;
-  hesitationTimer: number;
-
-  // Perception and tactical memory
-  enemyMemories: Map<string, EnemyMemory>;
-  currentTargetId: string | null;
-  targetCertainty: number;
-  lastVisibleEnemyTime: number;
-  investigatePos: YUKA.Vector3 | null;
-
-  // Aim controller
-  aimPhase: AimPhase;
-  aimPhaseTime: number;
-  aimStability: number;           // 0..1
-  aimTargetId: string | null;
-  aimPoint: YUKA.Vector3;
-  aimOvershoot: number;
-  aimLateralSign: number;
-  fireDisciplineTimer: number;
+  /** Current navmesh-following path */
+  navPath: YUKA.Vector3[];
+  /** Current waypoint index in navPath */
+  navWaypointIndex: number;
+  /** Desired world-space destination for nav routing */
+  navDestination: YUKA.Vector3 | null;
+  /** Nav-following mode */
+  navMode: 'none' | 'arrive' | 'seek';
+  /** Time until next automatic repath */
+  navRepathTimer: number;
+  /** Distance tolerance for arrival */
+  navTolerance: number;
+  /** Current navmesh region, if known */
+  navCurrentRegion: YUKA.Polygon | null;
 
   constructor(name: string, team: TeamId, botClass: BotClass) {
     super();
@@ -256,7 +259,7 @@ export class TDMAgent extends YUKA.Vehicle {
     // Goal-driven brain
     this.brain = new YUKA.Think(this);
 
-    // Advanced AI state
+    // ── Advanced AI ──
     this.trackingTime = 0;
     this.strafeDir = Math.random() > 0.5 ? 1 : -1;
     this.strafeTimer = 0.3 + Math.random() * 0.5;
@@ -264,8 +267,6 @@ export class TDMAgent extends YUKA.Vehicle {
     this.recentDamage = 0;
     this.teamCallout = null;
     this.teamCalloutTime = -10;
-    this.teamCalloutCertainty = 0;
-    this.activeCallout = null;
     this.seekingPickup = false;
     this.seekPickupPos = null;
     this.combatMoveTimer = 0;
@@ -298,48 +299,21 @@ export class TDMAgent extends YUKA.Vehicle {
     this.stuckTime = 0;
     this.lastStuckCheckPos = new YUKA.Vector3();
 
+    // Navmesh navigation
+    this.navPath = [];
+    this.navWaypointIndex = 0;
+    this.navDestination = null;
+    this.navMode = 'none';
+    this.navRepathTimer = 0;
+    this.navTolerance = 2.5;
+    this.navCurrentRegion = null;
+
     // Preferred engagement range by class / weapon
     switch (botClass) {
-      case 'sniper': this.preferredRange = 35; break;
-      case 'assault': this.preferredRange = 10; break;
-      case 'flanker': this.preferredRange = 8; break;
-      default: this.preferredRange = 18; break;
+      case 'sniper':   this.preferredRange = 35; break;
+      case 'assault':  this.preferredRange = 10; break;
+      case 'flanker':  this.preferredRange = 8; break;
+      default:         this.preferredRange = 18; break;
     }
-
-    // Personality and tactical identity
-    this.tacticalRole = pickRole(botClass);
-    this.preferredPeekSide = Math.random() < 0.5 ? 'left' : 'right';
-    this.discipline = clamp01(rand(0.35, 0.9) + (botClass === 'sniper' ? 0.12 : 0));
-    this.bravery = clamp01(rand(0.3, 0.9) + (botClass === 'assault' ? 0.12 : botClass === 'sniper' ? -0.08 : 0));
-    this.patience = clamp01(rand(0.25, 0.85) + (botClass === 'sniper' ? 0.15 : 0));
-    this.curiosity = clamp01(rand(0.2, 0.85) + (botClass === 'flanker' ? 0.1 : 0));
-    this.chaseBias = clamp01(rand(0.25, 0.85) + (botClass === 'assault' || botClass === 'flanker' ? 0.1 : 0));
-    this.peekBias = clamp01(rand(0.2, 0.85) + (this.preferredPeekSide === 'left' ? 0.03 : 0));
-    this.communicationAccuracy = clamp01(rand(0.45, 0.95) + (botClass === 'sniper' ? 0.05 : 0));
-    this.calloutTrust = clamp01(rand(0.35, 0.9));
-    this.motorSkill = clamp01(rand(0.35, 0.95) + (botClass === 'sniper' ? 0.08 : 0));
-    this.trackingSkill = clamp01(rand(0.35, 0.95) + (botClass === 'rifleman' ? 0.05 : 0));
-    this.stress = rand(10, 35);
-    this.tilt = 0;
-    this.routeCommitUntil = 0;
-    this.intentCommitUntil = 0;
-    this.hesitationTimer = 0;
-
-    // Perception and memory
-    this.enemyMemories = new Map();
-    this.currentTargetId = null;
-    this.targetCertainty = 0;
-    this.lastVisibleEnemyTime = -10;
-    this.investigatePos = null;
-
-    // Aim controller
-    this.aimPhase = 'search';
-    this.aimPhaseTime = 0;
-    this.aimStability = 0;
-    this.aimTargetId = null;
-    this.aimPoint = new YUKA.Vector3();
-    this.aimOvershoot = rand(0.1, 0.8);
-    this.aimLateralSign = Math.random() < 0.5 ? -1 : 1;
-    this.fireDisciplineTimer = 0;
   }
 }
