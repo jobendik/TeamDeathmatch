@@ -16,16 +16,22 @@ import { buildAgents } from '@/entities/AgentFactory';
 import { buildPickups } from '@/combat/Pickups';
 import { initViewmodel } from '@/rendering/WeaponViewmodel';
 
-function init(): void {
+async function init(): Promise<void> {
   initScene();
   buildLights();
   buildArena();
   buildCoverPoints();
-  buildAgents();
+
+  // IMPORTANT:
+  // Wait for SWAT model + animations to load and for agents to be created
+  await buildAgents();
+
   buildPickups();
   initViewmodel();
   bindEvents();
+
+  // Start the main loop only after everything is ready
+  animate();
 }
 
-init();
-animate();
+void init();
