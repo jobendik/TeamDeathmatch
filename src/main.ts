@@ -15,23 +15,25 @@ import { buildCoverPoints } from '@/world/CoverPoints';
 import { buildAgents } from '@/entities/AgentFactory';
 import { buildPickups } from '@/combat/Pickups';
 import { initViewmodel } from '@/rendering/WeaponViewmodel';
+import { buildObjectives } from '@/combat/Objectives';
+import { initMenus } from '@/ui/Menus';
+import { updateHUD } from '@/ui/HUD';
+import { updateScoreboard } from '@/ui/Scoreboard';
 
-async function init(): Promise<void> {
+function init(): void {
   initScene();
   buildLights();
   buildArena();
   buildCoverPoints();
-
-  // IMPORTANT:
-  // Wait for SWAT model + animations to load and for agents to be created
-  await buildAgents();
-
+  buildAgents();
   buildPickups();
+  buildObjectives();
   initViewmodel();
   bindEvents();
-
-  // Start the main loop only after everything is ready
-  animate();
+  initMenus();
+  updateHUD();
+  updateScoreboard();
 }
 
-void init();
+init();
+animate();
