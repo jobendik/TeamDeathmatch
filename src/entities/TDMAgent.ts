@@ -159,21 +159,6 @@ export class TDMAgent extends YUKA.Vehicle {
   /** Last position sample for stuck detection */
   lastStuckCheckPos: YUKA.Vector3;
 
-  /** Current navmesh-following path */
-  navPath: YUKA.Vector3[];
-  /** Current waypoint index in navPath */
-  navWaypointIndex: number;
-  /** Desired world-space destination for nav routing */
-  navDestination: YUKA.Vector3 | null;
-  /** Nav-following mode */
-  navMode: 'none' | 'arrive' | 'seek';
-  /** Time until next automatic repath */
-  navRepathTimer: number;
-  /** Distance tolerance for arrival */
-  navTolerance: number;
-  /** Current navmesh region, if known */
-  navCurrentRegion: YUKA.Polygon | null;
-
   constructor(name: string, team: TeamId, botClass: BotClass) {
     super();
     this.name = name;
@@ -298,15 +283,6 @@ export class TDMAgent extends YUKA.Vehicle {
     // Stuck detection
     this.stuckTime = 0;
     this.lastStuckCheckPos = new YUKA.Vector3();
-
-    // Navmesh navigation
-    this.navPath = [];
-    this.navWaypointIndex = 0;
-    this.navDestination = null;
-    this.navMode = 'none';
-    this.navRepathTimer = 0;
-    this.navTolerance = 2.5;
-    this.navCurrentRegion = null;
 
     // Preferred engagement range by class / weapon
     switch (botClass) {
