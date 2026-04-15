@@ -45,7 +45,7 @@ export function animate(): void {
     updateObjectives();
     updateRespawns();
     updateVisuals();
-    updateAgentAnimations(dt);
+    updateAgentAnimations(gameState.agents, dt);
 
     gameState.entityManager.update(dt);
   }
