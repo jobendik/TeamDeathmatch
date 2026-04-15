@@ -9,7 +9,6 @@ import { hitscanShot, shotgunBlast, spawnRocket } from '@/combat/Hitscan';
 import { spawnMuzzleFlash } from '@/combat/Particles';
 import { spawnGrenade } from '@/combat/Hitscan';
 import { keepInside } from '@/entities/Player';
-import { clearAgentNavigation, updateAgentNavigation } from '@/navigation/NavMeshService';
 
 // ═══════════════════════════════════════════
 //  AIM SYSTEM — human-like tracking & leading
@@ -66,11 +65,11 @@ function aiShoot(ag: TDMAgent, target: TDMAgent): void {
 
   // Use the actual weapon's hitscan system
   if (ag.weaponId === 'shotgun') {
-    shotgunBlast(o, d, 'ai', ag.team, col);
+    shotgunBlast(o, d, 'ai', ag.team, col, ag);
   } else if (ag.weaponId === 'rocket_launcher') {
-    spawnRocket(o, d, 'ai', ag.team, col);
+    spawnRocket(o, d, 'ai', ag.team, col, ag);
   } else {
-    hitscanShot(o, d, 'ai', ag.team, ag.weaponId, col);
+    hitscanShot(o, d, 'ai', ag.team, ag.weaponId, col, ag);
   }
   ag.ammo--;
 }
@@ -153,7 +152,7 @@ function tryThrowGrenade(ag: TDMAgent, target: TDMAgent, dist: number): boolean 
   d.z += (Math.random() - 0.5) * 0.15;
   d.normalize();
 
-  spawnGrenade(o, d, 'ai', ag.team);
+  spawnGrenade(o, d, 'ai', ag.team, ag);
   ag.grenades--;
   ag.grenadeCooldown = 8 + Math.random() * 4;
   return true;
@@ -170,6 +169,12 @@ export function updateAI(ag: TDMAgent, dt: number): void {
   ag.stateTime += dt;
   updateStrafing(ag, dt);
   const underPressure = handleDamageReaction(ag, dt);
+  if (gameState.pDead && ag.currentTarget === gameState.player) {
+    ag.currentTarget = null;
+    ag.hasTarget = false;
+    ag.trackingTime = 0;
+    ag.burstCount = 0;
+  }
 
   // ── Stuck detection ──
   // Check if agent has barely moved over the last ~0.5 seconds
@@ -198,7 +203,6 @@ export function updateAI(ag: TDMAgent, dt: number): void {
       ag.seekB.weight = 2;
     }
     ag.stateName = 'PATROL';
-    clearAgentNavigation(ag);
     // Force brain to re-evaluate
     ag.brain.clearSubgoals();
     ag.brain.arbitrate();
@@ -222,6 +226,7 @@ export function updateAI(ag: TDMAgent, dt: number): void {
   const hadTarget = ag.hasTarget;
 
   if (target) {
+    const prevTarget = ag.currentTarget;
     ag.currentTarget = target;
     ag.lastKnownPos.copy(target.position);
     ag.hasLastKnown = true;
@@ -231,11 +236,8 @@ export function updateAI(ag: TDMAgent, dt: number): void {
     broadcastEnemyPosition(ag, target);
 
     // Track target — increases accuracy over time
-    if (target === ag.currentTarget && hadTarget) {
-      ag.trackingTime += dt;
-    } else {
-      ag.trackingTime = 0;
-    }
+    if (hadTarget && prevTarget === target) ag.trackingTime += dt;
+    else ag.trackingTime = 0;
 
     // Reaction delay on first sight
     if (!hadTarget) {
@@ -253,6 +255,9 @@ export function updateAI(ag: TDMAgent, dt: number): void {
     evalFuzzy(ag, dist);
 
     const canReact = ag.reactionTimer <= 0;
+    if (underPressure && ag.hp < ag.maxHP * 0.55) {
+      ag.currentCover = ag.currentTarget ? findCoverFrom(ag, ag.currentTarget.position) : ag.currentCover;
+    }
 
     // ══════════════════════════════════
     //  DECISION MAKING (the brain)
@@ -281,14 +286,7 @@ export function updateAI(ag: TDMAgent, dt: number): void {
       if (losing) ag.fuzzyAggr = Math.min(100, ag.fuzzyAggr + 15);
       if (winning && ag.hp / ag.maxHP < 0.5) ag.fuzzyAggr = Math.max(0, ag.fuzzyAggr - 10);
 
-      // ══════════════════════════════════
-      //  GOAL-DRIVEN DECISION (Think brain)
-      // ══════════════════════════════════
-      ag.decisionTimer -= dt;
-      if (ag.decisionTimer <= 0) {
-        ag.decisionTimer = 0.15 + Math.random() * 0.2;
-        ag.brain.arbitrate();
-      }
+      ag.brain.arbitrate();
     }
 
     // ══════════════════════════════════
@@ -352,7 +350,7 @@ export function updateAI(ag: TDMAgent, dt: number): void {
           const col = ag.team === TEAM_BLUE ? 0x60a5fa : 0xff6644;
           const muzzlePos = new THREE.Vector3(ag.position.x + suppressDir.x * 0.6, 1.0, ag.position.z + suppressDir.z * 0.6);
           spawnMuzzleFlash(muzzlePos, col);
-          hitscanShot(o, suppressDir, 'ai', ag.team, ag.weaponId, col);
+          hitscanShot(o, suppressDir, 'ai', ag.team, ag.weaponId, col, ag);
           ag.ammo--;
           ag.shootTimer = ag.fireRate * 1.5; // slower fire for suppression
         }
@@ -385,13 +383,6 @@ export function updateAI(ag: TDMAgent, dt: number): void {
 
   // ── Execute the goal-driven brain ──
   ag.brain.execute();
-
-  // Navmesh route following for macro movement states
-  if (ag.stateName === 'ENGAGE' || ag.stateName === 'TEAM_PUSH' || ag.stateName === 'PEEK') {
-    clearAgentNavigation(ag);
-  } else {
-    updateAgentNavigation(ag, dt);
-  }
 
   // ── Regen when near spawn ──
   if (ag.position.distanceTo(ag.spawnPos) < 8) {
