@@ -2,7 +2,8 @@ import * as THREE from 'three';
 import { gameState } from '@/core/GameState';
 import { FP } from '@/config/player';
 import { WEAPONS } from '@/config/weapons';
-import { ARENA_MARGIN, BLUE_SPAWNS } from '@/config/constants';
+import { ARENA_MARGIN } from '@/config/constants';
+import { getFacingYawTowardsArena, getModeDefaults, getPlayerSpawn } from '@/core/GameModes';
 import { setViewmodelWeapon } from '@/rendering/WeaponViewmodel';
 import { updateHUD, flashHeal } from '@/ui/HUD';
 import { dom } from '@/ui/DOMElements';
@@ -75,15 +76,26 @@ export function updatePlayer(dt: number): void {
     dom.dsp.textContent = 'Respawner om ' + Math.max(0, gameState.respTimer).toFixed(1) + 's…';
     if (gameState.respTimer <= 0) {
       gameState.pDead = false;
+      player.isDead = false;
       gameState.pHP = 100;
       player.hp = 100;
-      gameState.pAmmo = gameState.pMaxAmmo;
+      const startsArmed = getModeDefaults(gameState.mode).playerStartsArmed;
+      gameState.pWeaponSlots = startsArmed ? ['assault_rifle', 'pistol'] : ['pistol'];
+      gameState.pActiveSlot = 0;
+      gameState.pWeaponId = gameState.pWeaponSlots[0];
+      const respawnWeapon = WEAPONS[gameState.pWeaponId];
+      gameState.pAmmo = respawnWeapon.magSize;
+      gameState.pMaxAmmo = respawnWeapon.magSize;
+      gameState.pReloadDuration = respawnWeapon.reloadTime;
+      gameState.pGrenades = gameState.mode === 'ffa' ? 1 : 2;
       gameState.pReloading = false;
       dom.ds.classList.remove('on');
-      const sp = BLUE_SPAWNS[Math.floor(Math.random() * BLUE_SPAWNS.length)];
+      const sp = getPlayerSpawn();
       player.position.set(sp[0], 0, sp[2]);
-      gameState.cameraYaw = Math.PI / 4;
+      player.spawnPos.set(sp[0], 0, sp[2]);
+      gameState.cameraYaw = getFacingYawTowardsArena(sp[0], sp[2]);
       gameState.cameraPitch = 0;
+      setViewmodelWeapon(gameState.pWeaponId);
       updateHUD();
     }
     gameState.camera.position.set(player.position.x, FP.height, player.position.z);
@@ -147,6 +159,12 @@ export function updatePlayer(dt: number): void {
         pk.mesh.visible = pk.ring.visible = false;
         pk.respawnAt = gameState.worldElapsed + 12;
         gameState.pAmmo = Math.min(gameState.pMaxAmmo, gameState.pAmmo + 15);
+        updateHUD();
+      } else if (pk.t === 'grenade' && gameState.pGrenades < 4) {
+        pk.active = false;
+        pk.mesh.visible = pk.ring.visible = false;
+        pk.respawnAt = gameState.worldElapsed + 10;
+        gameState.pGrenades = Math.min(4, gameState.pGrenades + 1);
         updateHUD();
       } else if (pk.t === 'weapon' && pk.weaponId) {
         pk.active = false;
