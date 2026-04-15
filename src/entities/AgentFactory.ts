@@ -11,6 +11,11 @@ import { makeNameTag } from '@/rendering/NameTag';
 import { addHPBar } from '@/rendering/HPBar';
 import { setupFuzzy } from '@/ai/FuzzyLogic';
 import {
+  preloadBlueSwatAssets,
+  hasBlueSwatAssets,
+  attachBlueSwatCharacter,
+} from '@/rendering/AgentAnimations';
+import {
   PatrolState, EngageState, InvestigateState,
   RetreatState, CoverState, FlankState,
   SeekPickupState, TeamPushState, PeekState,
@@ -21,40 +26,49 @@ import {
   PatrolEvaluator,
 } from '@/ai/goals/Evaluators';
 
-/** Sync callback for YUKA render component. */
 function syncRC(entity: YUKA.GameEntity, renderComponent: THREE.Object3D): void {
   renderComponent.position.copy(entity.position as unknown as THREE.Vector3);
   renderComponent.quaternion.copy(entity.rotation as unknown as THREE.Quaternion);
 }
 
-/**
- * Create a single AI agent and add it to the scene + entity manager.
- */
-function mkAgent(name: string, team: TeamId, botClass: BotClass, x: number, z: number): TDMAgent {
+function mkAgent(
+  name: string,
+  team: TeamId,
+  botClass: BotClass,
+  x: number,
+  z: number,
+  useSwatVisuals = false,
+): TDMAgent {
   const ag = new TDMAgent(name, team, botClass);
   ag.position.set(x, 0, z);
   ag.spawnPos.set(x, 0, z);
 
-  const mesh = buildSoldierMesh(TEAM_COLORS[team], botClass, team);
-  gameState.scene.add(mesh);
-  ag.renderComponent = mesh;
-  ag.setRenderComponent(mesh, syncRC);
+  const root = new THREE.Group();
+  root.name = `${name}_Root`;
+  gameState.scene.add(root);
 
-  // Name tag
+  ag.renderComponent = root;
+  ag.setRenderComponent(root, syncRC);
+
+  if (useSwatVisuals) {
+    attachBlueSwatCharacter(root);
+  } else {
+    const mesh = buildSoldierMesh(TEAM_COLORS[team], botClass, team);
+    root.add(mesh);
+  }
+
   const tag = makeNameTag(name, TEAM_COLORS[team]);
   tag.position.y = 2.6;
-  ag.renderComponent.add(tag);
+  root.add(tag);
   ag.nameTag = tag;
 
-  // HP bar
   addHPBar(ag);
 
-  // Steering behaviors
   ag.wanderB = new YUKA.WanderBehavior(1.0, 4, 2.2);
   ag.arriveB = new YUKA.ArriveBehavior(new YUKA.Vector3(), 3, 0.5);
   ag.seekB = new YUKA.SeekBehavior(new YUKA.Vector3());
   ag.fleeB = new YUKA.FleeBehavior(new YUKA.Vector3(), 10);
-  ag.pursuitB = new YUKA.PursuitBehavior(ag, 1.2); // dummy evader, replaced at runtime
+  ag.pursuitB = new YUKA.PursuitBehavior(ag, 1.2);
   ag.avoidB = new YUKA.ObstacleAvoidanceBehavior(gameState.yukaObs);
   ag.avoidB.weight = 3;
 
@@ -71,7 +85,6 @@ function mkAgent(name: string, team: TeamId, botClass: BotClass, x: number, z: n
   ag.fleeB.weight = 0;
   ag.pursuitB.weight = 0;
 
-  // State machine
   ag.stateMachine = new YUKA.StateMachine(ag);
   ag.stateMachine.add('PATROL', new PatrolState());
   ag.stateMachine.add('ENGAGE', new EngageState());
@@ -84,8 +97,6 @@ function mkAgent(name: string, team: TeamId, botClass: BotClass, x: number, z: n
   ag.stateMachine.add('PEEK', new PeekState());
   ag.stateMachine.changeTo('PATROL');
 
-  // ── Goal-driven brain ──
-  // Character bias: slight personality variation per class
   const aggrBias = botClass === 'assault' ? 1.1 : botClass === 'flanker' ? 1.05 : botClass === 'sniper' ? 0.85 : 1.0;
   const survBias = botClass === 'sniper' ? 1.2 : botClass === 'assault' ? 0.85 : 1.0;
 
@@ -97,7 +108,6 @@ function mkAgent(name: string, team: TeamId, botClass: BotClass, x: number, z: n
   ag.brain.addEvaluator(new HuntEvaluator(aggrBias * 0.95 + (Math.random() - 0.5) * 0.1));
   ag.brain.addEvaluator(new PatrolEvaluator(1.0));
 
-  // Fuzzy logic
   setupFuzzy(ag);
 
   gameState.entityManager.add(ag);
@@ -106,11 +116,17 @@ function mkAgent(name: string, team: TeamId, botClass: BotClass, x: number, z: n
   return ag;
 }
 
-/**
- * Build the player entity and all AI agents.
- */
-export function buildAgents(): void {
-  // Player (Blue team)
+export async function buildAgents(): Promise<void> {
+  let blueSwatReady = false;
+
+  try {
+    await preloadBlueSwatAssets();
+    blueSwatReady = hasBlueSwatAssets();
+  } catch (err) {
+    console.error('[AgentFactory] Failed to preload SWAT assets. Falling back to placeholder meshes.', err);
+  }
+
+  // Player (Blue team, still FPS/invisible)
   const player = new TDMAgent('Spiller', TEAM_BLUE, 'rifleman');
   player.position.set(BLUE_SPAWNS[0][0], 0, BLUE_SPAWNS[0][2]);
   player.spawnPos.set(BLUE_SPAWNS[0][0], 0, BLUE_SPAWNS[0][2]);
@@ -127,19 +143,21 @@ export function buildAgents(): void {
   player.hp = gameState.pHP;
   gameState.player = player;
 
-  // Blue team AI (5 bots)
+  // Blue team AI (5 bots) -> use Swat.fbx
   const blueClasses: BotClass[] = ['rifleman', 'rifleman', 'assault', 'sniper', 'flanker'];
   const blueNames = ['Fenrik', 'Bjørn', 'Storm', 'Øye', 'Skygge'];
+
   for (let i = 0; i < 5; i++) {
     const sp = BLUE_SPAWNS[i + 1] || BLUE_SPAWNS[i % BLUE_SPAWNS.length];
-    mkAgent(blueNames[i], TEAM_BLUE, blueClasses[i], sp[0], sp[2]);
+    mkAgent(blueNames[i], TEAM_BLUE, blueClasses[i], sp[0], sp[2], blueSwatReady);
   }
 
-  // Red team AI (6 bots)
+  // Red team AI (6 bots) -> keep placeholder for now
   const redClasses: BotClass[] = ['rifleman', 'rifleman', 'assault', 'assault', 'sniper', 'flanker'];
   const redNames = ['Demon', 'Blaze', 'Hammer', 'Fang', 'Specter', 'Viper'];
+
   for (let i = 0; i < 6; i++) {
     const sp = RED_SPAWNS[i % RED_SPAWNS.length];
-    mkAgent(redNames[i], TEAM_RED, redClasses[i], sp[0], sp[2]);
+    mkAgent(redNames[i], TEAM_RED, redClasses[i], sp[0], sp[2], false);
   }
 }
