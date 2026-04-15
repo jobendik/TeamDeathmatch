@@ -3,8 +3,9 @@ import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 import { clone as skeletonClone } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import type { TDMAgent } from '@/entities/TDMAgent';
 
-const MODEL_URL = '/models/characters/swat/Swat.fbx';
-const ANIM_BASE = '/models/characters/swat/animations';
+const BASE_URL = import.meta.env.BASE_URL;
+const MODEL_URL = `${BASE_URL}models/characters/swat/Swat.fbx`;
+const ANIM_BASE = `${BASE_URL}models/characters/swat/animations`;
 
 // Juster denne hvis modellen blir for liten eller stor.
 // Mixamo FBX ender ofte på 0.01 i Three.js-prosjekter.
