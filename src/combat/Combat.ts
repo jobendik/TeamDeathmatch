@@ -141,9 +141,24 @@ export function respawnAgent(ag: TDMAgent): void {
   ag.seekPickupPos = null;
   ag.isPeeking = false;
   ag.teamCallout = null;
+  ag.teamCalloutCertainty = 0;
+  ag.activeCallout = null;
   ag.huntTimer = Math.random() * 2;
   ag.grenades = 2;
   ag.grenadeCooldown = 0;
+  ag.currentTargetId = null;
+  ag.targetCertainty = 0;
+  ag.investigatePos = null;
+  ag.enemyMemories.clear();
+  ag.aimPhase = 'search';
+  ag.aimPhaseTime = 0;
+  ag.aimStability = 0;
+  ag.aimTargetId = null;
+  ag.fireDisciplineTimer = 0;
+  ag.routeCommitUntil = 0;
+  ag.intentCommitUntil = 0;
+  ag.stress = Math.max(8, ag.stress * 0.75);
+  ag.tilt = Math.max(0, ag.tilt * 0.35);
   if (ag.nameTag) ag.nameTag.visible = true;
 }
 
