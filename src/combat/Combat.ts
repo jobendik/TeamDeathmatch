@@ -10,7 +10,7 @@ import { updateHUD, flashDmg } from '@/ui/HUD';
 import { updateScoreboard } from '@/ui/Scoreboard';
 import { addKillfeedEntry } from '@/ui/Killfeed';
 import { showKillNotif } from '@/ui/KillNotification';
-import { resetAgentAnimation } from '@/rendering/AgentAnimations';
+import { resetAgentAnimation, playAgentDeathAnimation } from '@/rendering/AgentAnimations';
 import { WEAPONS } from '@/config/weapons';
 import { dom } from '@/ui/DOMElements';
 import { showRoundSummary } from '@/ui/RoundSummary';
@@ -76,10 +76,22 @@ function killAgent(ag: TDMAgent, attackerTeam: number | null): void {
   ag.isDead = true;
   ag.deaths++;
   ag.respawnAt = gameState.worldElapsed + RESPAWN_TIME + Math.random() * 2;
-  ag.renderComponent!.visible = false;
+
+  const deathAnimDuration = playAgentDeathAnimation(ag.renderComponent);
+  if (ag.nameTag) ag.nameTag.visible = false;
+
+  if (deathAnimDuration > 0) {
+    window.setTimeout(() => {
+      if (ag.isDead && ag.renderComponent) {
+        ag.renderComponent.visible = false;
+      }
+    }, Math.max(900, deathAnimDuration * 1000));
+  } else {
+    ag.renderComponent!.visible = false;
+  }
+
   spawnDeath(new THREE.Vector3(ag.position.x, 0.5, ag.position.z), TEAM_COLORS[ag.team]);
 
-  // ── Victim confidence drop ──
   ag.confidence = Math.max(10, ag.confidence - 15);
   ag.killStreak = 0;
 
@@ -88,26 +100,29 @@ function killAgent(ag: TDMAgent, attackerTeam: number | null): void {
   updateScoreboard();
 
   if (attackerTeam === null) {
-    // Player killed this agent
     gameState.pKills++;
     dom.killTxt.textContent = String(gameState.pKills);
     showKillNotif(ag.name, ag.team);
     addKillfeedEntry('Player', ag.name, TEAM_BLUE, ag.team, WEAPONS[gameState.pWeaponId].name);
   } else {
-    // AI killed AI — credit the killer
     const killer = gameState.agents.find(
       (a) => a.team === attackerTeam && !a.isDead && a !== gameState.player,
     );
     if (killer) {
       killer.kills++;
-      // ── Killer confidence boost ──
       killer.confidence = Math.min(100, killer.confidence + 10);
       killer.killStreak++;
-      // Extra confidence on streaks
       if (killer.killStreak >= 3) killer.confidence = Math.min(100, killer.confidence + 5);
     }
-    addKillfeedEntry(killer ? killer.name : 'Unknown', ag.name, attackerTeam, ag.team, killer ? WEAPONS[killer.weaponId].name : undefined);
+    addKillfeedEntry(
+      killer ? killer.name : 'Unknown',
+      ag.name,
+      attackerTeam,
+      ag.team,
+      killer ? WEAPONS[killer.weaponId].name : undefined,
+    );
   }
+
   checkGameEnd();
 }
 
