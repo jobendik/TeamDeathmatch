@@ -3,10 +3,12 @@ import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 import { clone as skeletonClone } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import type { TDMAgent } from '@/entities/TDMAgent';
 
-const BASE_URL = import.meta.env.BASE_URL;
-const MODEL_URL = `${BASE_URL}models/characters/swat/Swat.fbx`;
-const ANIM_BASE = `${BASE_URL}models/characters/swat/animations`;
-const SWAT_SCALE = 0.01; // juster til 1 dersom modellen blir altfor liten
+const MODEL_URL = '/models/characters/swat/Swat.fbx';
+const ANIM_BASE = '/models/characters/swat/animations';
+
+// Juster denne hvis modellen blir for liten eller stor.
+// Mixamo FBX ender ofte på 0.01 i Three.js-prosjekter.
+const SWAT_SCALE = 0.01;
 
 const ANIM_FILES = {
   idle: `${ANIM_BASE}/idle.fbx`,
@@ -87,6 +89,45 @@ let loadPromise: Promise<void> | null = null;
 let assetsReady = false;
 const clips: Partial<Record<AgentAnimKey, THREE.AnimationClip>> = {};
 
+// Alle rene locomotion-klipp som skal kjøres "in place" i kode
+const LOCOMOTION_KEYS = new Set<AgentAnimKey>([
+  'walkForward',
+  'walkBackward',
+  'walkLeft',
+  'walkRight',
+  'walkForwardLeft',
+  'walkForwardRight',
+  'walkBackwardLeft',
+  'walkBackwardRight',
+
+  'runForward',
+  'runBackward',
+  'runLeft',
+  'runRight',
+  'runForwardLeft',
+  'runForwardRight',
+  'runBackwardLeft',
+  'runBackwardRight',
+
+  'sprintForward',
+  'sprintBackward',
+  'sprintLeft',
+  'sprintRight',
+  'sprintForwardLeft',
+  'sprintForwardRight',
+  'sprintBackwardLeft',
+  'sprintBackwardRight',
+
+  'crouchWalkForward',
+  'crouchWalkBackward',
+  'crouchWalkLeft',
+  'crouchWalkRight',
+  'crouchWalkForwardLeft',
+  'crouchWalkForwardRight',
+  'crouchWalkBackwardLeft',
+  'crouchWalkBackwardRight',
+]);
+
 function loadFBX(url: string): Promise<THREE.Group> {
   return new Promise((resolve, reject) => {
     loader.load(
@@ -112,6 +153,7 @@ function prepRenderable(root: THREE.Object3D): void {
     if ((mesh as any).isMesh) {
       mesh.castShadow = true;
       mesh.receiveShadow = true;
+
       const mat = mesh.material as THREE.Material | THREE.Material[] | undefined;
       if (Array.isArray(mat)) {
         for (const m of mat) {
@@ -122,6 +164,57 @@ function prepRenderable(root: THREE.Object3D): void {
       }
     }
   });
+}
+
+function isRootMotionPositionTrack(trackName: string): boolean {
+  const n = trackName.toLowerCase();
+
+  if (!n.endsWith('.position')) return false;
+
+  return (
+    n.includes('mixamorighips.position') ||
+    n.includes('hips.position') ||
+    n.includes('pelvis.position') ||
+    n.includes('root.position') ||
+    n.includes('armature.position')
+  );
+}
+
+function makeClipInPlace(original: THREE.AnimationClip, key: AgentAnimKey): THREE.AnimationClip {
+  const clip = original.clone();
+
+  if (!LOCOMOTION_KEYS.has(key)) {
+    return clip;
+  }
+
+  clip.tracks = clip.tracks.map((track) => {
+    if (!(track instanceof THREE.VectorKeyframeTrack)) {
+      return track;
+    }
+
+    if (!isRootMotionPositionTrack(track.name)) {
+      return track;
+    }
+
+    const values = track.values.slice();
+
+    const baseX = values[0] ?? 0;
+    const baseZ = values[2] ?? 0;
+
+    for (let i = 0; i < values.length; i += 3) {
+      values[i] = baseX;       // X nulles til startverdi
+      values[i + 2] = baseZ;   // Z nulles til startverdi
+      // Y beholdes for naturlig opp/ned-bevegelse
+    }
+
+    return new THREE.VectorKeyframeTrack(
+      track.name,
+      track.times.slice(),
+      values,
+    );
+  });
+
+  return clip;
 }
 
 export async function preloadBlueSwatAssets(): Promise<void> {
@@ -139,7 +232,14 @@ export async function preloadBlueSwatAssets(): Promise<void> {
 
     const keys = Object.keys(ANIM_FILES) as AgentAnimKey[];
     for (let i = 0; i < keys.length; i++) {
-      clips[keys[i]] = getFirstClip(animObjs[i], ANIM_FILES[keys[i]]);
+      const key = keys[i];
+      const rawClip = getFirstClip(animObjs[i], ANIM_FILES[key]);
+      clips[key] = makeClipInPlace(rawClip, key);
+
+      // Debug ved behov:
+      // if (key === 'runForward') {
+      //   console.log('runForward tracks:', rawClip.tracks.map((t) => t.name));
+      // }
     }
 
     assetsReady = true;
@@ -172,6 +272,7 @@ function buildController(model: THREE.Group): AgentAnimController {
   for (const key of Object.keys(clips) as AgentAnimKey[]) {
     const clip = clips[key];
     if (!clip) continue;
+
     const action = mixer.clipAction(clip);
     setRepeat(action);
     action.weight = 1;
@@ -251,7 +352,6 @@ function resolveExistingKey(key: AgentAnimKey): AgentAnimKey | null {
 function fadeTo(ctrl: AgentAnimController, requested: AgentAnimKey, fade = 0.16): void {
   const key = resolveExistingKey(requested);
   if (!key) return;
-
   if (ctrl.current === key) return;
 
   const next = ctrl.actions[key];
@@ -351,7 +451,12 @@ function pickDirectionalSet(
   return 'sprintRight';
 }
 
-function chooseMovementAnimation(ag: TDMAgent, speed: number, localForward: number, localRight: number): AgentAnimKey {
+function chooseMovementAnimation(
+  ag: TDMAgent,
+  speed: number,
+  localForward: number,
+  localRight: number,
+): AgentAnimKey {
   const stationary = speed < 0.12;
   const crouched = ag.stateName === 'COVER' || ag.stateName === 'PEEK';
   const combat = ag.stateName === 'ENGAGE' || ag.stateName === 'TEAM_PUSH' || ag.stateName === 'FLANK';
@@ -418,6 +523,10 @@ export function updateAgentAnimations(agents: readonly TDMAgent[], dt: number): 
 
     ctrl.elapsed += dt;
     ctrl.mixer.update(dt);
+
+    // Ekstra sikkerhet mot root motion på modellnivå
+    ctrl.model.position.x = 0;
+    ctrl.model.position.z = 0;
 
     if (ctrl.dead) continue;
     if (ctrl.elapsed < ctrl.lockedUntil) continue;
