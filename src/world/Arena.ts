@@ -3,6 +3,7 @@ import * as YUKA from 'yuka';
 import { gameState } from '@/core/GameState';
 import { ARENA_HALF } from '@/config/constants';
 import { FP } from '@/config/player';
+import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
 
 /**
  * Build the arena: floor, boundary rings, walls, pillars, and team bases.
@@ -170,6 +171,49 @@ export function buildArena(): void {
   rpr.rotation.x = -Math.PI / 2;
   rpr.position.set(48, 0.32, 48);
   scene.add(rpr);
+
+  // ── NavMesh Export Helper ──
+  // Placed inside buildArena so it has access to floor, bluePlat, and redPlat!
+  (window as any).exportMap = () => {
+    console.log("Gathering meshes for export...");
+    const exporter = new GLTFExporter();
+    const exportGroup = new THREE.Group();
+
+    // 1. Grab the floor and platforms
+    exportGroup.add(floor.clone());
+    exportGroup.add(bluePlat.clone());
+    exportGroup.add(redPlat.clone());
+
+    // 2. Grab all the walls and pillars from the gameState
+    gameState.wallMeshes.forEach(mesh => {
+      exportGroup.add(mesh.clone());
+    });
+
+    // 3. Export as a binary GLB file
+    exporter.parse(
+      exportGroup,
+      function ( gltfBuffer ) {
+        const blob = new Blob( [ gltfBuffer as ArrayBuffer ], { type: 'application/octet-stream' } );
+        const url = URL.createObjectURL( blob );
+        
+        const link = document.createElement( 'a' );
+        link.style.display = 'none';
+        link.href = url;
+        link.download = 'arena_map.glb'; 
+        
+        document.body.appendChild( link );
+        link.click();
+        document.body.removeChild( link );
+        console.log("Export complete! Check your downloads folder.");
+      },
+      function ( error ) {
+          console.error( 'An error happened during export:', error );
+      },
+      { binary: true } 
+    );
+  };
+  
+  console.log("NavMesh exporter ready! Type exportMap() in the console.");
 }
 
 /**
@@ -264,47 +308,3 @@ function addPillar(x: number, y: number, z: number, r: number): void {
   yukaObs.push(ob);
   entityManager.add(ob);
 }
-
-import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js'; // or from 'three/addons/...' depending on your setup
-
-export function exportMapForNavMesh() {
-  const exporter = new GLTFExporter();
-  const exportGroup = new THREE.Group();
-
-  // 1. Grab the floor 
-  // (You'll need to briefly expose the 'floor', 'bluePlat', and 'redPlat' variables from buildArena to access them here)
-  exportGroup.add(floor.clone());
-  exportGroup.add(bluePlat.clone());
-  exportGroup.add(redPlat.clone());
-
-  // 2. Grab all the walls and pillars
-  gameState.wallMeshes.forEach(mesh => {
-    exportGroup.add(mesh.clone());
-  });
-
-  // 3. Export as a binary GLB file
-  exporter.parse(
-    exportGroup,
-    function ( gltfBuffer ) {
-      // Create a blob from the exported buffer and trigger a download
-      const blob = new Blob( [ gltfBuffer ], { type: 'application/octet-stream' } );
-      const url = URL.createObjectURL( blob );
-      
-      const link = document.createElement( 'a' );
-      link.style.display = 'none';
-      link.href = url;
-      link.download = 'arena_map.glb'; // Name of your downloaded file
-      
-      document.body.appendChild( link );
-      link.click();
-      document.body.removeChild( link );
-    },
-    function ( error ) {
-        console.error( 'An error happened during export:', error );
-    },
-    { binary: true } // Setting this to true ensures it exports as a .glb rather than .gltf
-  );
-}
-
-// Expose it to the browser console so you can trigger it manually
-(window as any).exportMap = exportMapForNavMesh;
