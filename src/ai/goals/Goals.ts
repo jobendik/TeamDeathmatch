@@ -3,9 +3,9 @@ import type { TDMAgent } from '@/entities/TDMAgent';
 import { CLASS_CONFIGS } from '@/config/classes';
 import { findCoverFrom, findFlankPosition, findPeekCover, findSniperNest, findNearestPickup, isInsideWall, pushOutOfWall } from '@/ai/CoverSystem';
 import { gameState } from '@/core/GameState';
-import { requestAgentPath, clearAgentNavigation } from '@/navigation/NavMeshService';
 import { TEAM_BLUE } from '@/config/constants';
 import { WEAPONS } from '@/config/weapons';
+import { getEnemyFlagTeam } from '@/core/GameModes';
 
 // IMPORTANT: YUKA calls Goal lifecycle methods (activate, execute, terminate)
 // WITHOUT passing the owner. All methods must use this.owner instead.
@@ -19,7 +19,6 @@ export class PatrolGoal extends YUKA.Goal<TDMAgent> {
     const ag = this.owner;
     ag.stateName = 'PATROL';
     ag.stateTime = 0;
-    clearAgentNavigation(ag);
     this.status = YUKA.Goal.STATUS.ACTIVE;
   }
   execute(): void {
@@ -60,7 +59,6 @@ export class MoveToPositionGoal extends YUKA.Goal<TDMAgent> {
       this.targetPos.x = safe.x;
       this.targetPos.z = safe.z;
     }
-    requestAgentPath(ag, this.targetPos, 'arrive', 2.75, true);
     this.status = YUKA.Goal.STATUS.ACTIVE;
   }
 
@@ -70,7 +68,10 @@ export class MoveToPositionGoal extends YUKA.Goal<TDMAgent> {
     if (ag.pursuitB) ag.pursuitB.weight = 0;
     if (ag.fleeB) ag.fleeB.weight = 0;
     if (ag.seekB) ag.seekB.weight = 0;
-    requestAgentPath(ag, this.targetPos, 'arrive', 2.75);
+    if (ag.arriveB) {
+      ag.arriveB.weight = 1.3;
+      (ag.arriveB as any).target.copy(this.targetPos);
+    }
 
     if (ag.position.distanceTo(this.targetPos) < 3) {
       this.status = YUKA.Goal.STATUS.COMPLETED;
@@ -79,7 +80,7 @@ export class MoveToPositionGoal extends YUKA.Goal<TDMAgent> {
 
   terminate(): void {
     const ag = this.owner;
-    clearAgentNavigation(ag);
+    if (ag.arriveB) ag.arriveB.weight = 0;
     this.status = YUKA.Goal.STATUS.COMPLETED;
   }
 }
@@ -90,7 +91,6 @@ export class EngageCombatGoal extends YUKA.Goal<TDMAgent> {
     ag.stateName = 'ENGAGE';
     ag.stateTime = 0;
     ag.combatMoveTimer = 0;
-    clearAgentNavigation(ag);
     this.status = YUKA.Goal.STATUS.ACTIVE;
   }
 
@@ -137,7 +137,6 @@ export class EngageCombatGoal extends YUKA.Goal<TDMAgent> {
 
   terminate(): void {
     const ag = this.owner;
-    clearAgentNavigation(ag);
     if (ag.seekB) ag.seekB.weight = 0;
     if (ag.pursuitB) ag.pursuitB.weight = 0;
     this.status = YUKA.Goal.STATUS.COMPLETED;
@@ -157,7 +156,6 @@ export class RetreatGoal extends YUKA.Goal<TDMAgent> {
       const cover = findCoverFrom(ag, ag.currentTarget.position);
       if (cover) ag.currentCover = cover;
     }
-    requestAgentPath(ag, ag.currentCover || ag.spawnPos, 'arrive', 2.5, true);
     this.status = YUKA.Goal.STATUS.ACTIVE;
   }
 
@@ -166,7 +164,14 @@ export class RetreatGoal extends YUKA.Goal<TDMAgent> {
     if (ag.wanderB) ag.wanderB.weight = 0;
     if (ag.pursuitB) ag.pursuitB.weight = 0;
 
-    requestAgentPath(ag, ag.currentCover || ag.spawnPos, 'arrive', 2.5);
+    if (ag.arriveB) {
+      ag.arriveB.weight = 1.5;
+      if (ag.currentCover) {
+        (ag.arriveB as any).target.copy(ag.currentCover);
+      } else {
+        (ag.arriveB as any).target.copy(ag.spawnPos);
+      }
+    }
 
     if (ag.seekB && ag.currentTarget) {
       const away = new YUKA.Vector3().subVectors(ag.position, ag.currentTarget.position).normalize();
@@ -197,7 +202,6 @@ export class RetreatGoal extends YUKA.Goal<TDMAgent> {
     const ag = this.owner;
     const cfg = CLASS_CONFIGS[ag.botClass];
     if (cfg) ag.maxSpeed = cfg.maxSpeed;
-    clearAgentNavigation(ag);
     if (ag.seekB) ag.seekB.weight = 0;
     if (ag.arriveB) ag.arriveB.weight = 0;
     this.status = YUKA.Goal.STATUS.COMPLETED;
@@ -216,7 +220,6 @@ export class TakeCoverGoal extends YUKA.Goal<TDMAgent> {
     const ag = this.owner;
     ag.stateName = 'COVER';
     ag.stateTime = 0;
-    if (ag.currentCover) requestAgentPath(ag, ag.currentCover, 'arrive', 2.25, true);
     this.status = YUKA.Goal.STATUS.ACTIVE;
   }
 
@@ -226,7 +229,10 @@ export class TakeCoverGoal extends YUKA.Goal<TDMAgent> {
     if (ag.pursuitB) ag.pursuitB.weight = 0;
     if (ag.fleeB) ag.fleeB.weight = 0;
     if (ag.seekB) ag.seekB.weight = 0;
-    if (ag.currentCover) requestAgentPath(ag, ag.currentCover, 'arrive', 2.25);
+    if (ag.arriveB) {
+      ag.arriveB.weight = 1.4;
+      if (ag.currentCover) (ag.arriveB as any).target.copy(ag.currentCover);
+    }
 
     // Use stateTime (incremented by actual dt in updateAI)
     if (ag.stateTime >= this.duration) {
@@ -282,7 +288,6 @@ export class PeekGoal extends YUKA.Goal<TDMAgent> {
   terminate(): void {
     const ag = this.owner;
     ag.isPeeking = false;
-    clearAgentNavigation(ag);
     if (ag.seekB) ag.seekB.weight = 0;
     this.status = YUKA.Goal.STATUS.COMPLETED;
   }
@@ -298,7 +303,6 @@ export class FlankGoal extends YUKA.Goal<TDMAgent> {
     if (ag.currentTarget) {
       this.flankPos = findFlankPosition(ag, ag.currentTarget.position);
     }
-    if (this.flankPos) requestAgentPath(ag, this.flankPos, 'arrive', 3.25, true);
     this.status = this.flankPos ? YUKA.Goal.STATUS.ACTIVE : YUKA.Goal.STATUS.FAILED;
   }
 
@@ -309,7 +313,10 @@ export class FlankGoal extends YUKA.Goal<TDMAgent> {
     if (ag.fleeB) ag.fleeB.weight = 0;
     if (ag.arriveB) ag.arriveB.weight = 0;
 
-    if (this.flankPos) requestAgentPath(ag, this.flankPos, 'arrive', 3.25);
+    if (ag.seekB && this.flankPos) {
+      (ag.seekB as any).target.copy(this.flankPos);
+      ag.seekB.weight = 1.5;
+    }
 
     if (this.flankPos && ag.position.distanceTo(this.flankPos) < 4) {
       this.status = YUKA.Goal.STATUS.COMPLETED;
@@ -321,7 +328,6 @@ export class FlankGoal extends YUKA.Goal<TDMAgent> {
 
   terminate(): void {
     const ag = this.owner;
-    clearAgentNavigation(ag);
     if (ag.seekB) ag.seekB.weight = 0;
     this.status = YUKA.Goal.STATUS.COMPLETED;
   }
@@ -343,7 +349,6 @@ export class SeekPickupGoal extends YUKA.Goal<TDMAgent> {
     const pickup = findNearestPickup(ag, this.pickupType);
     if (pickup && ag.position.distanceTo(pickup) < 40) {
       ag.seekPickupPos = pickup;
-      requestAgentPath(ag, pickup, 'arrive', 2.5, true);
       this.status = YUKA.Goal.STATUS.ACTIVE;
     } else {
       this.status = YUKA.Goal.STATUS.FAILED;
@@ -356,7 +361,12 @@ export class SeekPickupGoal extends YUKA.Goal<TDMAgent> {
     if (ag.pursuitB) ag.pursuitB.weight = 0;
     if (ag.fleeB) ag.fleeB.weight = 0;
     if (ag.seekB) ag.seekB.weight = 0;
-    if (ag.seekPickupPos) requestAgentPath(ag, ag.seekPickupPos, 'arrive', 2.5);
+    if (ag.arriveB) {
+      ag.arriveB.weight = 1.6;
+      if (ag.seekPickupPos) {
+        (ag.arriveB as any).target.copy(ag.seekPickupPos);
+      }
+    }
 
     if (ag.seekPickupPos && ag.position.distanceTo(ag.seekPickupPos) < 3) {
       this.status = YUKA.Goal.STATUS.COMPLETED;
@@ -373,7 +383,6 @@ export class SeekPickupGoal extends YUKA.Goal<TDMAgent> {
     const ag = this.owner;
     ag.seekingPickup = false;
     ag.seekPickupPos = null;
-    clearAgentNavigation(ag);
     if (ag.arriveB) ag.arriveB.weight = 0;
     this.status = YUKA.Goal.STATUS.COMPLETED;
   }
@@ -384,7 +393,6 @@ export class TeamPushGoal extends YUKA.Goal<TDMAgent> {
     const ag = this.owner;
     ag.stateName = 'TEAM_PUSH';
     ag.stateTime = 0;
-    clearAgentNavigation(ag);
     this.status = YUKA.Goal.STATUS.ACTIVE;
   }
 
@@ -421,11 +429,38 @@ export class TeamPushGoal extends YUKA.Goal<TDMAgent> {
 
   terminate(): void {
     const ag = this.owner;
-    clearAgentNavigation(ag);
     if (ag.seekB) ag.seekB.weight = 0;
     if (ag.pursuitB) ag.pursuitB.weight = 0;
     this.status = YUKA.Goal.STATUS.COMPLETED;
   }
+}
+
+
+
+function getCTFObjectivePosition(ag: TDMAgent): YUKA.Vector3 | null {
+  if (gameState.mode !== 'ctf') return null;
+
+  const ownFlag = gameState.flags[ag.team];
+  const enemyFlag = gameState.flags[getEnemyFlagTeam(ag.team)];
+
+  if (enemyFlag.carriedBy === ag) {
+    return new YUKA.Vector3(ownFlag.base.x, 0, ownFlag.base.z);
+  }
+
+  if (ownFlag.dropped && (ag.botClass === 'rifleman' || ag.botClass === 'sniper')) {
+    return new YUKA.Vector3(ownFlag.dropPos.x, 0, ownFlag.dropPos.z);
+  }
+
+  if (!enemyFlag.carriedBy) {
+    const targetPos = enemyFlag.dropped ? enemyFlag.dropPos : enemyFlag.base;
+    return new YUKA.Vector3(targetPos.x, 0, targetPos.z);
+  }
+
+  if (enemyFlag.carriedBy && enemyFlag.carriedBy.team === ag.team) {
+    return new YUKA.Vector3(ownFlag.base.x, 0, ownFlag.base.z);
+  }
+
+  return new YUKA.Vector3(enemyFlag.carriedBy?.position.x ?? enemyFlag.base.x, 0, enemyFlag.carriedBy?.position.z ?? enemyFlag.base.z);
 }
 
 // ═══════════════════════════════════════════
@@ -671,6 +706,20 @@ const HUNT_POINTS: YUKA.Vector3[] = [
 
 function findHuntTarget(ag: TDMAgent): YUKA.Vector3 | null {
   const scores: { pos: YUKA.Vector3; score: number }[] = [];
+
+  if (gameState.mode === 'ctf') {
+    for (const team of [0, 1] as const) {
+      const flag = gameState.flags[team];
+      if (flag.carriedBy === ag) {
+        scores.push({ pos: new YUKA.Vector3(ag.team === 0 ? -48 : 48, 0, ag.team === 0 ? -48 : 48), score: 200 });
+      }
+    }
+    const enemyFlag = gameState.flags[getEnemyFlagTeam(ag.team)];
+    if (!enemyFlag.carriedBy) {
+      const p = enemyFlag.dropped ? enemyFlag.dropPos : enemyFlag.base;
+      scores.push({ pos: new YUKA.Vector3(p.x, 0, p.z), score: 95 });
+    }
+  }
 
   const enemySpawnX = ag.team === TEAM_BLUE ? 45 : -45;
   const enemySpawnZ = ag.team === TEAM_BLUE ? -45 : 45;
