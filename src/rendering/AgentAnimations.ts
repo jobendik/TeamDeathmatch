@@ -4,73 +4,77 @@ import { clone as skeletonClone } from 'three/examples/jsm/utils/SkeletonUtils.j
 import type { TDMAgent } from '@/entities/TDMAgent';
 
 const BASE_URL = import.meta.env.BASE_URL;
-const MODEL_URL = `${BASE_URL}models/characters/swat/Swat.fbx`;
-const ANIM_BASE = `${BASE_URL}models/characters/swat/animations`;
 
-// Juster denne hvis modellen blir for liten eller stor.
-// Mixamo FBX ender ofte på 0.01 i Three.js-prosjekter.
-const SWAT_SCALE = 0.01;
+const SWAT_MODEL_URL = `${BASE_URL}models/characters/swat/Swat.fbx`;
+const SWAT_ANIM_BASE = `${BASE_URL}models/characters/swat/animations`;
+
+const ENEMY_MODEL_URL = `${BASE_URL}models/characters/enemy/enemy.fbx`;
+const ENEMY_ANIM_BASE = `${BASE_URL}models/characters/enemy/animations`;
+
+// Juster ved behov. 0.01 passer ofte bra for Mixamo FBX.
+const CHARACTER_SCALE = 0.01;
 
 const ANIM_FILES = {
-  idle: `${ANIM_BASE}/idle.fbx`,
-  idleAiming: `${ANIM_BASE}/idle aiming.fbx`,
-  idleCrouching: `${ANIM_BASE}/idle crouching.fbx`,
-  idleCrouchingAiming: `${ANIM_BASE}/idle crouching aiming.fbx`,
+  idle: 'idle.fbx',
+  idleAiming: 'idle aiming.fbx',
+  idleCrouching: 'idle crouching.fbx',
+  idleCrouchingAiming: 'idle crouching aiming.fbx',
 
-  walkForward: `${ANIM_BASE}/walk forward.fbx`,
-  walkBackward: `${ANIM_BASE}/walk backward.fbx`,
-  walkLeft: `${ANIM_BASE}/walk left.fbx`,
-  walkRight: `${ANIM_BASE}/walk right.fbx`,
-  walkForwardLeft: `${ANIM_BASE}/walk forward left.fbx`,
-  walkForwardRight: `${ANIM_BASE}/walk forward right.fbx`,
-  walkBackwardLeft: `${ANIM_BASE}/walk backward left.fbx`,
-  walkBackwardRight: `${ANIM_BASE}/walk backward right.fbx`,
+  walkForward: 'walk forward.fbx',
+  walkBackward: 'walk backward.fbx',
+  walkLeft: 'walk left.fbx',
+  walkRight: 'walk right.fbx',
+  walkForwardLeft: 'walk forward left.fbx',
+  walkForwardRight: 'walk forward right.fbx',
+  walkBackwardLeft: 'walk backward left.fbx',
+  walkBackwardRight: 'walk backward right.fbx',
 
-  runForward: `${ANIM_BASE}/run forward.fbx`,
-  runBackward: `${ANIM_BASE}/run backward.fbx`,
-  runLeft: `${ANIM_BASE}/run left.fbx`,
-  runRight: `${ANIM_BASE}/run right.fbx`,
-  runForwardLeft: `${ANIM_BASE}/run forward left.fbx`,
-  runForwardRight: `${ANIM_BASE}/run forward right.fbx`,
-  runBackwardLeft: `${ANIM_BASE}/run backward left.fbx`,
-  runBackwardRight: `${ANIM_BASE}/run backward right.fbx`,
+  runForward: 'run forward.fbx',
+  runBackward: 'run backward.fbx',
+  runLeft: 'run left.fbx',
+  runRight: 'run right.fbx',
+  runForwardLeft: 'run forward left.fbx',
+  runForwardRight: 'run forward right.fbx',
+  runBackwardLeft: 'run backward left.fbx',
+  runBackwardRight: 'run backward right.fbx',
 
-  sprintForward: `${ANIM_BASE}/sprint forward.fbx`,
-  sprintBackward: `${ANIM_BASE}/sprint backward.fbx`,
-  sprintLeft: `${ANIM_BASE}/sprint left.fbx`,
-  sprintRight: `${ANIM_BASE}/sprint right.fbx`,
-  sprintForwardLeft: `${ANIM_BASE}/sprint forward left.fbx`,
-  sprintForwardRight: `${ANIM_BASE}/sprint forward right.fbx`,
-  sprintBackwardLeft: `${ANIM_BASE}/sprint backward left.fbx`,
-  sprintBackwardRight: `${ANIM_BASE}/sprint backward right.fbx`,
+  sprintForward: 'sprint forward.fbx',
+  sprintBackward: 'sprint backward.fbx',
+  sprintLeft: 'sprint left.fbx',
+  sprintRight: 'sprint right.fbx',
+  sprintForwardLeft: 'sprint forward left.fbx',
+  sprintForwardRight: 'sprint forward right.fbx',
+  sprintBackwardLeft: 'sprint backward left.fbx',
+  sprintBackwardRight: 'sprint backward right.fbx',
 
-  crouchWalkForward: `${ANIM_BASE}/walk crouching forward.fbx`,
-  crouchWalkBackward: `${ANIM_BASE}/walk crouching backward.fbx`,
-  crouchWalkLeft: `${ANIM_BASE}/walk crouching left.fbx`,
-  crouchWalkRight: `${ANIM_BASE}/walk crouching right.fbx`,
-  crouchWalkForwardLeft: `${ANIM_BASE}/walk crouching forward left.fbx`,
-  crouchWalkForwardRight: `${ANIM_BASE}/walk crouching forward right.fbx`,
-  crouchWalkBackwardLeft: `${ANIM_BASE}/walk crouching backward left.fbx`,
-  crouchWalkBackwardRight: `${ANIM_BASE}/walk crouching backward right.fbx`,
+  crouchWalkForward: 'walk crouching forward.fbx',
+  crouchWalkBackward: 'walk crouching backward.fbx',
+  crouchWalkLeft: 'walk crouching left.fbx',
+  crouchWalkRight: 'walk crouching right.fbx',
+  crouchWalkForwardLeft: 'walk crouching forward left.fbx',
+  crouchWalkForwardRight: 'walk crouching forward right.fbx',
+  crouchWalkBackwardLeft: 'walk crouching backward left.fbx',
+  crouchWalkBackwardRight: 'walk crouching backward right.fbx',
 
-  jumpUp: `${ANIM_BASE}/jump up.fbx`,
-  jumpLoop: `${ANIM_BASE}/jump loop.fbx`,
-  jumpDown: `${ANIM_BASE}/jump down.fbx`,
+  jumpUp: 'jump up.fbx',
+  jumpLoop: 'jump loop.fbx',
+  jumpDown: 'jump down.fbx',
 
-  turnLeft90: `${ANIM_BASE}/turn 90 left.fbx`,
-  turnRight90: `${ANIM_BASE}/turn 90 right.fbx`,
-  crouchTurnLeft90: `${ANIM_BASE}/crouching turn 90 left.fbx`,
-  crouchTurnRight90: `${ANIM_BASE}/crouching turn 90 right.fbx`,
+  turnLeft90: 'turn 90 left.fbx',
+  turnRight90: 'turn 90 right.fbx',
+  crouchTurnLeft90: 'crouching turn 90 left.fbx',
+  crouchTurnRight90: 'crouching turn 90 right.fbx',
 
-  deathFront: `${ANIM_BASE}/death from the front.fbx`,
-  deathBack: `${ANIM_BASE}/death from the back.fbx`,
-  deathRight: `${ANIM_BASE}/death from right.fbx`,
-  deathFrontHeadshot: `${ANIM_BASE}/death from front headshot.fbx`,
-  deathBackHeadshot: `${ANIM_BASE}/death from back headshot.fbx`,
-  deathCrouchHeadshotFront: `${ANIM_BASE}/death crouching headshot front.fbx`,
+  deathFront: 'death from the front.fbx',
+  deathBack: 'death from the back.fbx',
+  deathRight: 'death from right.fbx',
+  deathFrontHeadshot: 'death from front headshot.fbx',
+  deathBackHeadshot: 'death from back headshot.fbx',
+  deathCrouchHeadshotFront: 'death crouching headshot front.fbx',
 } as const;
 
 type AgentAnimKey = keyof typeof ANIM_FILES;
+type CharacterVariant = 'swat' | 'enemy';
 
 type AgentAnimController = {
   mixer: THREE.AnimationMixer;
@@ -81,16 +85,39 @@ type AgentAnimController = {
   lockedUntil: number;
   dead: boolean;
   lastYaw: number;
+  variant: CharacterVariant;
+};
+
+type CharacterAssetBundle = {
+  modelUrl: string;
+  animBase: string;
+  baseModel: THREE.Group | null;
+  loadPromise: Promise<void> | null;
+  ready: boolean;
+  clips: Partial<Record<AgentAnimKey, THREE.AnimationClip>>;
 };
 
 const loader = new FBXLoader();
 
-let baseModel: THREE.Group | null = null;
-let loadPromise: Promise<void> | null = null;
-let assetsReady = false;
-const clips: Partial<Record<AgentAnimKey, THREE.AnimationClip>> = {};
+const bundles: Record<CharacterVariant, CharacterAssetBundle> = {
+  swat: {
+    modelUrl: SWAT_MODEL_URL,
+    animBase: SWAT_ANIM_BASE,
+    baseModel: null,
+    loadPromise: null,
+    ready: false,
+    clips: {},
+  },
+  enemy: {
+    modelUrl: ENEMY_MODEL_URL,
+    animBase: ENEMY_ANIM_BASE,
+    baseModel: null,
+    loadPromise: null,
+    ready: false,
+    clips: {},
+  },
+};
 
-// Alle rene locomotion-klipp som skal kjøres "in place" i kode
 const LOCOMOTION_KEYS = new Set<AgentAnimKey>([
   'walkForward',
   'walkBackward',
@@ -198,60 +225,68 @@ function makeClipInPlace(original: THREE.AnimationClip, key: AgentAnimKey): THRE
     }
 
     const values = track.values.slice();
-
     const baseX = values[0] ?? 0;
     const baseZ = values[2] ?? 0;
 
     for (let i = 0; i < values.length; i += 3) {
-      values[i] = baseX;       // X nulles til startverdi
-      values[i + 2] = baseZ;   // Z nulles til startverdi
-      // Y beholdes for naturlig opp/ned-bevegelse
+      values[i] = baseX;
+      values[i + 2] = baseZ;
+      // Y beholdes
     }
 
-    return new THREE.VectorKeyframeTrack(
-      track.name,
-      track.times.slice(),
-      values,
-    );
+    return new THREE.VectorKeyframeTrack(track.name, track.times.slice(), values);
   });
 
   return clip;
 }
 
-export async function preloadBlueSwatAssets(): Promise<void> {
-  if (assetsReady) return;
-  if (loadPromise) return loadPromise;
+function animUrl(variant: CharacterVariant, key: AgentAnimKey): string {
+  return `${bundles[variant].animBase}/${ANIM_FILES[key]}`;
+}
 
-  loadPromise = (async () => {
+async function preloadCharacterAssets(variant: CharacterVariant): Promise<void> {
+  const bundle = bundles[variant];
+  if (bundle.ready) return;
+  if (bundle.loadPromise) return bundle.loadPromise;
+
+  bundle.loadPromise = (async () => {
+    const keys = Object.keys(ANIM_FILES) as AgentAnimKey[];
+
     const [modelObj, ...animObjs] = await Promise.all([
-      loadFBX(MODEL_URL),
-      ...Object.values(ANIM_FILES).map((url) => loadFBX(url)),
+      loadFBX(bundle.modelUrl),
+      ...keys.map((key) => loadFBX(animUrl(variant, key))),
     ]);
 
-    baseModel = modelObj;
-    prepRenderable(baseModel);
+    bundle.baseModel = modelObj;
+    prepRenderable(bundle.baseModel);
 
-    const keys = Object.keys(ANIM_FILES) as AgentAnimKey[];
     for (let i = 0; i < keys.length; i++) {
       const key = keys[i];
-      const rawClip = getFirstClip(animObjs[i], ANIM_FILES[key]);
-      clips[key] = makeClipInPlace(rawClip, key);
-
-      // Debug ved behov:
-      // if (key === 'runForward') {
-      //   console.log('runForward tracks:', rawClip.tracks.map((t) => t.name));
-      // }
+      const rawClip = getFirstClip(animObjs[i], animUrl(variant, key));
+      bundle.clips[key] = makeClipInPlace(rawClip, key);
     }
 
-    assetsReady = true;
-    console.info('[AgentAnimations] Swat model + clips loaded.');
+    bundle.ready = true;
+    console.info(`[AgentAnimations] ${variant} model + clips loaded.`);
   })();
 
-  return loadPromise;
+  return bundle.loadPromise;
+}
+
+export async function preloadBlueSwatAssets(): Promise<void> {
+  await preloadCharacterAssets('swat');
+}
+
+export async function preloadEnemyAssets(): Promise<void> {
+  await preloadCharacterAssets('enemy');
 }
 
 export function hasBlueSwatAssets(): boolean {
-  return assetsReady && !!baseModel;
+  return bundles.swat.ready && !!bundles.swat.baseModel;
+}
+
+export function hasEnemyAssets(): boolean {
+  return bundles.enemy.ready && !!bundles.enemy.baseModel;
 }
 
 function setRepeat(action: THREE.AnimationAction): void {
@@ -266,12 +301,13 @@ function setOnce(action: THREE.AnimationAction): void {
   action.setLoop(THREE.LoopOnce, 1);
 }
 
-function buildController(model: THREE.Group): AgentAnimController {
+function buildController(model: THREE.Group, variant: CharacterVariant): AgentAnimController {
   const mixer = new THREE.AnimationMixer(model);
   const actions: Partial<Record<AgentAnimKey, THREE.AnimationAction>> = {};
+  const bundle = bundles[variant];
 
-  for (const key of Object.keys(clips) as AgentAnimKey[]) {
-    const clip = clips[key];
+  for (const key of Object.keys(bundle.clips) as AgentAnimKey[]) {
+    const clip = bundle.clips[key];
     if (!clip) continue;
 
     const action = mixer.clipAction(clip);
@@ -289,6 +325,7 @@ function buildController(model: THREE.Group): AgentAnimController {
     lockedUntil: 0,
     dead: false,
     lastYaw: 0,
+    variant,
   };
 }
 
@@ -342,16 +379,19 @@ function fallbackCandidates(key: AgentAnimKey): AgentAnimKey[] {
   return [key, ...(map[key] ?? [])];
 }
 
-function resolveExistingKey(key: AgentAnimKey): AgentAnimKey | null {
+function resolveExistingKey(
+  actions: Partial<Record<AgentAnimKey, THREE.AnimationAction>>,
+  key: AgentAnimKey,
+): AgentAnimKey | null {
   const candidates = fallbackCandidates(key);
   for (const candidate of candidates) {
-    if (clips[candidate]) return candidate;
+    if (actions[candidate]) return candidate;
   }
   return null;
 }
 
 function fadeTo(ctrl: AgentAnimController, requested: AgentAnimKey, fade = 0.16): void {
-  const key = resolveExistingKey(requested);
+  const key = resolveExistingKey(ctrl.actions, requested);
   if (!key) return;
   if (ctrl.current === key) return;
 
@@ -367,7 +407,7 @@ function fadeTo(ctrl: AgentAnimController, requested: AgentAnimKey, fade = 0.16)
 }
 
 function playOneShot(ctrl: AgentAnimController, requested: AgentAnimKey, lockSeconds: number): number {
-  const key = resolveExistingKey(requested);
+  const key = resolveExistingKey(ctrl.actions, requested);
   if (!key) return 0;
 
   const next = ctrl.actions[key];
@@ -382,7 +422,7 @@ function playOneShot(ctrl: AgentAnimController, requested: AgentAnimKey, lockSec
   ctrl.current = key;
   ctrl.lockedUntil = ctrl.elapsed + lockSeconds;
 
-  return clips[key]?.duration ?? lockSeconds;
+  return next.getClip().duration || lockSeconds;
 }
 
 function getController(renderComponent: THREE.Object3D | null | undefined): AgentAnimController | null {
@@ -494,27 +534,36 @@ function chooseMovementAnimation(
   return pickDirectionalSet(localForward, localRight, 'run');
 }
 
-export function attachBlueSwatCharacter(renderComponent: THREE.Group): void {
-  if (!baseModel || !assetsReady) {
-    throw new Error('Swat assets not preloaded.');
+function attachCharacter(renderComponent: THREE.Group, variant: CharacterVariant): void {
+  const bundle = bundles[variant];
+  if (!bundle.baseModel || !bundle.ready) {
+    throw new Error(`${variant} assets not preloaded.`);
   }
 
-  const model = skeletonClone(baseModel) as THREE.Group;
-  model.name = 'BlueSwatCharacter';
-  model.scale.setScalar(SWAT_SCALE);
+  const model = skeletonClone(bundle.baseModel) as THREE.Group;
+  model.name = variant === 'swat' ? 'BlueSwatCharacter' : 'EnemyCharacter';
+  model.scale.setScalar(CHARACTER_SCALE);
   model.position.set(0, 0, 0);
 
   prepRenderable(model);
 
   renderComponent.add(model);
 
-  const ctrl = buildController(model);
+  const ctrl = buildController(model, variant);
   ctrl.lastYaw = yawFromQuaternion(renderComponent.quaternion);
 
   renderComponent.userData.characterModel = model;
   renderComponent.userData.agentAnimController = ctrl;
 
   fadeTo(ctrl, 'idle', 0.01);
+}
+
+export function attachBlueSwatCharacter(renderComponent: THREE.Group): void {
+  attachCharacter(renderComponent, 'swat');
+}
+
+export function attachEnemyCharacter(renderComponent: THREE.Group): void {
+  attachCharacter(renderComponent, 'enemy');
 }
 
 export function updateAgentAnimations(agents: readonly TDMAgent[], dt: number): void {
@@ -549,7 +598,7 @@ export function updateAgentAnimations(agents: readonly TDMAgent[], dt: number): 
         ? (crouched ? 'crouchTurnLeft90' : 'turnLeft90')
         : (crouched ? 'crouchTurnRight90' : 'turnRight90');
 
-      const resolvedTurn = resolveExistingKey(turnKey);
+      const resolvedTurn = resolveExistingKey(ctrl.actions, turnKey);
       if (resolvedTurn && resolvedTurn !== 'idle' && resolvedTurn !== 'idleCrouching') {
         playOneShot(ctrl, turnKey, 0.22);
         return;
