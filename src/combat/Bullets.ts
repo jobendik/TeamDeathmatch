@@ -27,7 +27,7 @@ export function spawnBullet(
   mesh.add(pl);
 
   gameState.bullets.push({
-    mesh, pl, dir: dir.clone(), ownerType, ownerTeam, dmg, spd, life: 4,
+    mesh, pl, dir: dir.clone(), ownerType, ownerTeam, ownerAgent: ownerType === 'player' ? gameState.player : null, dmg, spd, life: 4,
   });
 }
 
@@ -70,9 +70,9 @@ export function updateBullets(dt: number): void {
         const dz = b.mesh.position.z - ag.position.z;
         if (dx * dx + dy * dy + dz * dz < 0.7 ** 2) {
           if (ag === player) {
-            dealDmgPlayer(b.dmg);
+            dealDmgPlayer(b.dmg, b.ownerAgent ?? null);
           } else {
-            dealDmgAgent(ag, b.dmg, b.ownerType === 'player' ? null : b.ownerTeam);
+            dealDmgAgent(ag, b.dmg, b.ownerAgent ?? null);
           }
           spawnImpact(b.mesh.position.clone(), ag.team === TEAM_BLUE ? 0x38bdf8 : 0xef4444);
           hit = true;
