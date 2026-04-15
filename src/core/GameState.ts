@@ -95,6 +95,11 @@ export const gameState = {
   time: null as unknown as YUKA.Time,
   entityManager: null as unknown as YUKA.EntityManager,
 
+  // Navigation
+  navMesh: null as YUKA.NavMesh | null,
+  navMeshLoaded: false,
+  navMeshLoading: false,
+
   // Viewmodel
   vmScene: null as THREE.Scene | null,
   vmCamera: null as THREE.PerspectiveCamera | null,
