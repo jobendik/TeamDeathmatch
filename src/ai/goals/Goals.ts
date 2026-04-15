@@ -1,48 +1,17 @@
 import * as YUKA from 'yuka';
 import type { TDMAgent } from '@/entities/TDMAgent';
 import { CLASS_CONFIGS } from '@/config/classes';
-import {
-  findCoverFrom,
-  findFlankPosition,
-  findPeekCover,
-  findSniperNest,
-  findNearestPickup,
-  isInsideWall,
-  pushOutOfWall,
-} from '@/ai/CoverSystem';
+import { findCoverFrom, findFlankPosition, findPeekCover, findSniperNest, findNearestPickup, isInsideWall, pushOutOfWall } from '@/ai/CoverSystem';
 import { gameState } from '@/core/GameState';
+import { requestAgentPath, clearAgentNavigation } from '@/navigation/NavMeshService';
 import { TEAM_BLUE } from '@/config/constants';
 import { WEAPONS } from '@/config/weapons';
-import { getInvestigationPosition } from '@/ai/Perception';
-import { getTeamBoard, noteTeamIntent } from '@/ai/TacticalBlackboard';
 
-function shoulderSign(ag: TDMAgent): number {
-  return ag.preferredPeekSide === 'left' ? -1 : 1;
-}
-
-function sanitizePos(pos: YUKA.Vector3): YUKA.Vector3 {
-  if (!isInsideWall(pos.x, pos.z)) return pos;
-  const safe = pushOutOfWall(pos.x, pos.z);
-  return new YUKA.Vector3(safe.x, 0, safe.z);
-}
-
-function setSeekTarget(ag: TDMAgent, x: number, z: number, weight = 1.2): void {
-  const safe = isInsideWall(x, z) ? pushOutOfWall(x, z) : { x, z };
-  if (ag.seekB) {
-    (ag.seekB as any).target.set(safe.x, 0, safe.z);
-    ag.seekB.weight = weight;
-  }
-}
-
-function setArriveTarget(ag: TDMAgent, pos: YUKA.Vector3, weight = 1.3): void {
-  if (ag.arriveB) {
-    (ag.arriveB as any).target.copy(pos);
-    ag.arriveB.weight = weight;
-  }
-}
+// IMPORTANT: YUKA calls Goal lifecycle methods (activate, execute, terminate)
+// WITHOUT passing the owner. All methods must use this.owner instead.
 
 // ═══════════════════════════════════════════
-//  ATOMIC GOALS
+//  ATOMIC GOALS — leaf-level behaviors
 // ═══════════════════════════════════════════
 
 export class PatrolGoal extends YUKA.Goal<TDMAgent> {
@@ -50,9 +19,9 @@ export class PatrolGoal extends YUKA.Goal<TDMAgent> {
     const ag = this.owner;
     ag.stateName = 'PATROL';
     ag.stateTime = 0;
+    clearAgentNavigation(ag);
     this.status = YUKA.Goal.STATUS.ACTIVE;
   }
-
   execute(): void {
     const ag = this.owner;
     if (ag.wanderB) ag.wanderB.weight = 1.0;
@@ -61,13 +30,12 @@ export class PatrolGoal extends YUKA.Goal<TDMAgent> {
     if (ag.pursuitB) ag.pursuitB.weight = 0;
     if (ag.fleeB) ag.fleeB.weight = 0;
 
-    const investigatePos = getInvestigationPosition(ag);
-    if (investigatePos) {
-      ag.lastKnownPos.copy(investigatePos);
+    if (ag.teamCallout && ag.teamCalloutTime > ag.stateTime - 5) {
+      ag.lastKnownPos.copy(ag.teamCallout);
       ag.hasLastKnown = true;
+      ag.teamCallout = null;
     }
   }
-
   terminate(): void {
     const ag = this.owner;
     if (ag.wanderB) ag.wanderB.weight = 0;
@@ -87,8 +55,12 @@ export class MoveToPositionGoal extends YUKA.Goal<TDMAgent> {
     const ag = this.owner;
     ag.stateName = 'INVESTIGATE';
     ag.stateTime = 0;
-    this.targetPos = sanitizePos(this.targetPos);
-    ag.investigatePos = this.targetPos.clone();
+    if (isInsideWall(this.targetPos.x, this.targetPos.z)) {
+      const safe = pushOutOfWall(this.targetPos.x, this.targetPos.z);
+      this.targetPos.x = safe.x;
+      this.targetPos.z = safe.z;
+    }
+    requestAgentPath(ag, this.targetPos, 'arrive', 2.75, true);
     this.status = YUKA.Goal.STATUS.ACTIVE;
   }
 
@@ -98,21 +70,16 @@ export class MoveToPositionGoal extends YUKA.Goal<TDMAgent> {
     if (ag.pursuitB) ag.pursuitB.weight = 0;
     if (ag.fleeB) ag.fleeB.weight = 0;
     if (ag.seekB) ag.seekB.weight = 0;
-
-    setArriveTarget(ag, this.targetPos, 1.25);
+    requestAgentPath(ag, this.targetPos, 'arrive', 2.75);
 
     if (ag.position.distanceTo(this.targetPos) < 3) {
-      this.status = YUKA.Goal.STATUS.COMPLETED;
-    }
-
-    if (ag.currentTarget && ag.targetCertainty > 0.55 && ag.position.distanceTo(ag.currentTarget.position) < 12) {
       this.status = YUKA.Goal.STATUS.COMPLETED;
     }
   }
 
   terminate(): void {
     const ag = this.owner;
-    if (ag.arriveB) ag.arriveB.weight = 0;
+    clearAgentNavigation(ag);
     this.status = YUKA.Goal.STATUS.COMPLETED;
   }
 }
@@ -123,55 +90,54 @@ export class EngageCombatGoal extends YUKA.Goal<TDMAgent> {
     ag.stateName = 'ENGAGE';
     ag.stateTime = 0;
     ag.combatMoveTimer = 0;
-    if (gameState.worldElapsed > ag.routeCommitUntil) {
-      ag.routeCommitUntil = gameState.worldElapsed + 0.65 + ag.patience * 0.9;
-    }
+    clearAgentNavigation(ag);
     this.status = YUKA.Goal.STATUS.ACTIVE;
   }
 
   execute(): void {
     const ag = this.owner;
-    if (!ag.currentTarget || ag.currentTarget.isDead) {
-      this.status = YUKA.Goal.STATUS.COMPLETED;
-      return;
-    }
-
     if (ag.wanderB) ag.wanderB.weight = 0;
     if (ag.arriveB) ag.arriveB.weight = 0;
     if (ag.fleeB) ag.fleeB.weight = 0;
 
-    if (ag.pursuitB) ag.pursuitB.weight = ag.tacticalRole === 'point' ? 0.9 : 0.55;
+    if (ag.pursuitB) ag.pursuitB.weight = 0.8;
 
-    if (ag.seekB) {
+    if (ag.seekB && ag.currentTarget) {
       const toTarget = new YUKA.Vector3().subVectors(ag.currentTarget.position, ag.position);
       const dist = toTarget.length();
       toTarget.normalize();
 
-      const side = ag.strafeDir * shoulderSign(ag);
-      const perpX = -toTarget.z * side;
-      const perpZ = toTarget.x * side;
+      const perpX = -toTarget.z * ag.strafeDir;
+      const perpZ = toTarget.x * ag.strafeDir;
 
-      let rangePush = 0;
-      if (dist > ag.preferredRange + 4) rangePush = 0.45;
-      else if (dist < ag.preferredRange - 4) rangePush = -0.55;
+      let rangeFactor = 0;
+      if (dist > ag.preferredRange + 5) rangeFactor = 0.5;
+      else if (dist < ag.preferredRange - 5) rangeFactor = -0.6;
 
-      let lateralMag = 5 + ag.peekBias * 4;
-      if (ag.tacticalRole === 'flanker' || ag.tacticalRole === 'lurker') lateralMag += 3;
-      if (ag.tacticalRole === 'anchor' || ag.botClass === 'sniper') lateralMag -= 1.5;
+      const strafeMultiplier = ag.botClass === 'flanker' ? 12 : (ag.botClass === 'assault' ? 10 : 8);
 
-      let forwardMag = rangePush * (ag.tacticalRole === 'point' ? 10 : 7);
-      if (ag.tacticalRole === 'trader') forwardMag -= 1.5;
-      if (ag.tacticalRole === 'support') forwardMag -= 2.5;
+      let seekX = ag.position.x + perpX * strafeMultiplier + toTarget.x * rangeFactor * 8;
+      let seekZ = ag.position.z + perpZ * strafeMultiplier + toTarget.z * rangeFactor * 8;
 
-      const jitter = ag.discipline > 0.7 ? 0.8 : 1.4;
-      const seekX = ag.position.x + perpX * lateralMag + toTarget.x * forwardMag + (Math.random() - 0.5) * jitter;
-      const seekZ = ag.position.z + perpZ * lateralMag + toTarget.z * forwardMag + (Math.random() - 0.5) * jitter;
-      setSeekTarget(ag, seekX, seekZ, 1.2 + ag.bravery * 0.2);
+      if (isInsideWall(seekX, seekZ)) {
+        const safe = pushOutOfWall(seekX, seekZ);
+        seekX = safe.x;
+        seekZ = safe.z;
+      }
+
+      (ag.seekB as any).target.set(seekX, 0, seekZ);
+      ag.seekB.weight = 1.4;
+      if (ag.pursuitB) ag.pursuitB.weight = 0.2;
+    }
+
+    if (!ag.currentTarget || ag.currentTarget.isDead) {
+      this.status = YUKA.Goal.STATUS.COMPLETED;
     }
   }
 
   terminate(): void {
     const ag = this.owner;
+    clearAgentNavigation(ag);
     if (ag.seekB) ag.seekB.weight = 0;
     if (ag.pursuitB) ag.pursuitB.weight = 0;
     this.status = YUKA.Goal.STATUS.COMPLETED;
@@ -179,16 +145,19 @@ export class EngageCombatGoal extends YUKA.Goal<TDMAgent> {
 }
 
 export class RetreatGoal extends YUKA.Goal<TDMAgent> {
+  private origSpeed = 0;
+
   activate(): void {
     const ag = this.owner;
     ag.stateName = 'RETREAT';
     ag.stateTime = 0;
-    ag.maxSpeed = CLASS_CONFIGS[ag.botClass].maxSpeed * 1.12;
+    this.origSpeed = ag.maxSpeed;
+    ag.maxSpeed *= 1.15;
     if (ag.currentTarget) {
-      const cover = findCoverFrom(ag, ag.lastKnownPos);
+      const cover = findCoverFrom(ag, ag.currentTarget.position);
       if (cover) ag.currentCover = cover;
     }
-    noteTeamIntent(ag.team, 'reset', ag.currentCover ?? ag.spawnPos, 0.35);
+    requestAgentPath(ag, ag.currentCover || ag.spawnPos, 'arrive', 2.5, true);
     this.status = YUKA.Goal.STATUS.ACTIVE;
   }
 
@@ -197,27 +166,38 @@ export class RetreatGoal extends YUKA.Goal<TDMAgent> {
     if (ag.wanderB) ag.wanderB.weight = 0;
     if (ag.pursuitB) ag.pursuitB.weight = 0;
 
-    const fallback = ag.currentCover ?? ag.spawnPos;
-    setArriveTarget(ag, fallback, 1.45);
+    requestAgentPath(ag, ag.currentCover || ag.spawnPos, 'arrive', 2.5);
 
     if (ag.seekB && ag.currentTarget) {
       const away = new YUKA.Vector3().subVectors(ag.position, ag.currentTarget.position).normalize();
-      const perpX = -away.z * shoulderSign(ag);
-      const perpZ = away.x * shoulderSign(ag);
-      const rx = ag.position.x + perpX * 5 + away.x * 6;
-      const rz = ag.position.z + perpZ * 5 + away.z * 6;
-      setSeekTarget(ag, rx, rz, 0.9);
+      const perpX = -away.z * ag.strafeDir;
+      const perpZ = away.x * ag.strafeDir;
+      let rx = ag.position.x + perpX * 7 + away.x * 4;
+      let rz = ag.position.z + perpZ * 7 + away.z * 4;
+      if (isInsideWall(rx, rz)) {
+        const safe = pushOutOfWall(rx, rz);
+        rx = safe.x;
+        rz = safe.z;
+      }
+      (ag.seekB as any).target.set(rx, 0, rz);
+      ag.seekB.weight = 0.8;
     } else if (ag.seekB) {
       ag.seekB.weight = 0;
     }
 
-    if (fallback && ag.position.distanceTo(fallback) < 3.2) this.status = YUKA.Goal.STATUS.COMPLETED;
-    if (ag.stateTime > 5.5) this.status = YUKA.Goal.STATUS.COMPLETED;
+    if (ag.currentCover && ag.position.distanceTo(ag.currentCover) < 3) {
+      this.status = YUKA.Goal.STATUS.COMPLETED;
+    }
+    if (ag.stateTime > 5) {
+      this.status = YUKA.Goal.STATUS.COMPLETED;
+    }
   }
 
   terminate(): void {
     const ag = this.owner;
-    ag.maxSpeed = CLASS_CONFIGS[ag.botClass].maxSpeed;
+    const cfg = CLASS_CONFIGS[ag.botClass];
+    if (cfg) ag.maxSpeed = cfg.maxSpeed;
+    clearAgentNavigation(ag);
     if (ag.seekB) ag.seekB.weight = 0;
     if (ag.arriveB) ag.arriveB.weight = 0;
     this.status = YUKA.Goal.STATUS.COMPLETED;
@@ -227,7 +207,7 @@ export class RetreatGoal extends YUKA.Goal<TDMAgent> {
 export class TakeCoverGoal extends YUKA.Goal<TDMAgent> {
   duration: number;
 
-  constructor(owner: TDMAgent, duration = 2.5) {
+  constructor(owner: TDMAgent, duration: number = 2.5) {
     super(owner);
     this.duration = duration;
   }
@@ -236,6 +216,7 @@ export class TakeCoverGoal extends YUKA.Goal<TDMAgent> {
     const ag = this.owner;
     ag.stateName = 'COVER';
     ag.stateTime = 0;
+    if (ag.currentCover) requestAgentPath(ag, ag.currentCover, 'arrive', 2.25, true);
     this.status = YUKA.Goal.STATUS.ACTIVE;
   }
 
@@ -245,10 +226,15 @@ export class TakeCoverGoal extends YUKA.Goal<TDMAgent> {
     if (ag.pursuitB) ag.pursuitB.weight = 0;
     if (ag.fleeB) ag.fleeB.weight = 0;
     if (ag.seekB) ag.seekB.weight = 0;
-    if (ag.currentCover) setArriveTarget(ag, ag.currentCover, 1.35);
+    if (ag.currentCover) requestAgentPath(ag, ag.currentCover, 'arrive', 2.25);
 
-    if (ag.stateTime >= this.duration) this.status = YUKA.Goal.STATUS.COMPLETED;
-    if (ag.hp >= ag.maxHP * 0.9 && ag.ammo >= ag.magSize * 0.5) this.status = YUKA.Goal.STATUS.COMPLETED;
+    // Use stateTime (incremented by actual dt in updateAI)
+    if (ag.stateTime >= this.duration) {
+      this.status = YUKA.Goal.STATUS.COMPLETED;
+    }
+    if (ag.hp >= ag.maxHP * 0.9 && ag.ammo >= ag.magSize * 0.5) {
+      this.status = YUKA.Goal.STATUS.COMPLETED;
+    }
   }
 
   terminate(): void {
@@ -260,15 +246,13 @@ export class TakeCoverGoal extends YUKA.Goal<TDMAgent> {
 
 export class PeekGoal extends YUKA.Goal<TDMAgent> {
   peekDuration = 0;
-  falsePeek = false;
 
   activate(): void {
     const ag = this.owner;
     ag.stateName = 'PEEK';
     ag.stateTime = 0;
     ag.isPeeking = true;
-    this.peekDuration = 0.45 + Math.random() * (0.6 + (1 - ag.patience) * 0.5);
-    this.falsePeek = Math.random() < (1 - ag.discipline) * 0.18;
+    this.peekDuration = 0.6 + Math.random() * 0.8;
     this.status = YUKA.Goal.STATUS.ACTIVE;
   }
 
@@ -278,26 +262,27 @@ export class PeekGoal extends YUKA.Goal<TDMAgent> {
     if (ag.pursuitB) ag.pursuitB.weight = 0;
     if (ag.fleeB) ag.fleeB.weight = 0;
 
-    if (ag.seekB && ag.currentCover && ag.currentTarget) {
+    if (ag.seekB && ag.currentTarget && ag.currentCover) {
       const toTarget = new YUKA.Vector3().subVectors(ag.currentTarget.position, ag.currentCover).normalize();
-      const shoulder = shoulderSign(ag);
-      const perp = new YUKA.Vector3(-toTarget.z * shoulder, 0, toTarget.x * shoulder);
-      const peekOffset = this.falsePeek ? 1.2 : 2.3 + ag.peekBias * 0.8;
-      const peekPos = new YUKA.Vector3(
-        ag.currentCover.x + toTarget.x * 1.8 + perp.x * peekOffset,
+      (ag.seekB as any).target.set(
+        ag.currentCover.x + toTarget.x * 3,
         0,
-        ag.currentCover.z + toTarget.z * 1.8 + perp.z * peekOffset,
+        ag.currentCover.z + toTarget.z * 3,
       );
-      setSeekTarget(ag, peekPos.x, peekPos.z, 1.45);
+      ag.seekB.weight = 1.5;
     }
     if (ag.arriveB) ag.arriveB.weight = 0;
 
-    if (ag.stateTime >= this.peekDuration) this.status = YUKA.Goal.STATUS.COMPLETED;
+    // Use stateTime (incremented by actual dt in updateAI)
+    if (ag.stateTime >= this.peekDuration) {
+      this.status = YUKA.Goal.STATUS.COMPLETED;
+    }
   }
 
   terminate(): void {
     const ag = this.owner;
     ag.isPeeking = false;
+    clearAgentNavigation(ag);
     if (ag.seekB) ag.seekB.weight = 0;
     this.status = YUKA.Goal.STATUS.COMPLETED;
   }
@@ -312,37 +297,31 @@ export class FlankGoal extends YUKA.Goal<TDMAgent> {
     ag.stateTime = 0;
     if (ag.currentTarget) {
       this.flankPos = findFlankPosition(ag, ag.currentTarget.position);
-      if (this.flankPos) {
-        const shoulder = shoulderSign(ag);
-        this.flankPos.x += shoulder * (2.5 + ag.curiosity * 2);
-        this.flankPos = sanitizePos(this.flankPos);
-      }
     }
-    ag.routeCommitUntil = gameState.worldElapsed + 1.2 + ag.chaseBias * 1.2;
-    noteTeamIntent(ag.team, shoulderSign(ag) < 0 ? 'flank_left' : 'flank_right', this.flankPos ?? undefined, 0.62);
+    if (this.flankPos) requestAgentPath(ag, this.flankPos, 'arrive', 3.25, true);
     this.status = this.flankPos ? YUKA.Goal.STATUS.ACTIVE : YUKA.Goal.STATUS.FAILED;
   }
 
   execute(): void {
     const ag = this.owner;
-    if (!this.flankPos) {
-      this.status = YUKA.Goal.STATUS.FAILED;
-      return;
-    }
-
     if (ag.wanderB) ag.wanderB.weight = 0;
     if (ag.pursuitB) ag.pursuitB.weight = 0;
     if (ag.fleeB) ag.fleeB.weight = 0;
     if (ag.arriveB) ag.arriveB.weight = 0;
 
-    setSeekTarget(ag, this.flankPos.x, this.flankPos.z, 1.45);
+    if (this.flankPos) requestAgentPath(ag, this.flankPos, 'arrive', 3.25);
 
-    if (ag.position.distanceTo(this.flankPos) < 4) this.status = YUKA.Goal.STATUS.COMPLETED;
-    if (ag.stateTime > 6.5) this.status = YUKA.Goal.STATUS.COMPLETED;
+    if (this.flankPos && ag.position.distanceTo(this.flankPos) < 4) {
+      this.status = YUKA.Goal.STATUS.COMPLETED;
+    }
+    if (ag.stateTime > 6) {
+      this.status = YUKA.Goal.STATUS.COMPLETED;
+    }
   }
 
   terminate(): void {
     const ag = this.owner;
+    clearAgentNavigation(ag);
     if (ag.seekB) ag.seekB.weight = 0;
     this.status = YUKA.Goal.STATUS.COMPLETED;
   }
@@ -362,8 +341,9 @@ export class SeekPickupGoal extends YUKA.Goal<TDMAgent> {
     ag.stateTime = 0;
     ag.seekingPickup = true;
     const pickup = findNearestPickup(ag, this.pickupType);
-    if (pickup && ag.position.distanceTo(pickup) < 42) {
+    if (pickup && ag.position.distanceTo(pickup) < 40) {
       ag.seekPickupPos = pickup;
+      requestAgentPath(ag, pickup, 'arrive', 2.5, true);
       this.status = YUKA.Goal.STATUS.ACTIVE;
     } else {
       this.status = YUKA.Goal.STATUS.FAILED;
@@ -372,28 +352,28 @@ export class SeekPickupGoal extends YUKA.Goal<TDMAgent> {
 
   execute(): void {
     const ag = this.owner;
-    if (!ag.seekPickupPos) {
-      this.status = YUKA.Goal.STATUS.FAILED;
-      return;
-    }
-
     if (ag.wanderB) ag.wanderB.weight = 0;
     if (ag.pursuitB) ag.pursuitB.weight = 0;
     if (ag.fleeB) ag.fleeB.weight = 0;
     if (ag.seekB) ag.seekB.weight = 0;
-    setArriveTarget(ag, ag.seekPickupPos, 1.55);
+    if (ag.seekPickupPos) requestAgentPath(ag, ag.seekPickupPos, 'arrive', 2.5);
 
-    if (ag.position.distanceTo(ag.seekPickupPos) < 3) this.status = YUKA.Goal.STATUS.COMPLETED;
-    if (ag.currentTarget && ag.position.distanceTo(ag.currentTarget.position) < 12 && ag.targetCertainty > 0.55) {
+    if (ag.seekPickupPos && ag.position.distanceTo(ag.seekPickupPos) < 3) {
+      this.status = YUKA.Goal.STATUS.COMPLETED;
+    }
+    if (ag.currentTarget && ag.position.distanceTo(ag.currentTarget.position) < 12) {
       this.status = YUKA.Goal.STATUS.FAILED;
     }
-    if (ag.stateTime > 8) this.status = YUKA.Goal.STATUS.FAILED;
+    if (ag.stateTime > 8) {
+      this.status = YUKA.Goal.STATUS.FAILED;
+    }
   }
 
   terminate(): void {
     const ag = this.owner;
     ag.seekingPickup = false;
     ag.seekPickupPos = null;
+    clearAgentNavigation(ag);
     if (ag.arriveB) ag.arriveB.weight = 0;
     this.status = YUKA.Goal.STATUS.COMPLETED;
   }
@@ -404,39 +384,44 @@ export class TeamPushGoal extends YUKA.Goal<TDMAgent> {
     const ag = this.owner;
     ag.stateName = 'TEAM_PUSH';
     ag.stateTime = 0;
-    noteTeamIntent(ag.team, 'collapse', ag.currentTarget?.position, 0.82);
+    clearAgentNavigation(ag);
     this.status = YUKA.Goal.STATUS.ACTIVE;
   }
 
   execute(): void {
     const ag = this.owner;
-    if (!ag.currentTarget || ag.currentTarget.isDead) {
-      this.status = YUKA.Goal.STATUS.COMPLETED;
-      return;
-    }
-
     if (ag.wanderB) ag.wanderB.weight = 0;
     if (ag.fleeB) ag.fleeB.weight = 0;
+
+    if (ag.pursuitB) ag.pursuitB.weight = 1.5;
+
+    if (ag.seekB && ag.currentTarget) {
+      const toTarget = new YUKA.Vector3().subVectors(ag.currentTarget.position, ag.position).normalize();
+      const perpX = -toTarget.z * ag.strafeDir;
+      const perpZ = toTarget.x * ag.strafeDir;
+      let px = ag.position.x + perpX * 4 + toTarget.x * 6;
+      let pz = ag.position.z + perpZ * 4 + toTarget.z * 6;
+      if (isInsideWall(px, pz)) {
+        const safe = pushOutOfWall(px, pz);
+        px = safe.x;
+        pz = safe.z;
+      }
+      (ag.seekB as any).target.set(px, 0, pz);
+      ag.seekB.weight = 0.5;
+    }
     if (ag.arriveB) ag.arriveB.weight = 0;
-    if (ag.pursuitB) ag.pursuitB.weight = 1.0;
 
-    const toTarget = new YUKA.Vector3().subVectors(ag.currentTarget.position, ag.position).normalize();
-    const side = shoulderSign(ag);
-    const perpX = -toTarget.z * side;
-    const perpZ = toTarget.x * side;
-
-    let spacing = ag.tacticalRole === 'trader' ? 2.5 : ag.tacticalRole === 'support' ? 5.5 : 4;
-    let advance = ag.tacticalRole === 'point' ? 8.5 : ag.tacticalRole === 'trader' ? 6.5 : 5.5;
-
-    const px = ag.position.x + perpX * spacing + toTarget.x * advance;
-    const pz = ag.position.z + perpZ * spacing + toTarget.z * advance;
-    setSeekTarget(ag, px, pz, 0.8);
-
-    if (ag.stateTime > 6 || ag.hp / ag.maxHP < 0.35) this.status = YUKA.Goal.STATUS.COMPLETED;
+    if (!ag.currentTarget || ag.currentTarget.isDead) {
+      this.status = YUKA.Goal.STATUS.COMPLETED;
+    }
+    if (ag.stateTime > 6) {
+      this.status = YUKA.Goal.STATUS.COMPLETED;
+    }
   }
 
   terminate(): void {
     const ag = this.owner;
+    clearAgentNavigation(ag);
     if (ag.seekB) ag.seekB.weight = 0;
     if (ag.pursuitB) ag.pursuitB.weight = 0;
     this.status = YUKA.Goal.STATUS.COMPLETED;
@@ -444,7 +429,7 @@ export class TeamPushGoal extends YUKA.Goal<TDMAgent> {
 }
 
 // ═══════════════════════════════════════════
-//  COMPOSITE GOALS
+//  COMPOSITE GOALS — higher-level behaviors
 // ═══════════════════════════════════════════
 
 export class AttackTargetGoal extends YUKA.CompositeGoal<TDMAgent> {
@@ -457,21 +442,14 @@ export class AttackTargetGoal extends YUKA.CompositeGoal<TDMAgent> {
       return;
     }
 
-    const dist = ag.position.distanceTo(ag.lastKnownPos);
+    const dist = ag.position.distanceTo(ag.currentTarget.position);
     const hpRatio = ag.hp / ag.maxHP;
-    const board = getTeamBoard(ag.team);
-
-    if (board.intent === 'reset' && hpRatio < 0.5) {
-      this.addSubgoal(new RetreatGoal(ag));
-      this.status = YUKA.Goal.STATUS.ACTIVE;
-      return;
-    }
 
     if (ag.botClass === 'sniper') {
-      if (dist < 11 || ag.targetCertainty < 0.38) {
+      if (dist < 10) {
         this.addSubgoal(new RetreatGoal(ag));
-      } else if (dist > 26) {
-        const nest = findSniperNest(ag, ag.lastKnownPos);
+      } else if (dist > 25) {
+        const nest = findSniperNest(ag, ag.currentTarget.position);
         if (nest && ag.position.distanceTo(nest) > 5) {
           ag.currentCover = nest;
           this.addSubgoal(new PeekGoal(ag));
@@ -480,49 +458,71 @@ export class AttackTargetGoal extends YUKA.CompositeGoal<TDMAgent> {
           this.addSubgoal(new EngageCombatGoal(ag));
         }
       } else {
-        const cover = findPeekCover(ag, ag.lastKnownPos);
-        if (cover) {
-          ag.currentCover = cover;
+        const peekCover = findPeekCover(ag, ag.currentTarget.position);
+        if (peekCover) {
+          ag.currentCover = peekCover;
           this.addSubgoal(new PeekGoal(ag));
-          this.addSubgoal(new TakeCoverGoal(ag, 1.6 + Math.random() * 1.2));
+          this.addSubgoal(new TakeCoverGoal(ag, 1.5 + Math.random() * 1.5));
         } else {
           this.addSubgoal(new EngageCombatGoal(ag));
         }
       }
-    } else if (ag.botClass === 'flanker' || ag.tacticalRole === 'flanker' || ag.tacticalRole === 'lurker') {
-      if (dist < 9 && ag.targetCertainty > 0.55) {
+    } else if (ag.botClass === 'flanker') {
+      if (dist < 10) {
         this.addSubgoal(new EngageCombatGoal(ag));
-      } else if (gameState.worldElapsed < ag.routeCommitUntil || Math.random() < ag.flankPreference * (0.6 + ag.curiosity * 0.6)) {
+      } else if (Math.random() < ag.flankPreference) {
         this.addSubgoal(new EngageCombatGoal(ag));
         this.addSubgoal(new FlankGoal(ag));
       } else {
         this.addSubgoal(new EngageCombatGoal(ag));
       }
-    } else if (board.intent === 'collapse' && ag.nearbyAllies >= 2 && ag.confidence > 40 && hpRatio > 0.45) {
-      this.addSubgoal(new TeamPushGoal(ag));
-    } else if (hpRatio < 0.55 && Math.random() < (0.22 + (1 - ag.bravery) * 0.25)) {
-      const cover = findPeekCover(ag, ag.lastKnownPos) || findCoverFrom(ag, ag.lastKnownPos);
-      if (cover) {
-        ag.currentCover = cover;
-        if (Math.random() < 0.55) {
+    } else if (ag.botClass === 'assault') {
+      if (ag.nearbyAllies >= 2 && ag.hp > ag.maxHP * 0.5 && ag.confidence > 40 && ag.fuzzyAggr > 55) {
+        this.addSubgoal(new TeamPushGoal(ag));
+      } else if (ag.fuzzyAggr > 50 || dist < 10) {
+        this.addSubgoal(new EngageCombatGoal(ag));
+      } else {
+        const peekCover = findPeekCover(ag, ag.currentTarget.position);
+        if (peekCover && Math.random() < 0.4) {
+          ag.currentCover = peekCover;
           this.addSubgoal(new PeekGoal(ag));
-          this.addSubgoal(new TakeCoverGoal(ag, 1.2 + Math.random() * 1.8));
+          this.addSubgoal(new TakeCoverGoal(ag, 1 + Math.random()));
         } else {
-          this.addSubgoal(new TakeCoverGoal(ag, 1.4 + Math.random() * 1.6));
+          this.addSubgoal(new EngageCombatGoal(ag));
         }
-      } else {
-        this.addSubgoal(new EngageCombatGoal(ag));
       }
-    } else if (ag.fuzzyAggr > 55 || ag.bravery > 0.62) {
-      this.addSubgoal(new EngageCombatGoal(ag));
     } else {
-      const cover = findPeekCover(ag, ag.lastKnownPos);
-      if (cover && Math.random() < 0.4 + ag.peekBias * 0.25) {
-        ag.currentCover = cover;
-        this.addSubgoal(new PeekGoal(ag));
-        this.addSubgoal(new TakeCoverGoal(ag, 1 + Math.random() * 1.3));
-      } else {
+      // Rifleman — balanced
+      if (ag.nearbyAllies >= 2 && ag.hp > ag.maxHP * 0.5 && ag.confidence > 40 && ag.fuzzyAggr > 55) {
+        this.addSubgoal(new TeamPushGoal(ag));
+      } else if (hpRatio < 0.55 && Math.random() < 0.35) {
+        const cover = findPeekCover(ag, ag.currentTarget.position) || findCoverFrom(ag, ag.currentTarget.position);
+        if (cover) {
+          ag.currentCover = cover;
+          if (Math.random() < 0.5) {
+            this.addSubgoal(new PeekGoal(ag));
+            this.addSubgoal(new TakeCoverGoal(ag, 1.5 + Math.random() * 2));
+          } else {
+            this.addSubgoal(new TakeCoverGoal(ag, 1.5 + Math.random() * 2));
+          }
+        } else {
+          this.addSubgoal(new EngageCombatGoal(ag));
+        }
+      } else if (ag.fuzzyAggr > 55) {
         this.addSubgoal(new EngageCombatGoal(ag));
+      } else {
+        if (Math.random() < 0.3) {
+          const cover = findPeekCover(ag, ag.currentTarget.position);
+          if (cover) {
+            ag.currentCover = cover;
+            this.addSubgoal(new PeekGoal(ag));
+            this.addSubgoal(new TakeCoverGoal(ag, 1 + Math.random()));
+          } else {
+            this.addSubgoal(new EngageCombatGoal(ag));
+          }
+        } else {
+          this.addSubgoal(new EngageCombatGoal(ag));
+        }
       }
     }
 
@@ -533,7 +533,9 @@ export class AttackTargetGoal extends YUKA.CompositeGoal<TDMAgent> {
     const ag = this.owner;
     this.activateIfInactive();
     this.status = this.executeSubgoals() as string;
-    if (!ag.currentTarget || ag.currentTarget.isDead) this.status = YUKA.Goal.STATUS.COMPLETED;
+    if (!ag.currentTarget || ag.currentTarget.isDead) {
+      this.status = YUKA.Goal.STATUS.COMPLETED;
+    }
     this.replanIfFailed();
   }
 
@@ -562,7 +564,9 @@ export class SurviveGoal extends YUKA.CompositeGoal<TDMAgent> {
     const ag = this.owner;
     this.activateIfInactive();
     this.status = this.executeSubgoals() as string;
-    if (ag.hp > ag.maxHP * 0.62 && ag.stress < 55) this.status = YUKA.Goal.STATUS.COMPLETED;
+    if (ag.hp > ag.maxHP * 0.6) {
+      this.status = YUKA.Goal.STATUS.COMPLETED;
+    }
     this.replanIfFailed();
   }
 
@@ -577,10 +581,12 @@ export class ReloadInCoverGoal extends YUKA.CompositeGoal<TDMAgent> {
     const ag = this.owner;
     this.clearSubgoals();
 
-    const cover = ag.currentTarget ? findCoverFrom(ag, ag.lastKnownPos) : ag.currentCover;
-    if (cover) {
-      ag.currentCover = cover;
-      this.addSubgoal(new TakeCoverGoal(ag, ag.reloadTime + 0.45));
+    if (ag.currentTarget) {
+      const cover = findCoverFrom(ag, ag.currentTarget.position);
+      if (cover) {
+        ag.currentCover = cover;
+        this.addSubgoal(new TakeCoverGoal(ag, ag.reloadTime + 0.5));
+      }
     }
 
     this.status = YUKA.Goal.STATUS.ACTIVE;
@@ -590,7 +596,9 @@ export class ReloadInCoverGoal extends YUKA.CompositeGoal<TDMAgent> {
     const ag = this.owner;
     this.activateIfInactive();
     this.status = this.executeSubgoals() as string;
-    if (!ag.isReloading && ag.ammo > 0) this.status = YUKA.Goal.STATUS.COMPLETED;
+    if (!ag.isReloading && ag.ammo > 0) {
+      this.status = YUKA.Goal.STATUS.COMPLETED;
+    }
     this.replanIfFailed();
   }
 
@@ -605,8 +613,11 @@ export class HuntGoal extends YUKA.CompositeGoal<TDMAgent> {
     const ag = this.owner;
     this.clearSubgoals();
     const huntPos = findHuntTarget(ag);
-    if (huntPos) this.addSubgoal(new MoveToPositionGoal(ag, huntPos));
-    else this.addSubgoal(new PatrolGoal(ag));
+    if (huntPos) {
+      this.addSubgoal(new MoveToPositionGoal(ag, huntPos));
+    } else {
+      this.addSubgoal(new PatrolGoal(ag));
+    }
     this.status = YUKA.Goal.STATUS.ACTIVE;
   }
 
@@ -643,7 +654,7 @@ export class GetWeaponGoal extends YUKA.CompositeGoal<TDMAgent> {
 }
 
 // ═══════════════════════════════════════════
-//  HUNT TARGETING
+//  HELPER — hunt target finding
 // ═══════════════════════════════════════════
 
 const HUNT_POINTS: YUKA.Vector3[] = [
@@ -660,49 +671,37 @@ const HUNT_POINTS: YUKA.Vector3[] = [
 
 function findHuntTarget(ag: TDMAgent): YUKA.Vector3 | null {
   const scores: { pos: YUKA.Vector3; score: number }[] = [];
-  const board = getTeamBoard(ag.team);
-
-  const investigatePos = getInvestigationPosition(ag);
-  if (investigatePos) {
-    scores.push({ pos: investigatePos.clone(), score: 55 + ag.curiosity * 10 + ag.targetCertainty * 12 });
-  }
-
-  if (board.focusPos) {
-    scores.push({ pos: board.focusPos.clone(), score: 40 + board.pressure * 20 });
-  }
 
   const enemySpawnX = ag.team === TEAM_BLUE ? 45 : -45;
   const enemySpawnZ = ag.team === TEAM_BLUE ? -45 : 45;
   scores.push({
     pos: new YUKA.Vector3(enemySpawnX + (Math.random() - 0.5) * 20, 0, enemySpawnZ + (Math.random() - 0.5) * 20),
-    score: 30 + ag.confidence * 0.25 + ag.chaseBias * 12,
+    score: 40 + ag.confidence * 0.3,
   });
 
   for (const enemy of gameState.agents) {
     if (enemy.isDead || enemy.team === ag.team || enemy === gameState.player) continue;
     const noisy = new YUKA.Vector3(
-      enemy.position.x + (Math.random() - 0.5) * 20,
-      0,
-      enemy.position.z + (Math.random() - 0.5) * 20,
+      enemy.position.x + (Math.random() - 0.5) * 25, 0,
+      enemy.position.z + (Math.random() - 0.5) * 25,
     );
-    scores.push({ pos: noisy, score: 22 + ag.curiosity * 8 });
+    scores.push({ pos: noisy, score: 30 });
   }
 
   if (!gameState.player.isDead) {
     scores.push({
       pos: new YUKA.Vector3(
-        gameState.player.position.x + (Math.random() - 0.5) * 18,
-        0,
-        gameState.player.position.z + (Math.random() - 0.5) * 18,
+        gameState.player.position.x + (Math.random() - 0.5) * 20, 0,
+        gameState.player.position.z + (Math.random() - 0.5) * 20,
       ),
-      score: 30,
+      score: 35,
     });
   }
 
   for (const hp of HUNT_POINTS) {
     const dist = ag.position.distanceTo(hp);
     if (dist < 10) continue;
-    scores.push({ pos: hp.clone(), score: 12 - dist * 0.08 + ag.curiosity * 4 });
+    scores.push({ pos: hp, score: 15 - dist * 0.1 });
   }
 
   for (const p of gameState.pickups) {
@@ -713,14 +712,22 @@ function findHuntTarget(ag: TDMAgent): YUKA.Vector3 | null {
       if (wepDesirability > currentDesirability) {
         scores.push({
           pos: new YUKA.Vector3(p.x, 0, p.z),
-          score: 35 + (wepDesirability - currentDesirability),
+          score: 50 + (wepDesirability - currentDesirability),
         });
       }
     }
   }
 
   if (scores.length === 0) return null;
+
   scores.sort((a, b) => b.score - a.score);
-  const pick = scores[Math.floor(Math.random() * Math.min(4, scores.length))];
-  return sanitizePos(pick.pos);
+  const pick = scores[Math.floor(Math.random() * Math.min(3, scores.length))];
+
+  if (isInsideWall(pick.pos.x, pick.pos.z)) {
+    const safe = pushOutOfWall(pick.pos.x, pick.pos.z);
+    pick.pos.x = safe.x;
+    pick.pos.z = safe.z;
+  }
+
+  return pick.pos;
 }
