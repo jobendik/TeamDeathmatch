@@ -20,9 +20,32 @@
     <div class="xh-dot"></div>
   </div>
 
+  <div id="mainMenu" class="on">
+    <div class="menu-panel">
+      <h1>WARZONE</h1>
+      <p>Velg modus og start kampen. FFA starter med bare pistol — kraftigere våpen må plukkes opp.</p>
+      <label class="menu-label">Game mode</label>
+      <select id="modeSelect" class="menu-select">
+        <option value="tdm">Team Deathmatch</option>
+        <option value="ffa">Free For All</option>
+        <option value="ctf">Capture The Flag</option>
+      </select>
+      <button id="startBtn" class="menu-btn">START MATCH</button>
+    </div>
+  </div>
+
+  <div id="pauseMenu">
+    <div class="menu-panel">
+      <h1>PAUSED</h1>
+      <button id="pauseResume" class="menu-btn">RESUME</button>
+      <button id="pauseRestart" class="menu-btn">RESTART MATCH</button>
+      <button id="pauseQuit" class="menu-btn">QUIT TO MENU</button>
+    </div>
+  </div>
+
   <div id="lockHint" class="on">
     <h2>WARZONE TDM</h2>
-    <p>Team Deathmatch · Først til 10 kills</p>
+    <p>Velg modus i menyen · Esc åpner pausemeny</p>
     <p style="margin-top:8px;color:var(--text);font-size:11px">Klikk for å starte</p>
     <div class="keys">
       <span class="kbd">W</span><span class="kbd">A</span><span class="kbd">S</span><span class="kbd">D</span>
@@ -38,7 +61,7 @@
 
   <div id="scoreboard">
     <div class="sb-team sb-blue" id="sbBlue">0</div>
-    <div class="sb-mid">TDM</div>
+    <div class="sb-mid" id="sbMid">TDM · 05:00</div>
     <div class="sb-team sb-red" id="sbRed">0</div>
   </div>
 
