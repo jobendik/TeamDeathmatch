@@ -6,11 +6,12 @@ import { updateProjectiles } from '@/combat/Hitscan';
 import { updateParticles, updateScreenShake } from '@/combat/Particles';
 import { updatePickups } from '@/combat/Pickups';
 import { updateRespawns } from '@/combat/Combat';
+import { updateObjectives } from '@/combat/Objectives';
 import { updateVisuals } from '@/rendering/Visuals';
 import { updateAgentAnimations } from '@/rendering/AgentAnimations';
 import { keepInside } from '@/entities/Player';
 import { drawMinimap } from '@/ui/Minimap';
-import { updateTabboard } from '@/ui/Scoreboard';
+import { updateTabboard, updateScoreboard } from '@/ui/Scoreboard';
 import { updateViewmodel, renderViewmodel } from '@/rendering/WeaponViewmodel';
 import { updateCrosshair } from '@/ui/HUD';
 
@@ -27,22 +28,27 @@ export function animate(): void {
     gameState.floorMat.uniforms.uTime.value = gameState.worldElapsed;
   }
 
-  updatePlayer(dt);
+  const frozen = gameState.mainMenuOpen || gameState.paused || gameState.roundOver;
 
-  // Update all AI
-  for (const ag of gameState.agents) {
-    updateAI(ag, dt);
+  if (!frozen) {
+    gameState.matchTimeRemaining = Math.max(0, gameState.matchTimeRemaining - dt);
+    updatePlayer(dt);
+
+    for (const ag of gameState.agents) {
+      updateAI(ag, dt);
+    }
+
+    updateProjectiles(dt);
+    updateParticles(dt);
+    updateScreenShake(dt);
+    updatePickups();
+    updateObjectives();
+    updateRespawns();
+    updateVisuals();
+    updateAgentAnimations(dt);
+
+    gameState.entityManager.update(dt);
   }
-
-  updateProjectiles(dt);
-  updateParticles(dt);
-  updateScreenShake(dt);
-  updatePickups();
-  updateRespawns();
-  updateVisuals();
-  updateAgentAnimations(dt);
-
-  gameState.entityManager.update(dt);
 
   // Keep all AI inside arena
   for (const ag of gameState.agents) {
@@ -52,6 +58,7 @@ export function animate(): void {
   }
 
   drawMinimap();
+  updateScoreboard();
   updateTabboard();
   updateCrosshair();
 

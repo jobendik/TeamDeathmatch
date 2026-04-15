@@ -6,6 +6,7 @@ import { WEAPONS } from '@/config/weapons';
 import { hitscanShot, shotgunBlast, spawnRocket, spawnGrenade } from '@/combat/Hitscan';
 import { updateHUD, flashCrosshairFire } from '@/ui/HUD';
 import { fireViewmodel, setViewmodelWeapon, resizeViewmodel } from '@/rendering/WeaponViewmodel';
+import { togglePause } from '@/ui/Menus';
 
 /**
  * Start a player reload.
@@ -71,11 +72,11 @@ export function onShoot(): void {
   dir.normalize();
 
   if (pWeaponId === 'rocket_launcher') {
-    spawnRocket(o, dir, 'player', player.team, 0x60a5fa);
+    spawnRocket(o, dir, 'player', player.team, 0x60a5fa, player);
   } else if (pWeaponId === 'shotgun') {
-    shotgunBlast(o, fwd, 'player', player.team, 0x60a5fa);
+    shotgunBlast(o, fwd, 'player', player.team, 0x60a5fa, player);
   } else {
-    hitscanShot(o, dir, 'player', player.team, pWeaponId, 0x60a5fa);
+    hitscanShot(o, dir, 'player', player.team, pWeaponId, 0x60a5fa, player);
   }
 
   fireViewmodel();
@@ -103,7 +104,7 @@ function throwGrenade(): void {
     -Math.cos(cameraYaw) * Math.cos(cameraPitch),
   ).normalize();
 
-  spawnGrenade(o, dir, 'player', player.team);
+  spawnGrenade(o, dir, 'player', player.team, player);
   gameState.pGrenades--;
   gameState.pGrenadeCooldown = 1.0;
   updateHUD();
@@ -121,7 +122,7 @@ function requestMouseLock(): void {
  */
 function onPointerLockChange(): void {
   gameState.mouseLocked = document.pointerLockElement === gameState.renderer.domElement;
-  dom.lockHint.classList.toggle('on', !gameState.mouseLocked);
+  dom.lockHint.classList.toggle('on', !gameState.mouseLocked && !gameState.mainMenuOpen && !gameState.paused && !gameState.roundOver);
 }
 
 /**
@@ -161,6 +162,12 @@ export function bindEvents(): void {
     if (k === '2') switchWeapon(1);
     if (k === '3') switchWeapon(2);
 
+    if (k === 'escape') {
+      e.preventDefault();
+      togglePause();
+      return;
+    }
+
     // Scroll wheel weapon switch
   });
 
@@ -190,6 +197,7 @@ export function bindEvents(): void {
 
   gameState.renderer.domElement.addEventListener('contextmenu', (e) => e.preventDefault());
   gameState.renderer.domElement.addEventListener('mousedown', (e) => {
+    if (gameState.paused || gameState.mainMenuOpen) return;
     if (e.button !== 0) return;
     if (!gameState.mouseLocked) { requestMouseLock(); return; }
     gameState.mouseHeld = true;

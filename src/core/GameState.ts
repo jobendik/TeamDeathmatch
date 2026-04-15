@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import * as YUKA from 'yuka';
 import type { TDMAgent } from '@/entities/TDMAgent';
 import type { WeaponId } from '@/config/weapons';
+import type { GameMode } from './GameModes';
 
 // ────────────────────────────────────────────
 //  Shared type definitions
@@ -30,6 +31,7 @@ export interface Bullet {
   dir: THREE.Vector3;
   ownerType: 'player' | 'ai';
   ownerTeam: number;
+  ownerAgent?: TDMAgent | null;
   dmg: number;
   spd: number;
   life: number;
@@ -53,7 +55,7 @@ export interface Pickup {
   ring: THREE.Mesh;
   active: boolean;
   respawnAt: number;
-  t: 'health' | 'ammo' | 'weapon';
+  t: 'health' | 'ammo' | 'weapon' | 'grenade';
   x: number;
   z: number;
   weaponId?: WeaponId;
@@ -66,6 +68,18 @@ export interface KillfeedEntry {
   victimTeam: number;
   time: number;
   weaponName?: string;
+}
+
+
+
+export interface FlagState {
+  team: 0 | 1;
+  base: THREE.Vector3;
+  mesh: THREE.Object3D | null;
+  carriedBy: TDMAgent | null;
+  dropped: boolean;
+  home: boolean;
+  dropPos: THREE.Vector3;
 }
 
 export interface InputKeys {
@@ -95,17 +109,20 @@ export const gameState = {
   time: null as unknown as YUKA.Time,
   entityManager: null as unknown as YUKA.EntityManager,
 
-  // Navigation
-  navMesh: null as YUKA.NavMesh | null,
-  navMeshLoaded: false,
-  navMeshLoading: false,
-
   // Viewmodel
   vmScene: null as THREE.Scene | null,
   vmCamera: null as THREE.PerspectiveCamera | null,
 
   // World elapsed time
   worldElapsed: 0,
+
+  // Match state
+  mode: 'tdm' as GameMode,
+  mainMenuOpen: true,
+  paused: false,
+  matchTime: 300,
+  matchTimeRemaining: 300,
+  scoreLimit: 10,
 
   // Collision and world objects
   wallMeshes: [] as THREE.Mesh[],
@@ -124,6 +141,12 @@ export const gameState = {
 
   // Pickups
   pickups: [] as Pickup[],
+
+  // Objectives
+  flags: {
+    0: { team: 0 as 0 | 1, base: new THREE.Vector3(), mesh: null, carriedBy: null, dropped: false, home: true, dropPos: new THREE.Vector3() } as FlagState,
+    1: { team: 1 as 0 | 1, base: new THREE.Vector3(), mesh: null, carriedBy: null, dropped: false, home: true, dropPos: new THREE.Vector3() } as FlagState,
+  } as Record<0 | 1, FlagState>,
 
   // Player state
   pHP: 100,
@@ -170,6 +193,7 @@ export const gameState = {
   teamScores: [0, 0] as [number, number],
   roundOver: false,
   killfeedEntries: [] as KillfeedEntry[],
+  winnerText: '',
 
   // Floor shader ref
   floorMat: null as THREE.ShaderMaterial | null,
