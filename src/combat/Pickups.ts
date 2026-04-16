@@ -68,14 +68,16 @@ export function updatePickups(): void {
       if (dx * dx + dz * dz < 2.5 * 2.5) {
         if (p.t === 'health' && ag.hp < ag.maxHP * 0.7) {
           p.active = false; p.mesh.visible = p.ring.visible = false; p.respawnAt = worldElapsed + 15; ag.hp = Math.min(ag.maxHP, ag.hp + 35);
-        } else if (p.t === 'ammo' && ag.ammo < ag.magSize * 0.4) {
+        } else if (p.t === 'ammo' && ag.weaponId !== 'unarmed' && ag.ammo < ag.magSize * 0.4) {
           p.active = false; p.mesh.visible = p.ring.visible = false; p.respawnAt = worldElapsed + 12; ag.ammo = ag.magSize;
         } else if (p.t === 'grenade' && ag.grenades < 3) {
           p.active = false; p.mesh.visible = p.ring.visible = false; p.respawnAt = worldElapsed + 10; ag.grenades = Math.min(3, ag.grenades + 1);
         } else if (p.t === 'weapon' && p.weaponId) {
           const newWep = WEAPONS[p.weaponId];
           const curWep = WEAPONS[ag.weaponId];
-          if (newWep.desirability > curWep.desirability || ag.ammo <= 0) {
+          // Unarmed agents accept ANY weapon. Armed agents only upgrade.
+          const shouldPickup = ag.weaponId === 'unarmed' || newWep.desirability > curWep.desirability || ag.ammo <= 0;
+          if (shouldPickup) {
             p.active = false;
             p.mesh.visible = p.ring.visible = false;
             p.respawnAt = worldElapsed + 25;

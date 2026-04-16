@@ -50,9 +50,21 @@ export function initMenus(): void {
   setMainMenuVisible(true);
 }
 
+const MODE_DESCRIPTIONS: Record<GameMode, string> = {
+  tdm: 'Lagkamp — først til 20 kills. Du starter med våpen.',
+  ffa: 'Alle mot alle — start uten våpen, plukk opp fra kartet.',
+  ctf: 'Capture The Flag — ta fiendens flagg og bring det hjem.',
+  elimination: 'Eliminering — ingen respawn. Siste lag som lever vinner runden. Først til 3.',
+};
 
 function updateMenuCopy(): void {
   const mode = (dom.modeSelect.value || 'tdm') as GameMode;
   const label = getModeLabel(mode);
   dom.startBtn.textContent = `START ${label}`;
+
+  // Update description text
+  const descEl = dom.mainMenu.querySelector('.menu-panel p');
+  if (descEl) {
+    descEl.textContent = MODE_DESCRIPTIONS[mode] || '';
+  }
 }

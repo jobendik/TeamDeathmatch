@@ -15,23 +15,38 @@ import { updateTabboard, updateScoreboard } from '@/ui/Scoreboard';
 import { updateViewmodel, renderViewmodel } from '@/rendering/WeaponViewmodel';
 import { updateCrosshair } from '@/ui/HUD';
 
+/** Track whether we were frozen last frame so we can discard the stale delta on unpause */
+let wasFrozen = false;
+
 /**
  * Main game loop — called every animation frame.
  */
 export function animate(): void {
   requestAnimationFrame(animate);
 
-  const dt = Math.min(gameState.time.update().getDelta(), 0.05);
-  gameState.worldElapsed += dt;
-
-  if (gameState.floorMat) {
-    gameState.floorMat.uniforms.uTime.value = gameState.worldElapsed;
-  }
-
   const frozen = gameState.mainMenuOpen || gameState.paused || gameState.roundOver;
 
-  if (!frozen) {
+  // Always tick the YUKA clock so getDelta doesn't accumulate while paused
+  gameState.time.update();
+  const rawDt = gameState.time.getDelta();
+
+  // If we were frozen last frame, discard the accumulated delta to prevent time-jump
+  const dt = (frozen || wasFrozen) ? 0 : Math.min(rawDt, 0.05);
+  wasFrozen = frozen;
+
+  // Floor shader animation runs even when paused (cosmetic only)
+  if (gameState.floorMat) {
+    gameState.floorMat.uniforms.uTime.value += dt;
+  }
+
+  if (!frozen && dt > 0) {
+    // Advance world time only when gameplay is active
+    gameState.worldElapsed += dt;
     gameState.matchTimeRemaining = Math.max(0, gameState.matchTimeRemaining - dt);
+
+    // Increment perception stagger counter
+    gameState.perceptionFrame++;
+
     updatePlayer(dt);
 
     for (const ag of gameState.agents) {
@@ -50,7 +65,7 @@ export function animate(): void {
     gameState.entityManager.update(dt);
   }
 
-  // Keep all AI inside arena
+  // Keep all AI inside arena (always, even if frozen, to prevent drift)
   for (const ag of gameState.agents) {
     if (ag !== gameState.player && !ag.isDead) {
       keepInside(ag);
@@ -62,7 +77,7 @@ export function animate(): void {
   updateTabboard();
   updateCrosshair();
 
-  updateViewmodel(dt);
+  updateViewmodel(frozen ? 0 : dt);
 
   gameState.renderer.render(gameState.scene, gameState.camera);
   renderViewmodel();

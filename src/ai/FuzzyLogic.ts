@@ -66,21 +66,26 @@ export function evalFuzzy(ag: TDMAgent, targetDist: number): void {
   let aggression = ag.fuzzyModule.defuzzify('aggression', YUKA.FuzzyModule.DEFUZ_TYPE.CENTROID);
 
   // ── Ammo modifier ──
-  const ammoRatio = ag.ammo / ag.magSize;
-  if (ammoRatio < 0.15) aggression *= 0.5;       // almost empty — very cautious
-  else if (ammoRatio < 0.3) aggression *= 0.75;   // low — reduce aggression
-  else if (ammoRatio > 0.8) aggression *= 1.1;    // well stocked — slightly bolder
+  const ammoRatio = ag.magSize > 0 ? ag.ammo / ag.magSize : 0;
+  if (ammoRatio < 0.15) aggression *= 0.5;
+  else if (ammoRatio < 0.3) aggression *= 0.75;
+  else if (ammoRatio > 0.8) aggression *= 1.1;
 
   // ── Confidence modifier ──
-  const confFactor = (ag.confidence - 50) * 0.004; // ±20% range
+  const confFactor = (ag.confidence - 50) * 0.004;
   aggression *= (1 + confFactor);
 
   // ── Class personality modifier ──
-  aggression *= (0.5 + ag.aggressivenessBase); // scale by class tendency
+  aggression *= (0.5 + ag.aggressivenessBase);
 
   // ── Nearby allies modifier ──
-  if (ag.nearbyAllies >= 2) aggression *= 1.15;   // safety in numbers
+  if (ag.nearbyAllies >= 2) aggression *= 1.15;
   if (ag.nearbyAllies >= 3) aggression *= 1.1;
+
+  // ── Pressure suppression (damage pressure reduces aggression) ──
+  if (ag.underPressure) {
+    aggression *= (1 - ag.pressureLevel * 0.4);
+  }
 
   ag.fuzzyAggr = Math.max(0, Math.min(100, aggression));
 }

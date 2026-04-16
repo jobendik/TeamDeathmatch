@@ -8,10 +8,8 @@ import { updateHUD, flashCrosshairFire } from '@/ui/HUD';
 import { fireViewmodel, setViewmodelWeapon, resizeViewmodel } from '@/rendering/WeaponViewmodel';
 import { togglePause } from '@/ui/Menus';
 
-/**
- * Start a player reload.
- */
 function startReload(): void {
+  if (gameState.pWeaponId === 'unarmed') return; // can't reload unarmed
   const wep = WEAPONS[gameState.pWeaponId];
   gameState.pReloading = true;
   gameState.pReloadTimer = 0;
@@ -20,9 +18,6 @@ function startReload(): void {
   dom.reloadText.classList.add('on');
 }
 
-/**
- * Switch to a weapon slot.
- */
 function switchWeapon(slot: number): void {
   if (slot >= gameState.pWeaponSlots.length) return;
   if (gameState.pActiveSlot === slot) return;
@@ -36,7 +31,7 @@ function switchWeapon(slot: number): void {
   gameState.pWeaponId = gameState.pWeaponSlots[slot];
 
   const wep = WEAPONS[gameState.pWeaponId];
-  gameState.pAmmo = wep.magSize; // fresh mag on switch
+  gameState.pAmmo = wep.magSize;
   gameState.pMaxAmmo = wep.magSize;
   gameState.pShootTimer = 0;
   gameState.pBurstCount = 0;
@@ -45,11 +40,9 @@ function switchWeapon(slot: number): void {
   updateHUD();
 }
 
-/**
- * Handle player shooting — now uses hitscan for most weapons.
- */
 export function onShoot(): void {
   if (gameState.pDead || gameState.pReloading) return;
+  if (gameState.pWeaponId === 'unarmed') return; // can't shoot unarmed
   if (gameState.pShootTimer > 0) return;
   if (gameState.pAmmo <= 0) { startReload(); return; }
 
@@ -63,9 +56,8 @@ export function onShoot(): void {
     -Math.cos(cameraYaw) * Math.cos(cameraPitch),
   ).normalize();
 
-  // Add player aim error (small for most weapons)
   const dir = fwd.clone();
-  const err = wep.aimError * (gameState.keys.shift ? 0.6 : 1.0); // ADS improves accuracy
+  const err = wep.aimError * (gameState.keys.shift ? 0.6 : 1.0);
   dir.x += (Math.random() - 0.5) * err;
   dir.y += (Math.random() - 0.5) * err * 0.5;
   dir.z += (Math.random() - 0.5) * err;
@@ -88,9 +80,6 @@ export function onShoot(): void {
   if (gameState.pAmmo <= 0) startReload();
 }
 
-/**
- * Throw a grenade.
- */
 function throwGrenade(): void {
   if (gameState.pDead) return;
   if (gameState.pGrenades <= 0) return;
@@ -110,37 +99,24 @@ function throwGrenade(): void {
   updateHUD();
 }
 
-/**
- * Request pointer lock on the renderer canvas.
- */
 function requestMouseLock(): void {
   gameState.renderer?.domElement?.requestPointerLock();
 }
 
-/**
- * Handle pointer lock state changes.
- */
 function onPointerLockChange(): void {
   gameState.mouseLocked = document.pointerLockElement === gameState.renderer.domElement;
   dom.lockHint.classList.toggle('on', !gameState.mouseLocked && !gameState.mainMenuOpen && !gameState.paused && !gameState.roundOver);
 }
 
-/**
- * Handle mouse movement for camera look.
- */
 function onMouseMove(e: MouseEvent): void {
   if (!gameState.mouseLocked || gameState.pDead) return;
   gameState.cameraYaw -= e.movementX * FP.sensitivity;
   gameState.cameraPitch -= e.movementY * FP.sensitivity;
   gameState.cameraPitch = Math.max(FP.pitchMin, Math.min(FP.pitchMax, gameState.cameraPitch));
-  // Store deltas for weapon sway
   gameState.mouseDeltaX += e.movementX;
   gameState.mouseDeltaY += e.movementY;
 }
 
-/**
- * Bind all input event listeners.
- */
 export function bindEvents(): void {
   const { keys } = gameState;
 
@@ -149,15 +125,12 @@ export function bindEvents(): void {
     if (k in keys) { (keys as any)[k] = true; e.preventDefault(); }
     if (k === 'tab') { e.preventDefault(); keys.tab = true; }
 
-    // Reload
-    if (k === 'r' && !gameState.pDead && !gameState.pReloading && gameState.pAmmo < gameState.pMaxAmmo) {
+    if (k === 'r' && !gameState.pDead && !gameState.pReloading && gameState.pWeaponId !== 'unarmed' && gameState.pAmmo < gameState.pMaxAmmo) {
       startReload();
     }
 
-    // Grenade
     if (k === 'g') throwGrenade();
 
-    // Weapon switching: 1, 2, 3
     if (k === '1') switchWeapon(0);
     if (k === '2') switchWeapon(1);
     if (k === '3') switchWeapon(2);
@@ -167,8 +140,6 @@ export function bindEvents(): void {
       togglePause();
       return;
     }
-
-    // Scroll wheel weapon switch
   });
 
   window.addEventListener('keyup', (e) => {
@@ -184,7 +155,6 @@ export function bindEvents(): void {
     resizeViewmodel();
   });
 
-  // Scroll wheel for weapon switching
   window.addEventListener('wheel', (e) => {
     if (!gameState.mouseLocked) return;
     const dir = e.deltaY > 0 ? 1 : -1;

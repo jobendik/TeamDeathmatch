@@ -5,7 +5,27 @@ import { TEAM_COLORS, type TeamId } from '@/config/constants';
 import { CLASS_DEFAULT_WEAPON, WEAPONS, type WeaponId } from '@/config/weapons';
 
 /**
- * TDM Agent — extends YUKA Vehicle with combat stats, advanced AI, and rendering references.
+ * Tactical memory entry for a known enemy.
+ */
+export interface EnemyMemoryEntry {
+  /** Position where the enemy was last observed */
+  lastSeenPos: YUKA.Vector3;
+  /** World time of last observation */
+  lastSeenTime: number;
+  /** Source of the sighting: visual, audio, callout, damage */
+  source: 'visual' | 'audio' | 'callout' | 'damage';
+  /** Confidence 0-1 (decays over time) */
+  confidence: number;
+  /** Estimated threat level 0-100 */
+  threat: number;
+  /** Was the enemy moving when last seen */
+  wasMoving: boolean;
+  /** Last known velocity direction for prediction */
+  lastVelocity: YUKA.Vector3;
+}
+
+/**
+ * TDM Agent — extends YUKA Vehicle with combat stats, goal-driven AI, and rendering references.
  */
 export class TDMAgent extends YUKA.Vehicle {
   // Identity
@@ -81,10 +101,10 @@ export class TDMAgent extends YUKA.Vehicle {
   fuzzyModule: YUKA.FuzzyModule | null;
   fuzzyAggr: number;
 
-  // State machine (legacy — kept for compatibility)
+  // State machine (kept for animation state name mapping only, not for runtime decisions)
   declare stateMachine: YUKA.StateMachine<TDMAgent>;
 
-  // Goal-driven brain
+  // Goal-driven brain — the SOLE authoritative runtime decision system
   brain: YUKA.Think<TDMAgent>;
 
   // ═══════════════════════════════════════════
@@ -103,6 +123,10 @@ export class TDMAgent extends YUKA.Vehicle {
   lastDamageTime: number;
   /** How much damage taken in the last 2 seconds (damage pressure) */
   recentDamage: number;
+  /** Whether currently under significant damage pressure */
+  underPressure: boolean;
+  /** Pressure intensity 0-1, affects retreat urgency, fire discipline, aggression */
+  pressureLevel: number;
 
   /** Enemy position shared by a teammate callout */
   teamCallout: YUKA.Vector3 | null;
@@ -158,6 +182,30 @@ export class TDMAgent extends YUKA.Vehicle {
   stuckTime: number;
   /** Last position sample for stuck detection */
   lastStuckCheckPos: YUKA.Vector3;
+
+  // ═══════════════════════════════════════════
+  //  TACTICAL MEMORY
+  // ═══════════════════════════════════════════
+
+  /** Per-enemy memory: keyed by enemy name for fast lookup */
+  enemyMemory: Map<string, EnemyMemoryEntry>;
+  /** Frame slot for staggered perception (assigned at creation) */
+  perceptionSlot: number;
+  /** Cached pickup scan result (refreshed periodically) */
+  cachedNearbyPickups: { pos: YUKA.Vector3; type: string; weaponId?: WeaponId; dist: number }[];
+  /** Timer for pickup cache refresh */
+  pickupCacheTimer: number;
+
+  // ═══════════════════════════════════════════
+  //  NAVMESH NAVIGATION (optional)
+  // ═══════════════════════════════════════════
+  navPath: YUKA.Vector3[];
+  navWaypointIndex: number;
+  navDestination: YUKA.Vector3 | null;
+  navMode: 'none' | 'arrive' | 'seek';
+  navTolerance: number;
+  navRepathTimer: number;
+  navCurrentRegion: any;
 
   constructor(name: string, team: TeamId, botClass: BotClass) {
     super();
@@ -241,7 +289,7 @@ export class TDMAgent extends YUKA.Vehicle {
     this.fuzzyModule = null;
     this.fuzzyAggr = 50;
 
-    // Goal-driven brain
+    // Goal-driven brain — sole authority
     this.brain = new YUKA.Think(this);
 
     // ── Advanced AI ──
@@ -250,6 +298,8 @@ export class TDMAgent extends YUKA.Vehicle {
     this.strafeTimer = 0.3 + Math.random() * 0.5;
     this.lastDamageTime = -10;
     this.recentDamage = 0;
+    this.underPressure = false;
+    this.pressureLevel = 0;
     this.teamCallout = null;
     this.teamCalloutTime = -10;
     this.seekingPickup = false;
@@ -284,6 +334,21 @@ export class TDMAgent extends YUKA.Vehicle {
     this.stuckTime = 0;
     this.lastStuckCheckPos = new YUKA.Vector3();
 
+    // Tactical memory
+    this.enemyMemory = new Map();
+    this.perceptionSlot = 0; // assigned by factory
+    this.cachedNearbyPickups = [];
+    this.pickupCacheTimer = 0;
+
+    // NavMesh navigation (optional)
+    this.navPath = [];
+    this.navWaypointIndex = 0;
+    this.navDestination = null;
+    this.navMode = 'none';
+    this.navTolerance = 2.5;
+    this.navRepathTimer = 0;
+    this.navCurrentRegion = null;
+
     // Preferred engagement range by class / weapon
     switch (botClass) {
       case 'sniper':   this.preferredRange = 35; break;
@@ -291,5 +356,48 @@ export class TDMAgent extends YUKA.Vehicle {
       case 'flanker':  this.preferredRange = 8; break;
       default:         this.preferredRange = 18; break;
     }
+  }
+
+  /**
+   * Full tactical reset on respawn. Clears ALL stale combat/goal/memory state.
+   */
+  resetTacticalState(): void {
+    this.brain.clearSubgoals();
+    this.stateName = 'PATROL';
+    this.stateTime = 0;
+    this.hasLastKnown = false;
+    this.alertLevel = 0;
+    this.currentTarget = null;
+    this.hasTarget = false;
+    this.burstCount = 0;
+    this.shootTimer = 0;
+    this.reactionTimer = 0;
+    this.trackingTime = 0;
+    this.recentDamage = 0;
+    this.underPressure = false;
+    this.pressureLevel = 0;
+    this.lastAttacker = null;
+    this.seekingPickup = false;
+    this.seekPickupPos = null;
+    this.isPeeking = false;
+    this.peekTimer = 0;
+    this.teamCallout = null;
+    this.currentCover = null;
+    this.huntTimer = Math.random() * 2;
+    this.stuckTime = 0;
+    this.lastStuckCheckPos.copy(this.position);
+    this.decisionTimer = 0;
+    this.combatMoveTimer = 0;
+    this.fuzzyAggr = 50;
+    this.enemyMemory.clear();
+    this.cachedNearbyPickups = [];
+    this.pickupCacheTimer = 0;
+
+    // Clear nav state
+    this.navPath.length = 0;
+    this.navWaypointIndex = 0;
+    this.navDestination = null;
+    this.navMode = 'none';
+    this.navRepathTimer = 0;
   }
 }

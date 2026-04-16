@@ -1,14 +1,25 @@
 import * as THREE from 'three';
+import * as YUKA from 'yuka';
 import { gameState } from '@/core/GameState';
 import { TEAM_BLUE } from '@/config/constants';
 import type { TDMAgent } from '@/entities/TDMAgent';
-import { findBestTarget, canSee, broadcastEnemyPosition, checkAudioAwareness, countNearbyAllies } from './Perception';
+import { findBestTarget, canSee, broadcastEnemyPosition, checkAudioAwareness, countNearbyAllies, updateEnemyMemory, decayEnemyMemory } from './Perception';
 import { evalFuzzy } from './FuzzyLogic';
 import { findCoverFrom, pushOutOfWall } from './CoverSystem';
 import { hitscanShot, shotgunBlast, spawnRocket } from '@/combat/Hitscan';
 import { spawnMuzzleFlash } from '@/combat/Particles';
 import { spawnGrenade } from '@/combat/Hitscan';
 import { keepInside } from '@/entities/Player';
+import { WEAPONS } from '@/config/weapons';
+
+// ── Cached temporaries for hot-loop use ──
+const _shootOrigin = new THREE.Vector3();
+const _shootTarget = new THREE.Vector3();
+const _shootDir = new THREE.Vector3();
+const _muzzlePos = new THREE.Vector3();
+const _suppressDir = new THREE.Vector3();
+const _suppressOrigin = new THREE.Vector3();
+const _suppressMuzzle = new THREE.Vector3();
 
 // ═══════════════════════════════════════════
 //  AIM SYSTEM — human-like tracking & leading
@@ -28,11 +39,12 @@ function getEffectiveAimError(ag: TDMAgent, target: TDMAgent, dist: number): num
   if (ag.confidence > 70) error *= 0.8;
   else if (ag.confidence < 30) error *= 1.2;
 
-  // Under-fire penalty
-  const timeSinceDamage = gameState.worldElapsed - ag.lastDamageTime;
-  if (timeSinceDamage < 1.5) error *= 1.4;
+  // Under-fire penalty — scales with pressure intensity
+  if (ag.pressureLevel > 0.3) {
+    error *= 1.0 + ag.pressureLevel * 0.6; // up to 1.6x at max pressure
+  }
 
-  // Moving penalty (slight)
+  // Moving penalty
   if (ag.stateName === 'ENGAGE' || ag.stateName === 'TEAM_PUSH') error *= 1.1;
 
   return error;
@@ -40,62 +52,57 @@ function getEffectiveAimError(ag: TDMAgent, target: TDMAgent, dist: number): num
 
 /**
  * AI shooting — uses hitscan like the player for instant-hit combat.
+ * Unarmed bots cannot fire.
  */
 function aiShoot(ag: TDMAgent, target: TDMAgent): void {
   if (ag.isDead || !target || target.isDead) return;
+  if (ag.weaponId === 'unarmed') return; // cannot shoot without a weapon
 
-  const o = new THREE.Vector3(ag.position.x, 0.9, ag.position.z);
-  const tPos = new THREE.Vector3(target.position.x, 1.0, target.position.z);
+  _shootOrigin.set(ag.position.x, 0.9, ag.position.z);
+  _shootTarget.set(target.position.x, 1.0, target.position.z);
 
-  const d = tPos.clone().sub(o).normalize();
-  const dist = o.distanceTo(tPos);
+  _shootDir.subVectors(_shootTarget, _shootOrigin).normalize();
+  const dist = _shootOrigin.distanceTo(_shootTarget);
 
   // Apply effective aim error
   const err = getEffectiveAimError(ag, target, dist);
-  d.x += (Math.random() - 0.5) * err;
-  d.y += (Math.random() - 0.5) * err * 0.4;
-  d.z += (Math.random() - 0.5) * err;
-  d.normalize();
+  _shootDir.x += (Math.random() - 0.5) * err;
+  _shootDir.y += (Math.random() - 0.5) * err * 0.4;
+  _shootDir.z += (Math.random() - 0.5) * err;
+  _shootDir.normalize();
 
   const col = ag.team === TEAM_BLUE ? 0x60a5fa : 0xff6644;
 
-  // Muzzle flash on the agent's model
-  const muzzlePos = new THREE.Vector3(ag.position.x + d.x * 0.6, 1.0, ag.position.z + d.z * 0.6);
-  spawnMuzzleFlash(muzzlePos, col);
+  _muzzlePos.set(ag.position.x + _shootDir.x * 0.6, 1.0, ag.position.z + _shootDir.z * 0.6);
+  spawnMuzzleFlash(_muzzlePos.clone(), col);
 
-  // Use the actual weapon's hitscan system
   if (ag.weaponId === 'shotgun') {
-    shotgunBlast(o, d, 'ai', ag.team, col, ag);
+    shotgunBlast(_shootOrigin.clone(), _shootDir.clone(), 'ai', ag.team, col, ag);
   } else if (ag.weaponId === 'rocket_launcher') {
-    spawnRocket(o, d, 'ai', ag.team, col, ag);
+    spawnRocket(_shootOrigin.clone(), _shootDir.clone(), 'ai', ag.team, col, ag);
   } else {
-    hitscanShot(o, d, 'ai', ag.team, ag.weaponId, col, ag);
+    hitscanShot(_shootOrigin.clone(), _shootDir.clone(), 'ai', ag.team, ag.weaponId, col, ag);
   }
   ag.ammo--;
 }
 
 // ═══════════════════════════════════════════
-//  COMBAT STRAFING — more dynamic & unpredictable
+//  COMBAT STRAFING
 // ═══════════════════════════════════════════
 
 function updateStrafing(ag: TDMAgent, dt: number): void {
   ag.strafeTimer -= dt;
   if (ag.strafeTimer <= 0) {
-    // Class-specific strafe patterns
     if (ag.botClass === 'flanker') {
-      // Flankers change direction very often, highly unpredictable
       ag.strafeDir *= -1;
       ag.strafeTimer = 0.15 + Math.random() * 0.3;
     } else if (ag.botClass === 'assault') {
-      // Assault alternates quickly, aggressive side-stepping
       if (Math.random() < 0.7) ag.strafeDir *= -1;
       ag.strafeTimer = 0.2 + Math.random() * 0.4;
     } else if (ag.botClass === 'sniper') {
-      // Snipers strafe slowly, methodical repositioning
       if (Math.random() < 0.5) ag.strafeDir *= -1;
       ag.strafeTimer = 0.6 + Math.random() * 1.0;
     } else {
-      // Riflemen — balanced
       if (Math.random() < 0.6) ag.strafeDir *= -1;
       ag.strafeTimer = 0.25 + Math.random() * 0.6;
     }
@@ -103,28 +110,37 @@ function updateStrafing(ag: TDMAgent, dt: number): void {
 }
 
 // ═══════════════════════════════════════════
-//  DAMAGE REACTION
+//  DAMAGE PRESSURE — now materially affects behavior
 // ═══════════════════════════════════════════
 
-function handleDamageReaction(ag: TDMAgent, dt: number): boolean {
+function updateDamagePressure(ag: TDMAgent, dt: number): void {
   const timeSinceDamage = gameState.worldElapsed - ag.lastDamageTime;
 
   // Immediate dodge: if just hit, impulse strafe
   if (timeSinceDamage < 0.3) {
-    ag.strafeDir *= -1; // immediately flip strafe
+    ag.strafeDir *= -1;
     ag.strafeTimer = 0.4;
-    return true;
   }
 
-  // Under heavy pressure: retreat if taking lots of damage
-  if (ag.recentDamage > ag.maxHP * 0.4 && timeSinceDamage < 2) {
-    return true; // signal to consider retreating
+  // Calculate pressure level (0-1)
+  const recentDamageRatio = ag.recentDamage / ag.maxHP;
+  const recency = Math.max(0, 1 - timeSinceDamage / 3);
+  ag.pressureLevel = Math.min(1, recentDamageRatio * recency * 2);
+  ag.underPressure = ag.pressureLevel > 0.25;
+
+  // Pressure materially affects behavior:
+  // 1. Fire discipline: under pressure, bots pause shooting more
+  if (ag.pressureLevel > 0.5 && ag.shootTimer < 0.1) {
+    ag.shootTimer += ag.pressureLevel * 0.08; // slight delay under fire
+  }
+
+  // 2. Aggression suppression: reduce fuzzy aggression under pressure
+  if (ag.underPressure) {
+    ag.fuzzyAggr = Math.max(0, ag.fuzzyAggr - ag.pressureLevel * 25);
   }
 
   // Decay recent damage over time
   ag.recentDamage = Math.max(0, ag.recentDamage - dt * 20);
-
-  return false;
 }
 
 // ═══════════════════════════════════════════
@@ -133,21 +149,18 @@ function handleDamageReaction(ag: TDMAgent, dt: number): boolean {
 
 function tryThrowGrenade(ag: TDMAgent, target: TDMAgent, dist: number): boolean {
   if (ag.grenades <= 0 || ag.grenadeCooldown > 0) return false;
-  if (dist < 5 || dist > 30) return false; // too close (self-damage) or too far
+  if (dist < 5 || dist > 30) return false;
 
-  // Only throw when multiple enemies cluster or target is behind cover
   const shouldThrow =
-    (dist > 10 && dist < 25 && ag.stateName === 'COVER') ||  // flush someone from cover
-    (ag.nearbyAllies >= 2 && ag.confidence > 50) ||           // confident team push
-    (ag.stateName === 'ENGAGE' && dist > 12 && Math.random() < 0.02); // occasional surprise
+    (dist > 10 && dist < 25 && ag.stateName === 'COVER') ||
+    (ag.nearbyAllies >= 2 && ag.confidence > 50) ||
+    (ag.stateName === 'ENGAGE' && dist > 12 && Math.random() < 0.02);
 
   if (!shouldThrow) return false;
 
   const o = new THREE.Vector3(ag.position.x, 1.2, ag.position.z);
   const tPos = new THREE.Vector3(target.position.x, 0, target.position.z);
   const d = tPos.clone().sub(o).normalize();
-
-  // Add some inaccuracy
   d.x += (Math.random() - 0.5) * 0.15;
   d.z += (Math.random() - 0.5) * 0.15;
   d.normalize();
@@ -168,7 +181,9 @@ export function updateAI(ag: TDMAgent, dt: number): void {
   // ── Update timers ──
   ag.stateTime += dt;
   updateStrafing(ag, dt);
-  const underPressure = handleDamageReaction(ag, dt);
+  updateDamagePressure(ag, dt);
+  decayEnemyMemory(ag, dt);
+
   if (gameState.pDead && ag.currentTarget === gameState.player) {
     ag.currentTarget = null;
     ag.hasTarget = false;
@@ -177,33 +192,27 @@ export function updateAI(ag: TDMAgent, dt: number): void {
   }
 
   // ── Stuck detection ──
-  // Check if agent has barely moved over the last ~0.5 seconds
   const movedDist = ag.position.distanceTo(ag.lastStuckCheckPos);
   if (movedDist < 0.15) {
     ag.stuckTime += dt;
   } else {
     ag.stuckTime = 0;
   }
-  // Sample position every few frames
   if (Math.random() < 0.1) {
     ag.lastStuckCheckPos.copy(ag.position);
   }
-  // If stuck for over 0.8s, break out
   if (ag.stuckTime > 0.8) {
     ag.stuckTime = 0;
     ag.hasLastKnown = false;
     ag.currentCover = null;
     ag.seekingPickup = false;
     ag.seekPickupPos = null;
-    // Nudge away from nearest wall
     const pushed = pushOutOfWall(ag.position.x, ag.position.z);
     if (ag.seekB) {
-      // Seek to a safe open position
       (ag.seekB as any).target.set(pushed.x + (Math.random() - 0.5) * 4, 0, pushed.z + (Math.random() - 0.5) * 4);
       ag.seekB.weight = 2;
     }
     ag.stateName = 'PATROL';
-    // Force brain to re-evaluate
     ag.brain.clearSubgoals();
     ag.brain.arbitrate();
   }
@@ -211,7 +220,7 @@ export function updateAI(ag: TDMAgent, dt: number): void {
   // ── Grenade cooldown ──
   if (ag.grenadeCooldown > 0) ag.grenadeCooldown -= dt;
 
-  // ── Audio awareness — hear nearby gunfire ──
+  // ── Audio awareness ──
   checkAudioAwareness(ag);
 
   // ── Periodically count nearby allies ──
@@ -232,10 +241,13 @@ export function updateAI(ag: TDMAgent, dt: number): void {
     ag.hasLastKnown = true;
     ag.alertLevel = Math.min(100, ag.alertLevel + dt * 30);
 
+    // Update tactical memory
+    updateEnemyMemory(ag, target, 'visual');
+
     // Broadcast to teammates
     broadcastEnemyPosition(ag, target);
 
-    // Track target — increases accuracy over time
+    // Track target
     if (hadTarget && prevTarget === target) ag.trackingTime += dt;
     else ag.trackingTime = 0;
 
@@ -255,7 +267,9 @@ export function updateAI(ag: TDMAgent, dt: number): void {
     evalFuzzy(ag, dist);
 
     const canReact = ag.reactionTimer <= 0;
-    if (underPressure && ag.hp < ag.maxHP * 0.55) {
+
+    // Under heavy pressure: seek cover more aggressively
+    if (ag.underPressure && ag.hp < ag.maxHP * 0.55) {
       ag.currentCover = ag.currentTarget ? findCoverFrom(ag, ag.currentTarget.position) : ag.currentCover;
     }
 
@@ -264,36 +278,27 @@ export function updateAI(ag: TDMAgent, dt: number): void {
     // ══════════════════════════════════
     ag.decisionTimer -= dt;
     if (ag.decisionTimer <= 0) {
-      ag.decisionTimer = 0.15 + Math.random() * 0.2;
+      // Under pressure: re-evaluate faster
+      const decisionInterval = ag.underPressure ? 0.1 + Math.random() * 0.1 : 0.15 + Math.random() * 0.2;
+      ag.decisionTimer = decisionInterval;
 
-      const hpRatio = ag.hp / ag.maxHP;
-      const ammoRatio = ag.ammo / ag.magSize;
-      const lowHP = hpRatio < 0.3;
-      const medHP = hpRatio < 0.55;
-      const lowAmmo = ammoRatio < 0.2;
-      const closeRange = dist < 10;
-      const midRange = dist >= 10 && dist < 25;
-      const longRange = dist >= 25;
-
-      // Score awareness: more aggressive when losing, more cautious when ahead
+      // Score pressure: more aggressive when losing, more cautious when ahead
       const myTeamScore = gameState.teamScores[ag.team];
       const enemyTeamScore = gameState.teamScores[ag.team === TEAM_BLUE ? 1 : 0];
       const scoreDiff = myTeamScore - enemyTeamScore;
-      const losing = scoreDiff < -3;
-      const winning = scoreDiff > 5;
-
-      // Boost aggression when losing
-      if (losing) ag.fuzzyAggr = Math.min(100, ag.fuzzyAggr + 15);
-      if (winning && ag.hp / ag.maxHP < 0.5) ag.fuzzyAggr = Math.max(0, ag.fuzzyAggr - 10);
+      if (scoreDiff < -3) ag.fuzzyAggr = Math.min(100, ag.fuzzyAggr + 15);
+      if (scoreDiff > 5 && ag.hp / ag.maxHP < 0.5) ag.fuzzyAggr = Math.max(0, ag.fuzzyAggr - 10);
 
       ag.brain.arbitrate();
     }
 
     // ══════════════════════════════════
-    //  SHOOTING
+    //  SHOOTING (only if armed)
     // ══════════════════════════════════
-    if (canReact && canSee(ag, target)) {
-      // Try grenades in tactical situations
+    if (ag.weaponId === 'unarmed') {
+      // Unarmed: don't try to shoot, just seek weapons
+    } else if (canReact && canSee(ag, target)) {
+      // Try grenades
       if (dist > 10 && ag.grenadeCooldown <= 0 && ag.grenades > 0) {
         tryThrowGrenade(ag, target, dist);
       }
@@ -307,65 +312,66 @@ export function updateAI(ag: TDMAgent, dt: number): void {
       } else if (ag.ammo <= 0) {
         ag.isReloading = true;
         ag.reloadTimer = ag.reloadTime;
-        // Set cover point — the brain will handle movement via ReloadEvaluator
         if (ag.stateName !== 'COVER' && ag.stateName !== 'RETREAT') {
           const cover = findCoverFrom(ag, target.position);
-          if (cover) {
-            ag.currentCover = cover;
-          }
+          if (cover) ag.currentCover = cover;
         }
       } else {
-        ag.shootTimer -= dt;
-        if (ag.shootTimer <= 0) {
-          if (ag.burstCount < ag.burstSize) {
-            ag.burstTimer -= dt;
-            if (ag.burstTimer <= 0) {
-              aiShoot(ag, target);
-              ag.burstCount++;
-              ag.burstTimer = ag.burstDelay;
+        // Fire discipline under pressure: occasionally skip shots
+        const pressureSkip = ag.pressureLevel > 0.6 && Math.random() < ag.pressureLevel * 0.3;
+        if (!pressureSkip) {
+          ag.shootTimer -= dt;
+          if (ag.shootTimer <= 0) {
+            if (ag.burstCount < ag.burstSize) {
+              ag.burstTimer -= dt;
+              if (ag.burstTimer <= 0) {
+                aiShoot(ag, target);
+                ag.burstCount++;
+                ag.burstTimer = ag.burstDelay;
+              }
+            } else {
+              ag.burstCount = 0;
+              ag.shootTimer = ag.fireRate + Math.random() * 0.12;
             }
-          } else {
-            ag.burstCount = 0;
-            ag.shootTimer = ag.fireRate + Math.random() * 0.12;
           }
         }
       }
     } else if (canReact && ag.hasLastKnown && ag.alertLevel > 60 && !ag.isReloading && ag.ammo > 3) {
-      // ── Suppressive fire: shoot at last known position briefly ──
-      const timeSinceTarget = ag.stateTime;
-      if (timeSinceTarget < 1.5 && Math.random() < 0.3) {
-        ag.shootTimer -= dt;
-        if (ag.shootTimer <= 0) {
-          const suppressDir = new THREE.Vector3(
-            ag.lastKnownPos.x - ag.position.x,
-            0,
-            ag.lastKnownPos.z - ag.position.z,
-          ).normalize();
-          // Worse accuracy for suppression
-          suppressDir.x += (Math.random() - 0.5) * 0.15;
-          suppressDir.z += (Math.random() - 0.5) * 0.15;
-          suppressDir.normalize();
+      // ── Suppressive fire (reduced under pressure) ──
+      if (!ag.underPressure || Math.random() < 0.15) {
+        const timeSinceTarget = ag.stateTime;
+        if (timeSinceTarget < 1.5 && Math.random() < 0.3) {
+          ag.shootTimer -= dt;
+          if (ag.shootTimer <= 0) {
+            _suppressDir.set(
+              ag.lastKnownPos.x - ag.position.x,
+              0,
+              ag.lastKnownPos.z - ag.position.z,
+            ).normalize();
+            _suppressDir.x += (Math.random() - 0.5) * 0.15;
+            _suppressDir.z += (Math.random() - 0.5) * 0.15;
+            _suppressDir.normalize();
 
-          const o = new THREE.Vector3(ag.position.x, 0.9, ag.position.z);
-          const col = ag.team === TEAM_BLUE ? 0x60a5fa : 0xff6644;
-          const muzzlePos = new THREE.Vector3(ag.position.x + suppressDir.x * 0.6, 1.0, ag.position.z + suppressDir.z * 0.6);
-          spawnMuzzleFlash(muzzlePos, col);
-          hitscanShot(o, suppressDir, 'ai', ag.team, ag.weaponId, col, ag);
-          ag.ammo--;
-          ag.shootTimer = ag.fireRate * 1.5; // slower fire for suppression
+            _suppressOrigin.set(ag.position.x, 0.9, ag.position.z);
+            const col = ag.team === TEAM_BLUE ? 0x60a5fa : 0xff6644;
+            _suppressMuzzle.set(ag.position.x + _suppressDir.x * 0.6, 1.0, ag.position.z + _suppressDir.z * 0.6);
+            spawnMuzzleFlash(_suppressMuzzle.clone(), col);
+            hitscanShot(_suppressOrigin.clone(), _suppressDir.clone(), 'ai', ag.team, ag.weaponId, col, ag);
+            ag.ammo--;
+            ag.shootTimer = ag.fireRate * 1.5;
+          }
         }
       }
     }
   } else {
     // ══════════════════════════════════
-    //  NO TARGET VISIBLE — brain decides
+    //  NO TARGET VISIBLE
     // ══════════════════════════════════
     ag.hasTarget = false;
     ag.currentTarget = null;
     ag.trackingTime = 0;
     ag.alertLevel = Math.max(0, ag.alertLevel - dt * 15);
 
-    // Damage awareness: if shot recently, track the attacker
     const timeSinceDmg = gameState.worldElapsed - ag.lastDamageTime;
     if (timeSinceDmg < 1.5 && ag.lastAttacker && !ag.lastAttacker.isDead) {
       ag.lastKnownPos.copy(ag.lastAttacker.position);
@@ -373,7 +379,23 @@ export function updateAI(ag: TDMAgent, dt: number): void {
       ag.alertLevel = 80;
     }
 
-    // Brain arbitration for non-combat decisions
+    // Use tactical memory: investigate highest-confidence remembered enemy
+    if (!ag.hasLastKnown) {
+      let bestMemConf = 0;
+      let bestMemPos: YUKA.Vector3 | null = null;
+      for (const [, entry] of ag.enemyMemory) {
+        if (entry.confidence > bestMemConf && entry.confidence > 0.2) {
+          bestMemConf = entry.confidence;
+          bestMemPos = entry.lastSeenPos;
+        }
+      }
+      if (bestMemPos) {
+        ag.lastKnownPos.copy(bestMemPos);
+        ag.hasLastKnown = true;
+        ag.alertLevel = Math.max(ag.alertLevel, 40);
+      }
+    }
+
     ag.decisionTimer -= dt;
     if (ag.decisionTimer <= 0) {
       ag.decisionTimer = 0.3 + Math.random() * 0.3;

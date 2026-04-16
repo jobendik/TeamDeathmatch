@@ -8,23 +8,25 @@ let fireTO: ReturnType<typeof setTimeout>;
 
 const xhEl = (): HTMLElement => document.getElementById('xh')!;
 
-/**
- * Update the HUD display (HP bar, ammo, weapon name, kills, deaths, grenades).
- */
 export function updateHUD(): void {
   dom.hpFill.style.width = gameState.pHP + '%';
-  dom.hpTxt.textContent = String(gameState.pHP);
-  dom.ammoTxt.textContent = String(gameState.pAmmo);
+  dom.hpTxt.textContent = String(Math.round(gameState.pHP));
 
   const wep = WEAPONS[gameState.pWeaponId];
-  dom.ammoMax.textContent = '/ ' + wep.magSize;
-  dom.weaponName.textContent = wep.name;
+
+  if (gameState.pWeaponId === 'unarmed') {
+    dom.ammoTxt.textContent = '--';
+    dom.ammoMax.textContent = '';
+    dom.weaponName.textContent = 'UNARMED';
+  } else {
+    dom.ammoTxt.textContent = String(gameState.pAmmo);
+    dom.ammoMax.textContent = '/ ' + wep.magSize;
+    dom.weaponName.textContent = wep.name;
+  }
+
   dom.grenadeTxt.textContent = '🧨 ' + gameState.pGrenades;
 }
 
-/**
- * Update crosshair spread based on movement/firing state.
- */
 export function updateCrosshair(): void {
   const el = xhEl();
   if (!el) return;
@@ -39,9 +41,6 @@ export function updateCrosshair(): void {
   }
 }
 
-/**
- * Flash crosshair on fire.
- */
 export function flashCrosshairFire(): void {
   const el = xhEl();
   if (!el) return;
@@ -53,18 +52,12 @@ export function flashCrosshairFire(): void {
   }, 80);
 }
 
-/**
- * Flash the damage vignette overlay.
- */
 export function flashDmg(): void {
   dom.dmg.style.opacity = '.65';
   clearTimeout(dmgTO);
   dmgTO = setTimeout(() => { dom.dmg.style.opacity = '0'; }, 120);
 }
 
-/**
- * Flash the heal vignette overlay.
- */
 export function flashHeal(): void {
   dom.hlf.style.opacity = '1';
   clearTimeout(hlfTO);

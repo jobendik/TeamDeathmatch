@@ -7,9 +7,6 @@ import { TEAM_BLUE } from '@/config/constants';
 import { WEAPONS } from '@/config/weapons';
 import { getEnemyFlagTeam } from '@/core/GameModes';
 
-// IMPORTANT: YUKA calls Goal lifecycle methods (activate, execute, terminate)
-// WITHOUT passing the owner. All methods must use this.owner instead.
-
 // ═══════════════════════════════════════════
 //  ATOMIC GOALS — leaf-level behaviors
 // ═══════════════════════════════════════════
@@ -151,7 +148,8 @@ export class RetreatGoal extends YUKA.Goal<TDMAgent> {
     ag.stateName = 'RETREAT';
     ag.stateTime = 0;
     this.origSpeed = ag.maxSpeed;
-    ag.maxSpeed *= 1.15;
+    // Retreat speed scales with pressure urgency
+    ag.maxSpeed *= 1.15 + ag.pressureLevel * 0.15;
     if (ag.currentTarget) {
       const cover = findCoverFrom(ag, ag.currentTarget.position);
       if (cover) ag.currentCover = cover;
@@ -234,8 +232,10 @@ export class TakeCoverGoal extends YUKA.Goal<TDMAgent> {
       if (ag.currentCover) (ag.arriveB as any).target.copy(ag.currentCover);
     }
 
-    // Use stateTime (incremented by actual dt in updateAI)
-    if (ag.stateTime >= this.duration) {
+    // Under pressure: stay in cover longer
+    const effectiveDuration = this.duration + (ag.underPressure ? ag.pressureLevel * 2 : 0);
+
+    if (ag.stateTime >= effectiveDuration) {
       this.status = YUKA.Goal.STATUS.COMPLETED;
     }
     if (ag.hp >= ag.maxHP * 0.9 && ag.ammo >= ag.magSize * 0.5) {
@@ -258,7 +258,9 @@ export class PeekGoal extends YUKA.Goal<TDMAgent> {
     ag.stateName = 'PEEK';
     ag.stateTime = 0;
     ag.isPeeking = true;
-    this.peekDuration = 0.6 + Math.random() * 0.8;
+    // Under pressure: shorter peeks
+    const baseDuration = 0.6 + Math.random() * 0.8;
+    this.peekDuration = baseDuration * (1 - ag.pressureLevel * 0.5);
     this.status = YUKA.Goal.STATUS.ACTIVE;
   }
 
@@ -279,7 +281,6 @@ export class PeekGoal extends YUKA.Goal<TDMAgent> {
     }
     if (ag.arriveB) ag.arriveB.weight = 0;
 
-    // Use stateTime (incremented by actual dt in updateAI)
     if (ag.stateTime >= this.peekDuration) {
       this.status = YUKA.Goal.STATUS.COMPLETED;
     }
@@ -347,7 +348,7 @@ export class SeekPickupGoal extends YUKA.Goal<TDMAgent> {
     ag.stateTime = 0;
     ag.seekingPickup = true;
     const pickup = findNearestPickup(ag, this.pickupType);
-    if (pickup && ag.position.distanceTo(pickup) < 40) {
+    if (pickup && ag.position.distanceTo(pickup) < 50) {
       ag.seekPickupPos = pickup;
       this.status = YUKA.Goal.STATUS.ACTIVE;
     } else {
@@ -371,10 +372,11 @@ export class SeekPickupGoal extends YUKA.Goal<TDMAgent> {
     if (ag.seekPickupPos && ag.position.distanceTo(ag.seekPickupPos) < 3) {
       this.status = YUKA.Goal.STATUS.COMPLETED;
     }
-    if (ag.currentTarget && ag.position.distanceTo(ag.currentTarget.position) < 12) {
+    // Don't abort weapon seek when unarmed just because enemy is near
+    if (ag.weaponId !== 'unarmed' && ag.currentTarget && ag.position.distanceTo(ag.currentTarget.position) < 12) {
       this.status = YUKA.Goal.STATUS.FAILED;
     }
-    if (ag.stateTime > 8) {
+    if (ag.stateTime > 10) {
       this.status = YUKA.Goal.STATUS.FAILED;
     }
   }
@@ -435,8 +437,6 @@ export class TeamPushGoal extends YUKA.Goal<TDMAgent> {
   }
 }
 
-
-
 function getCTFObjectivePosition(ag: TDMAgent): YUKA.Vector3 | null {
   if (gameState.mode !== 'ctf') return null;
 
@@ -464,7 +464,7 @@ function getCTFObjectivePosition(ag: TDMAgent): YUKA.Vector3 | null {
 }
 
 // ═══════════════════════════════════════════
-//  COMPOSITE GOALS — higher-level behaviors
+//  COMPOSITE GOALS
 // ═══════════════════════════════════════════
 
 export class AttackTargetGoal extends YUKA.CompositeGoal<TDMAgent> {
@@ -721,21 +721,22 @@ function findHuntTarget(ag: TDMAgent): YUKA.Vector3 | null {
     }
   }
 
+  // Use tactical memory for hunt targets (higher confidence = higher score)
+  for (const [, entry] of ag.enemyMemory) {
+    if (entry.confidence > 0.15) {
+      scores.push({
+        pos: new YUKA.Vector3(entry.lastSeenPos.x, 0, entry.lastSeenPos.z),
+        score: 60 + entry.confidence * 40,
+      });
+    }
+  }
+
   const enemySpawnX = ag.team === TEAM_BLUE ? 45 : -45;
   const enemySpawnZ = ag.team === TEAM_BLUE ? -45 : 45;
   scores.push({
     pos: new YUKA.Vector3(enemySpawnX + (Math.random() - 0.5) * 20, 0, enemySpawnZ + (Math.random() - 0.5) * 20),
     score: 40 + ag.confidence * 0.3,
   });
-
-  for (const enemy of gameState.agents) {
-    if (enemy.isDead || enemy.team === ag.team || enemy === gameState.player) continue;
-    const noisy = new YUKA.Vector3(
-      enemy.position.x + (Math.random() - 0.5) * 25, 0,
-      enemy.position.z + (Math.random() - 0.5) * 25,
-    );
-    scores.push({ pos: noisy, score: 30 });
-  }
 
   if (!gameState.player.isDead) {
     scores.push({
@@ -753,15 +754,17 @@ function findHuntTarget(ag: TDMAgent): YUKA.Vector3 | null {
     scores.push({ pos: hp, score: 15 - dist * 0.1 });
   }
 
+  // Weapon pickups while hunting (especially when unarmed)
   for (const p of gameState.pickups) {
     if (!p.active) continue;
     if (p.t === 'weapon' && p.weaponId) {
       const wepDesirability = WEAPONS[p.weaponId].desirability;
       const currentDesirability = WEAPONS[ag.weaponId].desirability;
-      if (wepDesirability > currentDesirability) {
+      if (wepDesirability > currentDesirability || ag.weaponId === 'unarmed') {
+        const urgency = ag.weaponId === 'unarmed' ? 100 : (wepDesirability - currentDesirability);
         scores.push({
           pos: new YUKA.Vector3(p.x, 0, p.z),
-          score: 50 + (wepDesirability - currentDesirability),
+          score: 50 + urgency,
         });
       }
     }

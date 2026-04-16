@@ -70,8 +70,6 @@ export interface KillfeedEntry {
   weaponName?: string;
 }
 
-
-
 export interface FlagState {
   team: 0 | 1;
   base: THREE.Vector3;
@@ -97,6 +95,15 @@ export interface InputKeys {
 }
 
 // ────────────────────────────────────────────
+//  NavMesh types (optional)
+// ────────────────────────────────────────────
+export interface NavMeshState {
+  navMesh: any | null;
+  navMeshLoaded: boolean;
+  navMeshLoading: boolean;
+}
+
+// ────────────────────────────────────────────
 //  Global mutable game state
 // ────────────────────────────────────────────
 
@@ -113,7 +120,7 @@ export const gameState = {
   vmScene: null as THREE.Scene | null,
   vmCamera: null as THREE.PerspectiveCamera | null,
 
-  // World elapsed time
+  // World elapsed time (only advances when unpaused)
   worldElapsed: 0,
 
   // Match state
@@ -123,6 +130,11 @@ export const gameState = {
   matchTime: 300,
   matchTimeRemaining: 300,
   scoreLimit: 10,
+
+  // Elimination mode state
+  eliminationRound: 0,
+  eliminationBlueAlive: 0,
+  eliminationRedAlive: 0,
 
   // Collision and world objects
   wallMeshes: [] as THREE.Mesh[],
@@ -197,4 +209,12 @@ export const gameState = {
 
   // Floor shader ref
   floorMat: null as THREE.ShaderMaterial | null,
+
+  // Perception stagger — rotates which agents get full perception each frame
+  perceptionFrame: 0,
+
+  // NavMesh (optional)
+  navMesh: null as any,
+  navMeshLoaded: false,
+  navMeshLoading: false,
 };

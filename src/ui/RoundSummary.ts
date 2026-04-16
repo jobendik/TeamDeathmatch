@@ -35,6 +35,12 @@ export function showRoundSummary(winnerTeam: number): void {
     dom.rsResult.textContent = top.isPlayer ? 'VICTORY' : 'DEFEAT';
     dom.rsResult.style.color = top.isPlayer ? '#22c55e' : '#ef4444';
     dom.rsTeamScore.textContent = `FFA · Leader ${top.name} · ${top.kills} kills`;
+  } else if (gameState.mode === 'elimination') {
+    const playerTeam = gameState.player.team;
+    const isVictory = winnerTeam === playerTeam;
+    dom.rsResult.textContent = isVictory ? 'VICTORY' : 'DEFEAT';
+    dom.rsResult.style.color = isVictory ? '#22c55e' : '#ef4444';
+    dom.rsTeamScore.innerHTML = `<span style="color:var(--muted)">ELIMINATION</span> · <span style="color:var(--blue)">BLUE ${gameState.teamScores[TEAM_BLUE]}</span> <span style="color:var(--muted)">—</span> <span style="color:var(--red)">${gameState.teamScores[TEAM_RED]} RED</span>`;
   } else {
     const playerTeam = gameState.player.team;
     const isVictory = winnerTeam === playerTeam;
@@ -59,11 +65,13 @@ export function showRoundSummary(winnerTeam: number): void {
       <div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text)">${p.kills}K / ${p.deaths}D</div>
     </div>`).join('');
 
+  const modeLabel = gameState.mode === 'ffa' ? 'FFA' : gameState.mode === 'elimination' ? 'ELIM' : '';
   dom.rsStats.innerHTML = `
     <div class="rs-stats-header"><span>PLAYER</span><span>TEAM</span><span>K</span><span>D</span><span>K/D</span></div>
     ${stats.map((s) => {
       const kd = s.deaths > 0 ? (s.kills / s.deaths).toFixed(1) : s.kills.toFixed(1);
-      return `<div class="rs-stats-row${s.isPlayer ? ' me' : ''}"><span>${s.name}${s.isPlayer ? ' (YOU)' : ''}</span><span>${gameState.mode === 'ffa' ? 'FFA' : s.team === TEAM_BLUE ? 'BLUE' : 'RED'}</span><span>${s.kills}</span><span>${s.deaths}</span><span>${kd}</span></div>`;
+      const teamLabel = gameState.mode === 'ffa' ? 'FFA' : s.team === TEAM_BLUE ? 'BLUE' : 'RED';
+      return `<div class="rs-stats-row${s.isPlayer ? ' me' : ''}"><span>${s.name}${s.isPlayer ? ' (YOU)' : ''}</span><span>${teamLabel}</span><span>${s.kills}</span><span>${s.deaths}</span><span>${kd}</span></div>`;
     }).join('')}`;
 
   dom.rsBtn.onclick = () => {

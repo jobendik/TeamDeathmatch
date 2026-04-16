@@ -3,7 +3,7 @@ import { gameState } from '@/core/GameState';
 import { FP } from '@/config/player';
 import { WEAPONS } from '@/config/weapons';
 import { ARENA_MARGIN } from '@/config/constants';
-import { getFacingYawTowardsArena, getModeDefaults, getPlayerSpawn } from '@/core/GameModes';
+import { allowsRespawn, getFacingYawTowardsArena, getModeDefaults, getPlayerSpawn } from '@/core/GameModes';
 import { setViewmodelWeapon } from '@/rendering/WeaponViewmodel';
 import { updateHUD, flashHeal } from '@/ui/HUD';
 import { dom } from '@/ui/DOMElements';
@@ -11,9 +11,6 @@ import { onShoot } from '@/core/EventManager';
 import type { TDMAgent } from './TDMAgent';
 import type { Collider } from '@/core/GameState';
 
-/**
- * Check if a position collides with any wall or arena boundary.
- */
 function collidesPlayer(x: number, z: number): boolean {
   if (Math.abs(x) > ARENA_MARGIN || Math.abs(z) > ARENA_MARGIN) return true;
   for (const c of gameState.colliders) {
@@ -28,9 +25,6 @@ function collidesPlayer(x: number, z: number): boolean {
   return false;
 }
 
-/**
- * Keep an agent inside the arena, resolving collisions with walls and pillars.
- */
 export function keepInside(ag: TDMAgent): void {
   const margin = Math.max(0.55, ag.boundingRadius) + 0.08;
   ag.position.x = Math.max(-ARENA_MARGIN + margin, Math.min(ARENA_MARGIN - margin, ag.position.x));
@@ -65,13 +59,19 @@ export function keepInside(ag: TDMAgent): void {
   }
 }
 
-/**
- * Update the player each frame: movement, reload, pickup collection, camera.
- */
 export function updatePlayer(dt: number): void {
   const { player, keys, pickups } = gameState;
 
   if (gameState.pDead) {
+    // In elimination mode, no respawning
+    if (!allowsRespawn()) {
+      dom.dsp.textContent = 'Eliminert — venter på neste runde…';
+      gameState.camera.position.set(player.position.x, FP.height, player.position.z);
+      gameState.camera.rotation.y = gameState.cameraYaw;
+      gameState.camera.rotation.x = gameState.cameraPitch;
+      return;
+    }
+
     gameState.respTimer -= dt;
     dom.dsp.textContent = 'Respawner om ' + Math.max(0, gameState.respTimer).toFixed(1) + 's…';
     if (gameState.respTimer <= 0) {
@@ -80,14 +80,14 @@ export function updatePlayer(dt: number): void {
       gameState.pHP = 100;
       player.hp = 100;
       const startsArmed = getModeDefaults(gameState.mode).playerStartsArmed;
-      gameState.pWeaponSlots = startsArmed ? ['assault_rifle', 'pistol'] : ['pistol'];
+      gameState.pWeaponSlots = startsArmed ? ['assault_rifle', 'pistol'] : ['unarmed'];
       gameState.pActiveSlot = 0;
       gameState.pWeaponId = gameState.pWeaponSlots[0];
       const respawnWeapon = WEAPONS[gameState.pWeaponId];
       gameState.pAmmo = respawnWeapon.magSize;
       gameState.pMaxAmmo = respawnWeapon.magSize;
       gameState.pReloadDuration = respawnWeapon.reloadTime;
-      gameState.pGrenades = gameState.mode === 'ffa' ? 1 : 2;
+      gameState.pGrenades = startsArmed ? 2 : 0;
       gameState.pReloading = false;
       dom.ds.classList.remove('on');
       const sp = getPlayerSpawn();
@@ -104,8 +104,10 @@ export function updatePlayer(dt: number): void {
     return;
   }
 
-  // Reload
-  if (gameState.pReloading) {
+  const isUnarmed = gameState.pWeaponId === 'unarmed';
+
+  // Reload (not when unarmed)
+  if (gameState.pReloading && !isUnarmed) {
     gameState.pReloadTimer += dt;
     const pct = Math.min(1, gameState.pReloadTimer / gameState.pReloadDuration) * 100;
     dom.reloadFill.style.width = pct + '%';
@@ -154,7 +156,7 @@ export function updatePlayer(dt: number): void {
         player.hp = gameState.pHP;
         updateHUD();
         flashHeal();
-      } else if (pk.t === 'ammo' && gameState.pAmmo < gameState.pMaxAmmo) {
+      } else if (pk.t === 'ammo' && !isUnarmed && gameState.pAmmo < gameState.pMaxAmmo) {
         pk.active = false;
         pk.mesh.visible = pk.ring.visible = false;
         pk.respawnAt = gameState.worldElapsed + 12;
@@ -171,7 +173,11 @@ export function updatePlayer(dt: number): void {
         pk.mesh.visible = pk.ring.visible = false;
         pk.respawnAt = gameState.worldElapsed + 25;
         const wepId = pk.weaponId;
-        if (!gameState.pWeaponSlots.includes(wepId)) {
+        // If unarmed, replace the unarmed slot
+        if (isUnarmed) {
+          gameState.pWeaponSlots = [wepId];
+          gameState.pActiveSlot = 0;
+        } else if (!gameState.pWeaponSlots.includes(wepId)) {
           if (gameState.pWeaponSlots.length < 3) {
             gameState.pWeaponSlots.push(wepId);
           } else {
@@ -202,8 +208,8 @@ export function updatePlayer(dt: number): void {
     updateHUD();
   }
 
-  // Auto-fire: keep shooting while mouse held
-  if (gameState.mouseHeld && gameState.mouseLocked) {
+  // Auto-fire: keep shooting while mouse held (only if armed)
+  if (gameState.mouseHeld && gameState.mouseLocked && !isUnarmed) {
     onShoot();
   }
 

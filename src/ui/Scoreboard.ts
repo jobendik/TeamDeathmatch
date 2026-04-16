@@ -19,7 +19,22 @@ export function updateScoreboard(): void {
     dom.sbBlue.textContent = String(gameState.teamScores[TEAM_BLUE]);
     dom.sbRed.textContent = String(gameState.teamScores[TEAM_RED]);
   }
-  dom.sbMid.textContent = `${getModeLabel()} · ${formatTime(gameState.matchTimeRemaining)}`;
+
+  let midText = `${getModeLabel()} · ${formatTime(gameState.matchTimeRemaining)}`;
+
+  // Show alive counts in elimination mode
+  if (gameState.mode === 'elimination') {
+    let blueAlive = 0;
+    let redAlive = 0;
+    for (const ag of gameState.agents) {
+      if (ag.isDead) continue;
+      if (ag.team === TEAM_BLUE) blueAlive++;
+      else redAlive++;
+    }
+    midText = `ELIM R${gameState.eliminationRound + 1} · ${blueAlive}v${redAlive} · ${formatTime(gameState.matchTimeRemaining)}`;
+  }
+
+  dom.sbMid.textContent = midText;
 }
 
 export function updateTabboard(): void {
@@ -41,17 +56,20 @@ export function updateTabboard(): void {
     const blueTeam = agents.filter((a) => a.team === TEAM_BLUE).sort((a, b) => b.kills - a.kills);
     const redTeam = agents.filter((a) => a.team === TEAM_RED).sort((a, b) => b.kills - a.kills);
 
-    html = `<div class="tb-section" style="color:#38bdf8">BLÅ LAG — ${teamScores[TEAM_BLUE]}</div>`;
+    const modeTag = gameState.mode === 'elimination' ? 'ELIM' : '';
+    html = `<div class="tb-section" style="color:#38bdf8">BLÅ LAG ${modeTag} — ${teamScores[TEAM_BLUE]}</div>`;
     for (const a of blueTeam) {
       const me = a === player ? ' me' : '';
       const k = a === player ? gameState.pKills : a.kills;
       const d = a === player ? gameState.pDeaths : a.deaths;
-      html += `<div class="tb-row${me}"><span style="color:#38bdf8">${a.name}</span><span>${k}</span><span>${d}</span><span>${k * 100}</span></div>`;
+      const aliveTag = a.isDead ? ' ☠' : '';
+      html += `<div class="tb-row${me}"><span style="color:#38bdf8">${a.name}${aliveTag}</span><span>${k}</span><span>${d}</span><span>${k * 100}</span></div>`;
     }
 
-    html += `<div class="tb-section" style="color:#ef4444">RØDT LAG — ${teamScores[TEAM_RED]}</div>`;
+    html += `<div class="tb-section" style="color:#ef4444">RØDT LAG ${modeTag} — ${teamScores[TEAM_RED]}</div>`;
     for (const a of redTeam) {
-      html += `<div class="tb-row"><span style="color:#ef4444">${a.name}</span><span>${a.kills}</span><span>${a.deaths}</span><span>${a.kills * 100}</span></div>`;
+      const aliveTag = a.isDead ? ' ☠' : '';
+      html += `<div class="tb-row"><span style="color:#ef4444">${a.name}${aliveTag}</span><span>${a.kills}</span><span>${a.deaths}</span><span>${a.kills * 100}</span></div>`;
     }
   }
 

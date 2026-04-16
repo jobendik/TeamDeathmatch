@@ -1,19 +1,31 @@
 import * as THREE from 'three';
 import * as YUKA from 'yuka';
 import { gameState } from '@/core/GameState';
-import type { TDMAgent } from '@/entities/TDMAgent';
+import type { TDMAgent, EnemyMemoryEntry } from '@/entities/TDMAgent';
 import { isEnemy } from '@/core/GameModes';
+
+// ── Cached temporaries to avoid hot-loop allocations ──
+const _origin = new THREE.Vector3();
+const _target = new THREE.Vector3();
+const _dir = new THREE.Vector3();
+const _toTarget = new YUKA.Vector3();
+const _heading = new YUKA.Vector3();
+
+/** Number of frames between full perception sweeps for each agent */
+const PERCEPTION_STAGGER = 3;
 
 /**
  * Check if line-of-sight between two positions is blocked by walls.
+ * Uses cached vectors to avoid allocations.
  */
 export function isOccluded(from: YUKA.Vector3, to: YUKA.Vector3): boolean {
-  const origin = new THREE.Vector3(from.x, 0.9, from.z);
-  const target = new THREE.Vector3(to.x, 1.0, to.z);
-  const dir = target.clone().sub(origin);
-  const dist = dir.length();
+  _origin.set(from.x, 0.9, from.z);
+  _target.set(to.x, 1.0, to.z);
+  _dir.subVectors(_target, _origin);
+  const dist = _dir.length();
   if (dist < 0.01) return false;
-  gameState.raycaster.set(origin, dir.normalize());
+  _dir.normalize();
+  gameState.raycaster.set(_origin, _dir);
   const hits = gameState.raycaster.intersectObjects(gameState.wallMeshes, false);
   return hits.length > 0 && hits[0].distance < dist;
 }
@@ -27,10 +39,10 @@ export function canSee(ag: TDMAgent, target: TDMAgent): boolean {
   const dist = ag.position.distanceTo(target.position);
   if (dist > ag.visionRange) return false;
 
-  // FOV check
-  const toTarget = new YUKA.Vector3().subVectors(target.position, ag.position).normalize();
-  const heading = new YUKA.Vector3(0, 0, 1).applyRotation(ag.rotation);
-  const dot = heading.dot(toTarget);
+  // FOV check (reuse cached vectors)
+  _toTarget.subVectors(target.position, ag.position).normalize();
+  _heading.set(0, 0, 1).applyRotation(ag.rotation);
+  const dot = _heading.dot(_toTarget);
   if (dot < Math.cos(ag.visionFOV * 0.5)) return false;
 
   // Occlusion check
@@ -38,11 +50,80 @@ export function canSee(ag: TDMAgent, target: TDMAgent): boolean {
 }
 
 /**
- * Broadcast an enemy sighting to nearby teammates.
- * Simulates callouts — teammates within range get alerted to the enemy position.
+ * Whether this agent should run a full perception sweep this frame.
+ * Staggers expensive work across frames to reduce per-frame cost.
+ */
+export function shouldRunPerception(ag: TDMAgent): boolean {
+  return (gameState.perceptionFrame + ag.perceptionSlot) % PERCEPTION_STAGGER === 0;
+}
+
+/**
+ * Update tactical memory for a seen enemy.
+ */
+export function updateEnemyMemory(ag: TDMAgent, enemy: TDMAgent, source: 'visual' | 'audio' | 'callout' | 'damage'): void {
+  const existing = ag.enemyMemory.get(enemy.name);
+  const now = gameState.worldElapsed;
+
+  if (existing) {
+    existing.lastSeenPos.copy(enemy.position);
+    existing.lastSeenTime = now;
+    existing.source = source;
+    existing.confidence = source === 'visual' ? 1.0 : source === 'damage' ? 0.9 : source === 'callout' ? 0.6 : 0.4;
+    existing.wasMoving = enemy.velocity.length() > 0.5;
+    existing.lastVelocity.copy(enemy.velocity);
+    // Update threat based on enemy HP and distance
+    const dist = ag.position.distanceTo(enemy.position);
+    existing.threat = Math.max(0, 100 - dist * 1.5 - (enemy.hp / enemy.maxHP) * 20);
+  } else {
+    const entry: EnemyMemoryEntry = {
+      lastSeenPos: new YUKA.Vector3().copy(enemy.position),
+      lastSeenTime: now,
+      source,
+      confidence: source === 'visual' ? 1.0 : 0.5,
+      threat: 50,
+      wasMoving: enemy.velocity.length() > 0.5,
+      lastVelocity: new YUKA.Vector3().copy(enemy.velocity),
+    };
+    ag.enemyMemory.set(enemy.name, entry);
+  }
+}
+
+/**
+ * Decay all enemy memory entries over time. Remove very stale ones.
+ */
+export function decayEnemyMemory(ag: TDMAgent, dt: number): void {
+  const now = gameState.worldElapsed;
+  const toDelete: string[] = [];
+
+  for (const [name, entry] of ag.enemyMemory) {
+    const age = now - entry.lastSeenTime;
+    // Decay confidence based on source
+    const decayRate = entry.source === 'visual' ? 0.15 : 0.3;
+    entry.confidence = Math.max(0, entry.confidence - dt * decayRate);
+
+    // If old and low confidence, predict position drift
+    if (age > 2 && entry.wasMoving && entry.confidence > 0.1) {
+      // Grow uncertainty — shift predicted position slightly
+      entry.lastSeenPos.x += entry.lastVelocity.x * dt * 0.3;
+      entry.lastSeenPos.z += entry.lastVelocity.z * dt * 0.3;
+    }
+
+    // Remove very stale entries
+    if (entry.confidence <= 0 || age > 20) {
+      toDelete.push(name);
+    }
+  }
+
+  for (const name of toDelete) {
+    ag.enemyMemory.delete(name);
+  }
+}
+
+/**
+ * Broadcast an enemy sighting to nearby teammates with confidence.
  */
 export function broadcastEnemyPosition(spotter: TDMAgent, enemy: TDMAgent): void {
-  const calloutRange = 30; // teammates within 30 units get the callout
+  const calloutRange = 30;
 
   for (const ally of gameState.agents) {
     if (ally === spotter || ally.isDead) continue;
@@ -50,18 +131,20 @@ export function broadcastEnemyPosition(spotter: TDMAgent, enemy: TDMAgent): void
 
     const distToSpotter = ally.position.distanceTo(spotter.position);
     if (distToSpotter < calloutRange) {
-      // Teammate receives callout
+      // Teammate receives callout with degraded confidence
       if (!ally.teamCallout) ally.teamCallout = new YUKA.Vector3();
       ally.teamCallout.copy(enemy.position);
       ally.teamCalloutTime = gameState.worldElapsed;
       ally.alertLevel = Math.min(100, ally.alertLevel + 20);
+
+      // Also update ally's tactical memory via callout
+      updateEnemyMemory(ally, enemy, 'callout');
     }
   }
 }
 
 /**
- * Check if agent can "hear" nearby gunfire (even without LOS).
- * Also detects when the agent is being shot at via recent damage.
+ * Check if agent can "hear" nearby gunfire or projectiles.
  */
 export function checkAudioAwareness(ag: TDMAgent): void {
   if (ag.isDead) return;
@@ -70,6 +153,7 @@ export function checkAudioAwareness(ag: TDMAgent): void {
   const timeSinceDmg = gameState.worldElapsed - ag.lastDamageTime;
   if (timeSinceDmg < 0.5 && ag.lastAttacker && !ag.lastAttacker.isDead) {
     ag.alertLevel = Math.min(100, ag.alertLevel + 40);
+    updateEnemyMemory(ag, ag.lastAttacker, 'damage');
     if (!ag.hasTarget) {
       ag.lastKnownPos.copy(ag.lastAttacker.position);
       ag.hasLastKnown = true;
@@ -77,18 +161,19 @@ export function checkAudioAwareness(ag: TDMAgent): void {
     return;
   }
 
-  // Hear projectiles (rockets, grenades) nearby
+  // Hear projectiles (rockets, grenades) nearby — check only a few per frame
   const hearRange = 25;
-  for (const bullet of gameState.bullets) {
+  const hearRangeSq = hearRange * hearRange;
+  const checkCount = Math.min(gameState.bullets.length, 5);
+  for (let j = 0; j < checkCount; j++) {
+    const bullet = gameState.bullets[j];
     if (bullet.ownerTeam === ag.team) continue;
-    const bx = bullet.mesh.position.x;
-    const bz = bullet.mesh.position.z;
-    const dx = ag.position.x - bx;
-    const dz = ag.position.z - bz;
-    if (dx * dx + dz * dz < hearRange * hearRange) {
+    const dx = ag.position.x - bullet.mesh.position.x;
+    const dz = ag.position.z - bullet.mesh.position.z;
+    if (dx * dx + dz * dz < hearRangeSq) {
       ag.alertLevel = Math.min(100, ag.alertLevel + 8);
       if (!ag.hasTarget && !ag.hasLastKnown) {
-        ag.lastKnownPos.set(bx, 0, bz);
+        ag.lastKnownPos.set(bullet.mesh.position.x, 0, bullet.mesh.position.z);
         ag.hasLastKnown = true;
       }
       break;
@@ -98,7 +183,6 @@ export function checkAudioAwareness(ag: TDMAgent): void {
 
 /**
  * Score a potential target based on multiple factors.
- * Higher score = better target to engage.
  */
 function scoreTarget(ag: TDMAgent, target: TDMAgent, dist: number): number {
   let score = 0;
@@ -109,8 +193,8 @@ function scoreTarget(ag: TDMAgent, target: TDMAgent, dist: number): number {
 
   // Low HP targets — focus fire to secure kills
   const hpRatio = target.hp / target.maxHP;
-  if (hpRatio < 0.3) score += 40;       // Almost dead — prioritize!
-  else if (hpRatio < 0.5) score += 20;   // Wounded — good target
+  if (hpRatio < 0.3) score += 40;
+  else if (hpRatio < 0.5) score += 20;
   else if (hpRatio < 0.75) score += 5;
 
   // Threat level — prioritize anyone shooting at us
@@ -119,7 +203,7 @@ function scoreTarget(ag: TDMAgent, target: TDMAgent, dist: number): number {
   // Class priority — snipers are high-value targets
   if (target.botClass === 'sniper') score += 15;
 
-  // Already tracking this target — continuity bonus (don't keep switching)
+  // Already tracking this target — continuity bonus
   if (target === ag.currentTarget) score += 20;
 
   // Close targets get a bonus (survival instinct)
@@ -131,13 +215,28 @@ function scoreTarget(ag: TDMAgent, target: TDMAgent, dist: number): number {
     if (currentDist < 15 && dist > 25) score -= 30;
   }
 
+  // Tactical memory bonus — target we've been tracking has higher priority
+  const mem = ag.enemyMemory.get(target.name);
+  if (mem && mem.confidence > 0.5) score += 10;
+
   return score;
 }
 
 /**
- * Find the best target using multi-factor scoring instead of just closest-distance.
+ * Find the best target using multi-factor scoring.
+ * Time-sliced: only runs full sweep when shouldRunPerception returns true,
+ * otherwise returns the current target if still valid.
  */
 export function findBestTarget(ag: TDMAgent): { target: TDMAgent | null; dist: number } {
+  // Quick check: is current target still valid?
+  if (ag.currentTarget && !ag.currentTarget.isDead && canSee(ag, ag.currentTarget)) {
+    const d = ag.position.distanceTo(ag.currentTarget.position);
+    // Only do full re-evaluation on perception frames
+    if (!shouldRunPerception(ag)) {
+      return { target: ag.currentTarget, dist: d };
+    }
+  }
+
   let bestTarget: TDMAgent | null = null;
   let bestScore = -Infinity;
   let bestDist = Infinity;
@@ -165,10 +264,13 @@ export function findBestTarget(ag: TDMAgent): { target: TDMAgent | null; dist: n
  */
 export function countNearbyAllies(ag: TDMAgent, range: number): number {
   let count = 0;
+  const rangeSq = range * range;
   for (const ally of gameState.agents) {
     if (ally === ag || ally.isDead) continue;
     if (gameState.mode === 'ffa' || ally.team !== ag.team) continue;
-    if (ag.position.distanceTo(ally.position) < range) count++;
+    const dx = ag.position.x - ally.position.x;
+    const dz = ag.position.z - ally.position.z;
+    if (dx * dx + dz * dz < rangeSq) count++;
   }
   return count;
 }

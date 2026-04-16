@@ -5,10 +5,13 @@ import { isOccluded } from './Perception';
 import type { TDMAgent } from '@/entities/TDMAgent';
 import { WEAPONS } from '@/config/weapons';
 
+// ── Cached temporaries ──
+const _pushResult = { x: 0, z: 0 };
+const _toTarget = new YUKA.Vector3();
+const _peekPos = new YUKA.Vector3();
+
 /**
  * Check if a world position is inside any wall/pillar collider.
- * Uses arenaColliders (slightly expanded) so agents don't target positions
- * that keepInside would push them out of.
  */
 export function isInsideWall(x: number, z: number): boolean {
   if (Math.abs(x) > ARENA_MARGIN || Math.abs(z) > ARENA_MARGIN) return true;
@@ -55,7 +58,12 @@ export function pushOutOfWall(x: number, z: number): { x: number; z: number } {
 }
 
 /**
- * Find the best cover point — considers sightlines, distance to threat, teammates, and pickups.
+ * Find the best cover point — improved scoring with:
+ * - Occupancy: penalize if teammate already near this cover
+ * - Exposure: count how many enemies could see the cover approach path
+ * - Path cost: closer cover is more valuable
+ * - Enemy firing lane: penalize cover that enemies can easily shoot at
+ * - Safety while reaching: is the approach path exposed?
  */
 export function findCoverFrom(ag: TDMAgent, threat: YUKA.Vector3): YUKA.Vector3 | null {
   let bestCover: YUKA.Vector3 | null = null;
@@ -70,28 +78,54 @@ export function findCoverFrom(ag: TDMAgent, threat: YUKA.Vector3): YUKA.Vector3 
     // Base score: close to agent, far from threat
     let score = distToThreat * 0.3 - distToAgent * 0.7;
 
-    // Bonus: cover near teammates (safety in numbers)
+    // ── Occupancy penalty: other allies already using this cover ──
     for (const ally of gameState.agents) {
       if (ally === ag || ally.isDead || ally.team !== ag.team) continue;
       const allyDist = ally.position.distanceTo(cp);
-      if (allyDist < 15) score += 3;
+      if (allyDist < 4) score -= 12;       // strong penalty — cover is occupied
+      else if (allyDist < 8) score -= 4;    // mild crowding penalty
+      // Also check if an ally has this as their current cover target
+      if (ally.currentCover && ally.currentCover.distanceTo(cp) < 3) score -= 10;
     }
 
-    // Bonus: cover near active health pickups when HP is low
+    // ── Nearby ally bonus (safety in numbers, but not overcrowded) ──
+    let nearbyAllies = 0;
+    for (const ally of gameState.agents) {
+      if (ally === ag || ally.isDead || ally.team !== ag.team) continue;
+      if (ally.position.distanceTo(cp) < 15) nearbyAllies++;
+    }
+    if (nearbyAllies === 1 || nearbyAllies === 2) score += 3;
+
+    // ── Health pickup proximity bonus when HP is low ──
     if (ag.hp < ag.maxHP * 0.5) {
       for (const p of gameState.pickups) {
         if (!p.active || p.t !== 'health') continue;
-        const pickupDist = cp.distanceTo(new YUKA.Vector3(p.x, 0, p.z));
-        if (pickupDist < 12) score += 8;
+        const dx = cp.x - p.x;
+        const dz = cp.z - p.z;
+        if (dx * dx + dz * dz < 144) score += 8; // within 12 units
       }
     }
 
-    // Penalty: cover too close to another enemy
+    // ── Enemy proximity penalty ──
     for (const enemy of gameState.agents) {
       if (enemy.isDead || enemy.team === ag.team) continue;
       const enemyDist = enemy.position.distanceTo(cp);
-      if (enemyDist < 8) score -= 15;
+      if (enemyDist < 6) score -= 20;
+      else if (enemyDist < 12) score -= 8;
     }
+
+    // ── Approach exposure penalty: is the path from agent to cover exposed? ──
+    // Sample midpoint of approach path
+    const midX = (ag.position.x + cp.x) * 0.5;
+    const midZ = (ag.position.z + cp.z) * 0.5;
+    const midPos = new YUKA.Vector3(midX, 0, midZ);
+    if (!isOccluded(midPos, threat)) {
+      score -= 6; // exposed approach
+    }
+
+    // ── Path cost: strongly prefer closer cover ──
+    if (distToAgent < 5) score += 5;
+    else if (distToAgent > 20) score -= 5;
 
     if (score > bestScore) {
       bestScore = score;
@@ -113,25 +147,24 @@ export function findPeekCover(ag: TDMAgent, targetPos: YUKA.Vector3): YUKA.Vecto
     const distToAgent = ag.position.distanceTo(cp);
     if (distToAgent > 25) continue;
 
-    // We want cover that is close BUT has nearby positions with LOS to target
-    // Check if a position ~2 units from cover toward the target has LOS
-    const toTarget = new YUKA.Vector3().subVectors(targetPos, cp).normalize();
-    const peekPos = new YUKA.Vector3(
-      cp.x + toTarget.x * 2.5,
-      0,
-      cp.z + toTarget.z * 2.5,
-    );
+    _toTarget.subVectors(targetPos, cp).normalize();
+    _peekPos.set(cp.x + _toTarget.x * 2.5, 0, cp.z + _toTarget.z * 2.5);
 
     // The cover point itself should be occluded
     if (!isOccluded(cp, targetPos)) continue;
-
-    // But the peek position should NOT be occluded (we can shoot from there)
-    if (isOccluded(peekPos, targetPos)) continue;
+    // But the peek position should NOT be occluded
+    if (isOccluded(_peekPos, targetPos)) continue;
 
     const distToTarget = cp.distanceTo(targetPos);
     let score = -distToAgent * 0.5;
-    // Prefer cover at our class's preferred range
     score -= Math.abs(distToTarget - ag.preferredRange) * 0.3;
+
+    // Occupancy penalty
+    for (const ally of gameState.agents) {
+      if (ally === ag || ally.isDead || ally.team !== ag.team) continue;
+      if (ally.currentCover && ally.currentCover.distanceTo(cp) < 4) score -= 10;
+      if (ally.position.distanceTo(cp) < 4) score -= 8;
+    }
 
     if (score > bestScore) {
       bestScore = score;
@@ -144,41 +177,36 @@ export function findPeekCover(ag: TDMAgent, targetPos: YUKA.Vector3): YUKA.Vecto
 
 /**
  * Calculate a flanking position — circle around behind the target through cover.
- * Much smarter than the old perpendicular offset.
  */
 export function findFlankPosition(ag: TDMAgent, targetPos: YUKA.Vector3): YUKA.Vector3 | null {
-  const toTarget = new YUKA.Vector3().subVectors(targetPos, ag.position);
-  const len = toTarget.length();
+  _toTarget.subVectors(targetPos, ag.position);
+  const len = _toTarget.length();
   if (len < 1) return null;
-  toTarget.normalize();
+  _toTarget.normalize();
 
-  // Try to get behind the target by combining perpendicular + forward offset
   const side = Math.random() > 0.5 ? 1 : -1;
-  const perpX = -toTarget.z * side;
-  const perpZ = toTarget.x * side;
+  const perpX = -_toTarget.z * side;
+  const perpZ = _toTarget.x * side;
 
-  // Arc around: perpendicular + slightly behind target
   const flankDist = 10 + Math.random() * 8;
   const behindDist = 5 + Math.random() * 5;
 
-  const fx = targetPos.x + perpX * flankDist - toTarget.x * behindDist;
-  const fz = targetPos.z + perpZ * flankDist - toTarget.z * behindDist;
+  let fx = targetPos.x + perpX * flankDist - _toTarget.x * behindDist;
+  let fz = targetPos.z + perpZ * flankDist - _toTarget.z * behindDist;
 
-  let clampedX = Math.max(-ARENA_MARGIN, Math.min(ARENA_MARGIN, fx));
-  let clampedZ = Math.max(-ARENA_MARGIN, Math.min(ARENA_MARGIN, fz));
+  fx = Math.max(-ARENA_MARGIN, Math.min(ARENA_MARGIN, fx));
+  fz = Math.max(-ARENA_MARGIN, Math.min(ARENA_MARGIN, fz));
 
-  // Ensure the flank position isn't inside a wall
-  if (isInsideWall(clampedX, clampedZ)) {
-    const pushed = pushOutOfWall(clampedX, clampedZ);
-    clampedX = pushed.x;
-    clampedZ = pushed.z;
+  if (isInsideWall(fx, fz)) {
+    const pushed = pushOutOfWall(fx, fz);
+    fx = pushed.x;
+    fz = pushed.z;
   }
-  const flankPos = new YUKA.Vector3(clampedX, 0, clampedZ);
+  const flankPos = new YUKA.Vector3(fx, 0, fz);
 
-  // Verify the flank position isn't blocked — if it is, try the other side
   if (isOccluded(flankPos, targetPos)) {
-    let altFx = targetPos.x - perpX * flankDist - toTarget.x * behindDist;
-    let altFz = targetPos.z - perpZ * flankDist - toTarget.z * behindDist;
+    let altFx = targetPos.x - perpX * flankDist - _toTarget.x * behindDist;
+    let altFz = targetPos.z - perpZ * flankDist - _toTarget.z * behindDist;
     altFx = Math.max(-ARENA_MARGIN, Math.min(ARENA_MARGIN, altFx));
     altFz = Math.max(-ARENA_MARGIN, Math.min(ARENA_MARGIN, altFz));
     if (isInsideWall(altFx, altFz)) {
@@ -204,17 +232,14 @@ export function findSniperNest(ag: TDMAgent, targetPos: YUKA.Vector3): YUKA.Vect
     if (distToAgent > 40) continue;
 
     const distToTarget = cp.distanceTo(targetPos);
-    // Snipers want 25-50 range
     if (distToTarget < 20 || distToTarget > 55) continue;
 
-    // Must have LOS from a peek position
-    const toTarget = new YUKA.Vector3().subVectors(targetPos, cp).normalize();
-    const peekPos = new YUKA.Vector3(cp.x + toTarget.x * 2, 0, cp.z + toTarget.z * 2);
+    _toTarget.subVectors(targetPos, cp).normalize();
+    _peekPos.set(cp.x + _toTarget.x * 2, 0, cp.z + _toTarget.z * 2);
 
-    if (isOccluded(peekPos, targetPos)) continue;
+    if (isOccluded(_peekPos, targetPos)) continue;
 
     let score = distToTarget * 0.3 - distToAgent * 0.3;
-    // Bonus if far from enemies
     for (const enemy of gameState.agents) {
       if (enemy.isDead || enemy.team === ag.team) continue;
       if (enemy.position.distanceTo(cp) > 20) score += 5;
@@ -232,6 +257,7 @@ export function findSniperNest(ag: TDMAgent, targetPos: YUKA.Vector3): YUKA.Vect
 /**
  * Find the nearest active pickup of a given type.
  * For 'weapon' type, finds the best upgrade available.
+ * Uses agent's pickup cache when available to reduce redundant scanning.
  */
 export function findNearestPickup(ag: TDMAgent, type: 'health' | 'ammo' | 'weapon'): YUKA.Vector3 | null {
   let bestPos: YUKA.Vector3 | null = null;
@@ -242,20 +268,23 @@ export function findNearestPickup(ag: TDMAgent, type: 'health' | 'ammo' | 'weapo
     if (!p.active) continue;
 
     if (type === 'weapon') {
-      // For weapon pickups, find the most desirable upgrade
       if (p.t !== 'weapon' || !p.weaponId) continue;
       const wep = WEAPONS[p.weaponId];
       const cur = WEAPONS[ag.weaponId];
-      if (!wep || wep.desirability <= cur.desirability) continue;
+      // If unarmed, any weapon is desirable
+      if (ag.weaponId !== 'unarmed' && wep.desirability <= cur.desirability) continue;
       const d = ag.position.distanceTo(new YUKA.Vector3(p.x, 0, p.z));
-      const score = wep.desirability - d * 0.5;
+      const desirabilityDiff = ag.weaponId === 'unarmed' ? 100 : wep.desirability - cur.desirability;
+      const score = desirabilityDiff - d * 0.5;
       if (score > bestScore) {
         bestScore = score;
         bestPos = new YUKA.Vector3(p.x, 0, p.z);
       }
     } else {
       if (p.t !== type) continue;
-      const d = ag.position.distanceTo(new YUKA.Vector3(p.x, 0, p.z));
+      const dx = ag.position.x - p.x;
+      const dz = ag.position.z - p.z;
+      const d = Math.sqrt(dx * dx + dz * dz);
       if (d < bestDist) {
         bestDist = d;
         bestPos = new YUKA.Vector3(p.x, 0, p.z);
