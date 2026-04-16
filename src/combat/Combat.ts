@@ -10,18 +10,21 @@ import { updateHUD, flashDmg } from '@/ui/HUD';
 import { updateScoreboard } from '@/ui/Scoreboard';
 import { addKillfeedEntry } from '@/ui/Killfeed';
 import { showKillNotif } from '@/ui/KillNotification';
-import { showHitMarker, showKillMarker } from '@/ui/HitMarkers';
-import { showDamageArc } from '@/ui/DamageArcs';
-import { getPostFX } from '@/rendering/PostProcess.Bridge';
 import { resetAgentAnimation } from '@/rendering/AgentAnimations';
 import { CLASS_DEFAULT_WEAPON, WEAPONS, type WeaponId } from '@/config/weapons';
 import { dom } from '@/ui/DOMElements';
 import { showRoundSummary } from '@/ui/RoundSummary';
-import { allowsRespawn, getFacingYawTowardsArena, getModeDefaults, getPlayerSpawn, getSpawnForAgent, getModeLabel } from '@/core/GameModes';
+import {
+  allowsRespawn, getFacingYawTowardsArena, getModeDefaults,
+  getPlayerSpawn, getSpawnForAgent,
+} from '@/core/GameModes';
 import { updateObjectiveVisibility } from './Objectives';
 import { applyAimFlinch } from '@/ai/HumanAim';
 import { registerDeath } from '@/ai/MatchMemory';
 import { clearTeamIntel } from '@/ai/TeamIntel';
+import { showHitMarker, showKillMarker } from '@/ui/HitMarkers';
+import { showDamageArc } from '@/ui/DamageArcs';
+import { getPostFX } from '@/rendering/PostProcess.Bridge';
 
 function applyWeaponToAgent(ag: TDMAgent, weaponId: WeaponId): void {
   const def = WEAPONS[weaponId];
@@ -42,7 +45,6 @@ function applyPlayerLoadoutForMode(): void {
     gameState.pWeaponSlots = ['assault_rifle', 'pistol'];
     gameState.pActiveSlot = 0;
   } else {
-    // True unarmed start: no weapon equipped
     gameState.pWeaponSlots = ['unarmed'];
     gameState.pActiveSlot = 0;
   }
@@ -58,7 +60,6 @@ function applyPlayerLoadoutForMode(): void {
 function applyAgentLoadoutForMode(ag: TDMAgent): void {
   if (ag === gameState.player) return;
   if (!getModeDefaults(gameState.mode).playerStartsArmed) {
-    // FFA unarmed start: bots also start unarmed
     applyWeaponToAgent(ag, 'unarmed');
   } else {
     const weaponId: WeaponId = CLASS_DEFAULT_WEAPON[ag.botClass] || 'assault_rifle';
@@ -77,7 +78,6 @@ function clearDeadTargetReferences(deadTarget: TDMAgent): void {
       ag.shootTimer = Math.max(ag.shootTimer, 0.15);
       ag.burstCount = 0;
     }
-    // Clear from tactical memory
     ag.enemyMemory.delete(deadTarget.name);
   }
 }
@@ -89,9 +89,7 @@ export function dealDmgPlayer(dmg: number, attacker: TDMAgent | null = null): vo
   updateHUD();
   flashDmg();
 
-  // NEW: damage direction arc
   if (attacker) showDamageArc(attacker.position.x, attacker.position.z);
-  // NEW: red screen pulse (post-FX)
   getPostFX()?.triggerHit(Math.min(1, dmg / 30) * 0.7);
 
   if (gameState.pHP <= 0) playerDied(attacker);
@@ -102,13 +100,16 @@ function playerDied(attacker: TDMAgent | null): void {
   gameState.player.isDead = true;
   gameState.respTimer = RESPAWN_TIME;
   dom.ds.classList.add('on');
-  if (dom.dsKiller) dom.dsKiller.textContent = attacker ? attacker.name.toUpperCase() : 'UNKNOWN';
-  if (dom.dsWeapon) dom.dsWeapon.textContent = attacker ? WEAPONS[attacker.weaponId].name : 'UNKNOWN';
   gameState.pDeaths++;
-  dom.deathTxt.textContent = String(gameState.pDeaths);
+  if (dom.deathTxt) dom.deathTxt.textContent = String(gameState.pDeaths);
+  if (dom.dsKiller) dom.dsKiller.textContent = attacker ? attacker.name.toUpperCase() : 'UNKNOWN';
+  if (dom.dsWeapon) dom.dsWeapon.textContent = attacker ? WEAPONS[attacker.weaponId].name : 'MYSTERY';
+
   clearDeadTargetReferences(gameState.player);
   for (const team of [TEAM_BLUE, TEAM_RED] as const) {
-    if (gameState.flags[team].carriedBy === gameState.player) dropFlag(team, new THREE.Vector3(gameState.player.position.x, 0, gameState.player.position.z));
+    if (gameState.flags[team].carriedBy === gameState.player) {
+      dropFlag(team, new THREE.Vector3(gameState.player.position.x, 0, gameState.player.position.z));
+    }
   }
 
   if (gameState.mode === 'tdm') {
@@ -119,7 +120,13 @@ function playerDied(attacker: TDMAgent | null): void {
     attacker.kills++;
   }
 
-  addKillfeedEntry(attacker ? attacker.name : 'Enemy', 'Player', attacker ? attacker.team : TEAM_RED, TEAM_BLUE, attacker ? WEAPONS[attacker.weaponId].name : undefined);
+  addKillfeedEntry(
+    attacker ? attacker.name : 'Enemy',
+    'Player',
+    attacker ? attacker.team : TEAM_RED,
+    TEAM_BLUE,
+    attacker ? WEAPONS[attacker.weaponId].name : undefined,
+  );
   checkGameEnd();
 }
 
@@ -131,14 +138,14 @@ export function dealDmgAgent(ag: TDMAgent, dmg: number, attacker: TDMAgent | nul
   ag.recentDamage += dmg;
   if (attacker) ag.lastAttacker = attacker;
 
-  // NEW: hit marker for the player
+  // Aim flinch proportional to damage
+  const dmgFrac = Math.min(1, dmg / ag.maxHP);
+  applyAimFlinch(ag, dmgFrac);
+
+  // Hit marker when the player scores a hit
   if (attacker === gameState.player) {
     showHitMarker(false);
   }
-
-  // NEW: aim flinch proportional to damage
-  const dmgFrac = Math.min(1, dmg / ag.maxHP);
-  applyAimFlinch(ag, dmgFrac);
 
   if (ag.hp <= 0) killAgent(ag, attacker);
 }
@@ -153,14 +160,13 @@ function killAgent(ag: TDMAgent, attacker: TDMAgent | null): void {
   ag.confidence = Math.max(10, ag.confidence - 15);
   ag.killStreak = 0;
 
-  // NEW: match-wide danger tracking
+  // Match-wide danger tracking
   registerDeath(ag.team, ag.position.x, ag.position.z);
 
-  // NEW: grudge + tilt
+  // Grudge + tilt
   if (attacker && attacker !== ag && ag.personality) {
     ag.grudge = attacker;
     ag.grudgeExpiry = gameState.worldElapsed + 20 + ag.personality.revengeBias * 25;
-    // Tilt — accumulates, decays slowly; rookies/wildcards tilt harder
     ag.tiltLevel = Math.min(1, ag.tiltLevel + 0.3 + ag.personality.tiltFactor * 0.3);
   }
 
@@ -180,12 +186,18 @@ function killAgent(ag: TDMAgent, attacker: TDMAgent | null): void {
 
   if (attacker === gameState.player) {
     gameState.pKills++;
-    dom.killTxt.textContent = String(gameState.pKills);
+    if (dom.killTxt) dom.killTxt.textContent = String(gameState.pKills);
     showKillNotif(ag.name, ag.team);
-    showKillMarker(); // NEW
+    showKillMarker();
   }
 
-  addKillfeedEntry(attacker ? attacker.name : 'Unknown', ag.name, attacker ? attacker.team : TEAM_RED, ag.team, attacker ? WEAPONS[attacker.weaponId].name : undefined);
+  addKillfeedEntry(
+    attacker ? attacker.name : 'Unknown',
+    ag.name,
+    attacker ? attacker.team : TEAM_RED,
+    ag.team,
+    attacker ? WEAPONS[attacker.weaponId].name : undefined,
+  );
   checkGameEnd();
 }
 
@@ -227,7 +239,6 @@ export function respawnAgent(ag: TDMAgent): void {
   ag.renderComponent!.position.set(sp[0], 0, sp[2]);
   resetAgentAnimation(ag.renderComponent!);
 
-  // Full tactical reset — clears brain, stale goals, memory, targets, cover
   ag.resetTacticalState();
   ag.grenades = getModeDefaults(gameState.mode).playerStartsArmed ? 2 : 0;
   ag.grenadeCooldown = 0;
@@ -235,18 +246,22 @@ export function respawnAgent(ag: TDMAgent): void {
   if (ag.nameTag) ag.nameTag.visible = true;
 
   for (const team of [TEAM_BLUE, TEAM_RED] as const) {
-    if (gameState.flags[team].carriedBy === ag) dropFlag(team, new THREE.Vector3(ag.position.x, 0, ag.position.z));
+    if (gameState.flags[team].carriedBy === ag) {
+      dropFlag(team, new THREE.Vector3(ag.position.x, 0, ag.position.z));
+    }
   }
 }
 
 function getCurrentLeadScore(): number {
   if (gameState.mode === 'ffa') {
-    return Math.max(gameState.pKills, ...gameState.agents.filter(a => a !== gameState.player).map(a => a.kills));
+    return Math.max(
+      gameState.pKills,
+      ...gameState.agents.filter(a => a !== gameState.player).map(a => a.kills),
+    );
   }
   return Math.max(gameState.teamScores[TEAM_BLUE], gameState.teamScores[TEAM_RED]);
 }
 
-/** Check if elimination round is over (one team has no alive members) */
 function checkEliminationEnd(): void {
   if (gameState.mode !== 'elimination' || gameState.roundOver) return;
 
@@ -266,21 +281,22 @@ function checkEliminationEnd(): void {
     updateScoreboard();
 
     if (gameState.teamScores[winner] >= gameState.scoreLimit) {
-      // Match over
       setTimeout(() => showRoundSummary(winner), 800);
     } else {
-      // Start next round after delay
-      addKillfeedEntry('ROUND', `${gameState.teamScores[TEAM_BLUE]}-${gameState.teamScores[TEAM_RED]}`, winner, winner === TEAM_BLUE ? TEAM_RED : TEAM_BLUE, 'ELIM');
+      addKillfeedEntry(
+        'ROUND',
+        `${gameState.teamScores[TEAM_BLUE]}-${gameState.teamScores[TEAM_RED]}`,
+        winner, winner === TEAM_BLUE ? TEAM_RED : TEAM_BLUE,
+        'ELIM',
+      );
       setTimeout(() => startEliminationRound(), 3000);
     }
   }
 }
 
-/** Start a new elimination round: reset positions and health, keep match scores */
 function startEliminationRound(): void {
   gameState.eliminationRound++;
 
-  // Reset player
   if (gameState.pDead) {
     gameState.pDead = false;
     gameState.player.isDead = false;
@@ -299,7 +315,6 @@ function startEliminationRound(): void {
   dom.reloadBar.classList.remove('on');
   dom.reloadText.classList.remove('on');
 
-  // Reset all bots
   for (const ag of gameState.agents) {
     if (ag === gameState.player) continue;
     if (ag.isDead) {
@@ -322,7 +337,6 @@ function startEliminationRound(): void {
 function checkGameEnd(): void {
   if (gameState.roundOver) return;
 
-  // Elimination mode: check if one team is wiped
   if (gameState.mode === 'elimination') {
     checkEliminationEnd();
     return;
@@ -331,7 +345,12 @@ function checkGameEnd(): void {
   const leadScore = getCurrentLeadScore();
   if (leadScore >= gameState.scoreLimit) {
     if (gameState.mode === 'ffa') {
-      const all = [{ name: 'Player', kills: gameState.pKills, isPlayer: true }, ...gameState.agents.filter(a => a !== gameState.player).map(a => ({ name: a.name, kills: a.kills, isPlayer: false }))];
+      const all = [
+        { name: 'Player', kills: gameState.pKills, isPlayer: true },
+        ...gameState.agents
+          .filter(a => a !== gameState.player)
+          .map(a => ({ name: a.name, kills: a.kills, isPlayer: false })),
+      ];
       all.sort((a, b) => b.kills - a.kills);
       gameState.winnerText = all[0].isPlayer ? 'VICTORY' : `WINNER: ${all[0].name}`;
       setTimeout(() => showRoundSummary(TEAM_BLUE), 800);
@@ -353,9 +372,11 @@ export function resetMatch(mode = gameState.mode): void {
   gameState.pKills = 0;
   gameState.pDeaths = 0;
   gameState.killfeedEntries = [];
-  clearTeamIntel();
   dom.killfeed.innerHTML = '';
   gameState.eliminationRound = 0;
+
+  // Clear pending AI callouts so stale intel from last match doesn't carry over
+  clearTeamIntel();
 
   if (gameState.pDead) {
     gameState.pDead = false;
@@ -382,8 +403,9 @@ export function resetMatch(mode = gameState.mode): void {
     ag.deaths = 0;
     ag.confidence = 50;
     ag.killStreak = 0;
-    if (ag.isDead) respawnAgent(ag);
-    else {
+    if (ag.isDead) {
+      respawnAgent(ag);
+    } else {
       const asp = getSpawnForAgent(ag);
       ag.position.set(asp[0], 0, asp[2]);
       ag.hp = ag.maxHP;
@@ -399,8 +421,8 @@ export function resetMatch(mode = gameState.mode): void {
   updateObjectiveVisibility();
   updateScoreboard();
   updateHUD();
-  dom.killTxt.textContent = '0';
-  dom.deathTxt.textContent = '0';
+  if (dom.killTxt) dom.killTxt.textContent = '0';
+  if (dom.deathTxt) dom.deathTxt.textContent = '0';
   dom.roundSummary.classList.remove('on');
   if (gameState.mainMenuOpen) dom.lockHint.classList.add('on');
 }
@@ -410,13 +432,16 @@ export function updateRespawns(): void {
 
   if (gameState.matchTimeRemaining <= 0) {
     gameState.roundOver = true;
-    if (gameState.mode === 'ffa') showRoundSummary(TEAM_BLUE);
-    else if (gameState.mode === 'elimination') showRoundSummary(gameState.teamScores[TEAM_BLUE] >= gameState.teamScores[TEAM_RED] ? TEAM_BLUE : TEAM_RED);
-    else showRoundSummary(gameState.teamScores[TEAM_BLUE] >= gameState.teamScores[TEAM_RED] ? TEAM_BLUE : TEAM_RED);
+    if (gameState.mode === 'ffa') {
+      showRoundSummary(TEAM_BLUE);
+    } else if (gameState.mode === 'elimination') {
+      showRoundSummary(gameState.teamScores[TEAM_BLUE] >= gameState.teamScores[TEAM_RED] ? TEAM_BLUE : TEAM_RED);
+    } else {
+      showRoundSummary(gameState.teamScores[TEAM_BLUE] >= gameState.teamScores[TEAM_RED] ? TEAM_BLUE : TEAM_RED);
+    }
     return;
   }
 
-  // In elimination mode, dead agents stay dead until the round resets
   if (!allowsRespawn()) return;
 
   for (const ag of gameState.agents) {
