@@ -1,145 +1,133 @@
+import * as THREE from 'three';
 import * as YUKA from 'yuka';
 import { gameState } from '@/core/GameState';
-import type { TDMAgent } from '@/entities/TDMAgent';
 
-const NAVMESH_PATH = '/models/navmesh.glb';
-const WAYPOINT_REACHED_DIST = 1.25;
-const DESTINATION_REACHED_DIST = 2.5;
-const DEFAULT_REPATH_INTERVAL = 0.6;
+const NAVMESH_PATH = `${import.meta.env.BASE_URL}models/navmesh.glb`;
 
-function vecNear(a: YUKA.Vector3, b: YUKA.Vector3, eps = 1.5): boolean {
-  return a.distanceTo(b) <= eps;
-}
+class NavMeshService {
+  private navMesh: YUKA.NavMesh | null = null;
+  private helper: THREE.Object3D | null = null;
+  private loadingPromise: Promise<YUKA.NavMesh | null> | null = null;
 
-function clonePath(points: YUKA.Vector3[]): YUKA.Vector3[] {
-  return points.map((p) => new YUKA.Vector3().copy(p));
-}
+  async load(): Promise<YUKA.NavMesh | null> {
+    if (this.navMesh) return this.navMesh;
+    if (this.loadingPromise) return this.loadingPromise;
 
-function fallbackDirectTarget(target: YUKA.Vector3): YUKA.Vector3 {
-  return new YUKA.Vector3(target.x, 0, target.z);
-}
+    this.loadingPromise = (async () => {
+      try {
+        const loader = new YUKA.NavMeshLoader();
+        const navMesh = await loader.load(NAVMESH_PATH);
+        this.navMesh = navMesh;
+        gameState.navMesh = navMesh;
+        console.info('[NavMeshService] NavMesh loaded:', NAVMESH_PATH);
+        return navMesh;
+      } catch (err) {
+        console.error('[NavMeshService] Failed to load navmesh:', err);
+        this.navMesh = null;
+        gameState.navMesh = null;
+        return null;
+      }
+    })();
 
-export async function initNavMesh(): Promise<void> {
-  if (gameState.navMeshLoading || gameState.navMeshLoaded) return;
-
-  gameState.navMeshLoading = true;
-
-  try {
-    const loader = new YUKA.NavMeshLoader();
-    const navMesh = await loader.load(NAVMESH_PATH);
-    gameState.navMesh = navMesh;
-    gameState.navMeshLoaded = true;
-    console.info('[NavMesh] Loaded:', NAVMESH_PATH, 'regions=', navMesh.regions.length);
-  } catch (error) {
-    console.warn('[NavMesh] Failed to load navmesh. Falling back to legacy steering.', error);
-    gameState.navMesh = null;
-    gameState.navMeshLoaded = false;
-  } finally {
-    gameState.navMeshLoading = false;
-  }
-}
-
-export function clearAgentNavigation(ag: TDMAgent): void {
-  ag.navPath.length = 0;
-  ag.navWaypointIndex = 0;
-  ag.navDestination = null;
-  ag.navMode = 'none';
-  ag.navRepathTimer = 0;
-
-  if (ag.arriveB) ag.arriveB.weight = 0;
-}
-
-export function requestAgentPath(
-  ag: TDMAgent,
-  destination: YUKA.Vector3,
-  mode: 'arrive' | 'seek' = 'arrive',
-  tolerance = DESTINATION_REACHED_DIST,
-  forceRepath = false,
-): void {
-  const cleanDestination = fallbackDirectTarget(destination);
-
-  const sameTarget = ag.navDestination && vecNear(ag.navDestination, cleanDestination, 1.25);
-  if (!forceRepath && sameTarget && ag.navPath.length > 0) {
-    ag.navMode = mode;
-    ag.navTolerance = tolerance;
-    return;
+    return this.loadingPromise;
   }
 
-  ag.navDestination = cleanDestination.clone();
-  ag.navMode = mode;
-  ag.navTolerance = tolerance;
-  ag.navRepathTimer = DEFAULT_REPATH_INTERVAL;
-
-  if (!gameState.navMeshLoaded || !gameState.navMesh) {
-    ag.navPath = [cleanDestination.clone()];
-    ag.navWaypointIndex = 0;
-    return;
+  getNavMesh(): YUKA.NavMesh | null {
+    return this.navMesh;
   }
 
-  const start = new YUKA.Vector3(ag.position.x, 0, ag.position.z);
-  const path = gameState.navMesh.findPath(start, cleanDestination);
-
-  if (path.length >= 2) {
-    const usable = clonePath(path.slice(1));
-    ag.navPath = usable;
-    ag.navWaypointIndex = 0;
-    ag.navCurrentRegion = gameState.navMesh.getRegionForPoint(start, 1) || gameState.navMesh.getClosestRegion(start);
-  } else if (path.length === 1) {
-    ag.navPath = clonePath(path);
-    ag.navWaypointIndex = 0;
-  } else {
-    ag.navPath = [cleanDestination.clone()];
-    ag.navWaypointIndex = 0;
-  }
-}
-
-export function updateAgentNavigation(ag: TDMAgent, dt: number): void {
-  if (!ag.navDestination || ag.navMode === 'none') return;
-
-  ag.navRepathTimer -= dt;
-  if (
-    ag.navRepathTimer <= 0 &&
-    gameState.navMeshLoaded &&
-    gameState.navMesh &&
-    ag.navDestination &&
-    ag.stateName !== 'ENGAGE' &&
-    ag.stateName !== 'TEAM_PUSH' &&
-    ag.stateName !== 'PEEK'
-  ) {
-    requestAgentPath(ag, ag.navDestination, ag.navMode, ag.navTolerance, true);
+  hasNavMesh(): boolean {
+    return !!this.navMesh;
   }
 
-  const finalDestination = ag.navDestination;
-  if (ag.position.distanceTo(finalDestination) <= ag.navTolerance) {
-    clearAgentNavigation(ag);
-    return;
-  }
-
-  if (ag.navPath.length === 0) {
-    ag.navPath.push(finalDestination.clone());
-    ag.navWaypointIndex = 0;
-  }
-
-  let currentWaypoint = ag.navPath[Math.min(ag.navWaypointIndex, ag.navPath.length - 1)];
-
-  while (currentWaypoint && ag.position.distanceTo(currentWaypoint) <= WAYPOINT_REACHED_DIST) {
-    ag.navWaypointIndex += 1;
-    if (ag.navWaypointIndex >= ag.navPath.length) {
-      currentWaypoint = finalDestination;
-      break;
+  clearDebugHelper(): void {
+    if (this.helper) {
+      gameState.scene.remove(this.helper);
+      this.helper = null;
     }
-    currentWaypoint = ag.navPath[ag.navWaypointIndex];
   }
 
-  const target = currentWaypoint || finalDestination;
+  createDebugHelper(): THREE.Object3D | null {
+    if (!this.navMesh) return null;
 
-  if (ag.arriveB) {
-    ag.arriveB.target.copy(target);
-    ag.arriveB.weight = ag.navMode === 'arrive' ? 1.45 : 0.9;
+    this.clearDebugHelper();
+
+    const helper = createNavMeshHelper(this.navMesh);
+    helper.visible = false;
+    this.helper = helper;
+    gameState.scene.add(helper);
+
+    return helper;
   }
 
-  if (ag.seekB && ag.navMode === 'seek') {
-    ag.seekB.target.copy(target);
-    ag.seekB.weight = 1.1;
+  setDebugVisible(visible: boolean): void {
+    if (this.helper) {
+      this.helper.visible = visible;
+    }
+  }
+
+  findPath(from: YUKA.Vector3, to: YUKA.Vector3): YUKA.Vector3[] {
+    if (!this.navMesh) return [to.clone()];
+    try {
+      return this.navMesh.findPath(from, to) ?? [to.clone()];
+    } catch (err) {
+      console.warn('[NavMeshService] findPath failed, falling back to direct target.', err);
+      return [to.clone()];
+    }
+  }
+
+  clampPoint(point: YUKA.Vector3): YUKA.Vector3 {
+    if (!this.navMesh) return point.clone();
+
+    try {
+      const region = this.navMesh.getRegionForPoint(point, 1);
+      if (!region) return point.clone();
+
+      const closest = new YUKA.Vector3();
+      region.getClosestPointToPoint(point, closest);
+      return closest;
+    } catch {
+      return point.clone();
+    }
+  }
+
+  getRandomPoint(): YUKA.Vector3 | null {
+    if (!this.navMesh) return null;
+
+    try {
+      const regionCount = this.navMesh.regions.length;
+      if (regionCount === 0) return null;
+
+      const region = this.navMesh.regions[Math.floor(Math.random() * regionCount)];
+      if (!region || region.polygon.centroid === undefined) return null;
+
+      return region.centroid.clone();
+    } catch {
+      return null;
+    }
   }
 }
+
+function createNavMeshHelper(navMesh: YUKA.NavMesh): THREE.Object3D {
+  const group = new THREE.Group();
+  const material = new THREE.LineBasicMaterial({ color: 0x00ffff });
+
+  for (const region of navMesh.regions) {
+    const vertices = region.edge?.polygon?.vertices ?? region.polygon?.vertices ?? [];
+    if (!vertices.length) continue;
+
+    const points: THREE.Vector3[] = [];
+    for (const v of vertices) {
+      points.push(new THREE.Vector3(v.x, v.y + 0.05, v.z));
+    }
+    points.push(new THREE.Vector3(vertices[0].x, vertices[0].y + 0.05, vertices[0].z));
+
+    const geometry = new THREE.BufferGeometry().setFromPoints(points);
+    const line = new THREE.Line(geometry, material);
+    group.add(line);
+  }
+
+  return group;
+}
+
+export const navMeshService = new NavMeshService();
