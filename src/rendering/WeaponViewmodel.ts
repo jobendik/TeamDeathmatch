@@ -63,7 +63,7 @@ type CachedGLB = {
 type M16RangeName = 'shoot' | 'reload' | 'hit';
 
 const M16_VIEWMODEL_TUNE = {
-  scale: 0.11,
+  scale: 0.3,
   position: new THREE.Vector3(0, 0, 0),
   rotation: new THREE.Euler(0, 0, 0),
   idleTime: 0.0,
@@ -495,6 +495,10 @@ function attachLoadedM16(): void {
     currentViewmodelActions = cachedM16.animations.map((clip) => currentViewmodelMixer!.clipAction(clip));
     holdM16IdlePose();
   }
+const box = new THREE.Box3().setFromObject(cloneRoot);
+const size = new THREE.Vector3();
+box.getSize(size);
+console.log('[WeaponViewmodel] M16 bounds size:', size);
 }
 
 function applyProceduralWeapon(weaponId: WeaponId): void {
