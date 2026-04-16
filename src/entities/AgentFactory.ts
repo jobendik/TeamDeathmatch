@@ -28,6 +28,7 @@ import {
   SeekHealthEvaluator, GetWeaponEvaluator, HuntEvaluator, PatrolEvaluator,
 } from '@/ai/goals/Evaluators';
 
+/** Sync callback for YUKA render component — lets YUKA drive position + rotation. */
 function syncRC(entity: YUKA.GameEntity, renderComponent: THREE.Object3D): void {
   renderComponent.position.copy(entity.position as unknown as THREE.Vector3);
   renderComponent.quaternion.copy(entity.rotation as unknown as THREE.Quaternion);
@@ -47,14 +48,12 @@ function mkAgent(
   ag.position.set(x, 0, z);
   ag.spawnPos.set(x, 0, z);
 
-  // ── Personality assignment ──
+  // ── Personality — assigned BEFORE evaluators so they can read it ──
   const personality = makePersonality(botClass);
   ag.personality = personality;
 
-  // Apply personality-driven reaction time
+  // Personality shifts reaction time and preferred range
   ag.reactionTime = Math.max(0.12, ag.reactionTime + personality.reactionModifier);
-
-  // Personality can shift preferred range slightly
   ag.preferredRange *= 1 + personality.patienceBias * 0.15;
 
   const root = new THREE.Group();
@@ -64,13 +63,9 @@ function mkAgent(
   ag.renderComponent = root;
   ag.setRenderComponent(root, syncRC);
 
-  if (visualVariant === 'swat') {
-    attachBlueSwatCharacter(root);
-  } else if (visualVariant === 'enemy') {
-    attachEnemyCharacter(root);
-  } else {
-    root.add(buildSoldierMesh(TEAM_COLORS[team], botClass, team));
-  }
+  if (visualVariant === 'swat') attachBlueSwatCharacter(root);
+  else if (visualVariant === 'enemy') attachEnemyCharacter(root);
+  else root.add(buildSoldierMesh(TEAM_COLORS[team], botClass, team));
 
   const tag = makeNameTag(name, TEAM_COLORS[team]);
   tag.position.y = 2.6;
@@ -79,6 +74,7 @@ function mkAgent(
 
   addHPBar(ag);
 
+  // Steering behaviors
   ag.wanderB = new YUKA.WanderBehavior(1.0, 4, 2.2);
   ag.arriveB = new YUKA.ArriveBehavior(new YUKA.Vector3(), 3, 0.5);
   ag.seekB = new YUKA.SeekBehavior(new YUKA.Vector3());
@@ -100,6 +96,7 @@ function mkAgent(
   ag.fleeB.weight = 0;
   ag.pursuitB.weight = 0;
 
+  // State machine (animation state only)
   ag.stateMachine = new YUKA.StateMachine(ag);
   ag.stateMachine.add('PATROL', new PatrolState());
   ag.stateMachine.add('ENGAGE', new EngageState());
@@ -112,26 +109,25 @@ function mkAgent(
   ag.stateMachine.add('PEEK', new PeekState());
   ag.stateMachine.changeTo('PATROL');
 
-  // Goal biases now include personality (more individual variation)
-  const aggrBias =
-    (botClass === 'assault' ? 1.1 :
-     botClass === 'flanker' ? 1.05 :
-     botClass === 'sniper' ? 0.85 : 1.0)
-    + personality.aggressionBias;
+  // Evaluator biases — combine class base with personality bias
+  const classAggr =
+    botClass === 'assault' ? 1.1 :
+    botClass === 'flanker' ? 1.05 :
+    botClass === 'sniper'  ? 0.85 : 1.0;
 
-  const survBias =
-    (botClass === 'sniper' ? 1.2 :
-     botClass === 'assault' ? 0.85 : 1.0)
-    + personality.cautionBias;
+  const classSurv =
+    botClass === 'sniper' ? 1.2 :
+    botClass === 'assault' ? 0.85 : 1.0;
 
-  ag.brain.addEvaluator(new AttackEvaluator(Math.max(0.3, aggrBias)));
-  ag.brain.addEvaluator(new SurviveEvaluator(Math.max(0.3, survBias)));
+  const aggrBias = Math.max(0.3, classAggr + personality.aggressionBias);
+  const survBias = Math.max(0.3, classSurv + personality.cautionBias);
+
+  ag.brain.addEvaluator(new AttackEvaluator(aggrBias));
+  ag.brain.addEvaluator(new SurviveEvaluator(survBias));
   ag.brain.addEvaluator(new ReloadEvaluator(1.0 + (Math.random() - 0.5) * 0.1));
-  ag.brain.addEvaluator(new SeekHealthEvaluator(1.0 + personality.cautionBias * 0.3));
+  ag.brain.addEvaluator(new SeekHealthEvaluator(Math.max(0.5, 1.0 + personality.cautionBias * 0.3)));
   ag.brain.addEvaluator(new GetWeaponEvaluator(0.9 + (Math.random() - 0.5) * 0.1));
-  ag.brain.addEvaluator(
-    new HuntEvaluator(Math.max(0.3, aggrBias * 0.95 + personality.egoismBias * 0.3)),
-  );
+  ag.brain.addEvaluator(new HuntEvaluator(Math.max(0.3, aggrBias * 0.95 + personality.egoismBias * 0.3)));
   ag.brain.addEvaluator(new PatrolEvaluator(1.0));
 
   setupFuzzy(ag);
@@ -152,16 +148,17 @@ export async function buildAgents(): Promise<void> {
     await preloadBlueSwatAssets();
     blueSwatReady = hasBlueSwatAssets();
   } catch (err) {
-    console.error('[AgentFactory] Failed SWAT preload', err);
+    console.error('[AgentFactory] Failed to preload SWAT assets.', err);
   }
 
   try {
     await preloadEnemyAssets();
     enemyReady = hasEnemyAssets();
   } catch (err) {
-    console.error('[AgentFactory] Failed enemy preload', err);
+    console.error('[AgentFactory] Failed to preload enemy assets.', err);
   }
 
+  // Player
   const player = new TDMAgent('Spiller', TEAM_BLUE, 'rifleman');
   player.position.set(BLUE_SPAWNS[0][0], 0, BLUE_SPAWNS[0][2]);
   player.spawnPos.set(BLUE_SPAWNS[0][0], 0, BLUE_SPAWNS[0][2]);
@@ -178,41 +175,31 @@ export async function buildAgents(): Promise<void> {
   player.hp = gameState.pHP;
   gameState.player = player;
 
+  // Blue team AI
   const blueClasses: BotClass[] = ['rifleman', 'rifleman', 'assault', 'sniper', 'flanker'];
   const blueNames = ['Fenrik', 'Bjørn', 'Storm', 'Øye', 'Skygge'];
-
   for (let i = 0; i < 5; i++) {
     const sp = BLUE_SPAWNS[i + 1] || BLUE_SPAWNS[i % BLUE_SPAWNS.length];
     const bot = mkAgent(
-      blueNames[i],
-      TEAM_BLUE,
-      blueClasses[i],
-      sp[0],
-      sp[2],
+      blueNames[i], TEAM_BLUE, blueClasses[i], sp[0], sp[2],
       blueSwatReady ? 'swat' : 'placeholder',
     );
-
-    console.info(
-      `[AI] ${bot.name} (${bot.botClass}) → ${bot.personality?.archetype}, skill=${bot.personality?.skill.toFixed(2)}`,
-    );
+    if (bot.personality) {
+      console.info(`[AI] ${bot.name} (${bot.botClass}) → ${bot.personality.archetype}, skill=${bot.personality.skill.toFixed(2)}`);
+    }
   }
 
+  // Red team AI
   const redClasses: BotClass[] = ['rifleman', 'rifleman', 'assault', 'assault', 'sniper', 'flanker'];
   const redNames = ['Demon', 'Blaze', 'Hammer', 'Fang', 'Specter', 'Viper'];
-
   for (let i = 0; i < 6; i++) {
     const sp = RED_SPAWNS[i % RED_SPAWNS.length];
     const bot = mkAgent(
-      redNames[i],
-      TEAM_RED,
-      redClasses[i],
-      sp[0],
-      sp[2],
+      redNames[i], TEAM_RED, redClasses[i], sp[0], sp[2],
       enemyReady ? 'enemy' : 'placeholder',
     );
-
-    console.info(
-      `[AI] ${bot.name} (${bot.botClass}) → ${bot.personality?.archetype}, skill=${bot.personality?.skill.toFixed(2)}`,
-    );
+    if (bot.personality) {
+      console.info(`[AI] ${bot.name} (${bot.botClass}) → ${bot.personality.archetype}, skill=${bot.personality.skill.toFixed(2)}`);
+    }
   }
 }
