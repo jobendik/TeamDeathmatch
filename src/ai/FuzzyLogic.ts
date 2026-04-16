@@ -1,14 +1,9 @@
 import * as YUKA from 'yuka';
 import type { TDMAgent } from '@/entities/TDMAgent';
 
-/**
- * Set up the fuzzy logic module for an agent.
- * Maps health + distance + ammo → aggression, modified by confidence.
- */
 export function setupFuzzy(ag: TDMAgent): void {
   const fm = new YUKA.FuzzyModule();
 
-  // Health variable
   const hV = new YUKA.FuzzyVariable();
   const hCrit = new YUKA.LeftShoulderFuzzySet(0, 0, 15, 30);
   const hLow = new YUKA.TriangularFuzzySet(20, 37, 55);
@@ -17,7 +12,6 @@ export function setupFuzzy(ag: TDMAgent): void {
   hV.add(hCrit); hV.add(hLow); hV.add(hMed); hV.add(hHigh);
   fm.addFLV('health', hV);
 
-  // Distance variable
   const dV = new YUKA.FuzzyVariable();
   const dCls = new YUKA.LeftShoulderFuzzySet(0, 0, 10, 22);
   const dMed = new YUKA.TriangularFuzzySet(16, 35, 55);
@@ -25,7 +19,6 @@ export function setupFuzzy(ag: TDMAgent): void {
   dV.add(dCls); dV.add(dMed); dV.add(dFar);
   fm.addFLV('distance', dV);
 
-  // Aggression output variable
   const aV = new YUKA.FuzzyVariable();
   const aLow = new YUKA.LeftShoulderFuzzySet(0, 0, 25, 45);
   const aMed = new YUKA.TriangularFuzzySet(30, 50, 70);
@@ -33,7 +26,6 @@ export function setupFuzzy(ag: TDMAgent): void {
   aV.add(aLow); aV.add(aMed); aV.add(aHigh);
   fm.addFLV('aggression', aV);
 
-  // Rules
   const R = (c: YUKA.FuzzyCompositeTerm, r: YUKA.FuzzySet) =>
     fm.addRule(new YUKA.FuzzyRule(c, r));
 
@@ -53,10 +45,6 @@ export function setupFuzzy(ag: TDMAgent): void {
   ag.fuzzyModule = fm;
 }
 
-/**
- * Evaluate fuzzy aggression given current state.
- * Now factors in ammo ratio and confidence as modifiers.
- */
 export function evalFuzzy(ag: TDMAgent, targetDist: number): void {
   if (!ag.fuzzyModule) return;
 
@@ -65,26 +53,32 @@ export function evalFuzzy(ag: TDMAgent, targetDist: number): void {
 
   let aggression = ag.fuzzyModule.defuzzify('aggression', YUKA.FuzzyModule.DEFUZ_TYPE.CENTROID);
 
-  // ── Ammo modifier ──
   const ammoRatio = ag.magSize > 0 ? ag.ammo / ag.magSize : 0;
   if (ammoRatio < 0.15) aggression *= 0.5;
   else if (ammoRatio < 0.3) aggression *= 0.75;
   else if (ammoRatio > 0.8) aggression *= 1.1;
 
-  // ── Confidence modifier ──
   const confFactor = (ag.confidence - 50) * 0.004;
   aggression *= (1 + confFactor);
 
-  // ── Class personality modifier ──
   aggression *= (0.5 + ag.aggressivenessBase);
 
-  // ── Nearby allies modifier ──
   if (ag.nearbyAllies >= 2) aggression *= 1.15;
   if (ag.nearbyAllies >= 3) aggression *= 1.1;
 
-  // ── Pressure suppression (damage pressure reduces aggression) ──
-  if (ag.underPressure) {
-    aggression *= (1 - ag.pressureLevel * 0.4);
+  if (ag.underPressure) aggression *= (1 - ag.pressureLevel * 0.4);
+
+  // ── Personality bias ──
+  const p = ag.personality;
+  if (p) {
+    aggression += p.aggressionBias * 20;
+    // Tilt reduces composure and pushes aggression one way or the other
+    if (ag.tiltLevel > 0) {
+      const tiltSwing = (Math.random() - 0.5) * p.tiltFactor * ag.tiltLevel * 30;
+      aggression += tiltSwing;
+    }
+    // Teamwork: having allies nearby boosts more for team-oriented personalities
+    if (ag.nearbyAllies >= 2) aggression += p.teamworkBias * 8;
   }
 
   ag.fuzzyAggr = Math.max(0, Math.min(100, aggression));
