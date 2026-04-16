@@ -16,6 +16,9 @@ let currentWeaponId: WeaponId = 'assault_rifle';
 
 let currentViewmodelMixer: THREE.AnimationMixer | null = null;
 let currentViewmodelActions: THREE.AnimationAction[] = [];
+let currentM16Action: THREE.AnimationAction | null = null;
+let activeM16Range: M16RangeName | null = null;
+let wasReloading = false;
 
 interface VMLayout {
   pos: [number, number, number];
@@ -52,12 +55,27 @@ let reloadLerp = 0;
 const BASE_URL = import.meta.env.BASE_URL;
 const M16_GLB_URL = `${BASE_URL}models/weapons/m16a2.glb`;
 
-const gltfLoader = new GLTFLoader();
-
 type CachedGLB = {
   scene: THREE.Group;
   animations: THREE.AnimationClip[];
 };
+
+type M16RangeName = 'shoot' | 'reload' | 'hit';
+
+const M16_VIEWMODEL_TUNE = {
+  scale: 0.11,
+  position: new THREE.Vector3(0.18, -0.23, 0.07),
+  rotation: new THREE.Euler(0, 0, 0),
+  idleTime: 0.0,
+};
+
+const M16_RANGES: Record<M16RangeName, [number, number]> = {
+  shoot: [0.0, 0.20],
+  reload: [2.30, 4.48],
+  hit: [6.80, 7.40],
+};
+
+const gltfLoader = new GLTFLoader();
 
 let cachedM16: CachedGLB | null = null;
 let cachedM16Promise: Promise<CachedGLB | null> | null = null;
@@ -389,11 +407,54 @@ function buildWeaponMesh(weaponId: WeaponId): THREE.Group {
   return g;
 }
 
+function holdM16IdlePose(): void {
+  if (!currentViewmodelMixer || currentViewmodelActions.length === 0) return;
+
+  const action = currentViewmodelActions[0];
+  currentM16Action = action;
+  activeM16Range = null;
+
+  action.enabled = true;
+  action.clampWhenFinished = true;
+  action.setLoop(THREE.LoopOnce, 1);
+  action.play();
+  action.paused = true;
+  action.time = M16_VIEWMODEL_TUNE.idleTime;
+
+  currentViewmodelMixer.update(0);
+}
+
+function playM16Range(name: M16RangeName, timeScale = 1): void {
+  if (currentWeaponId !== 'assault_rifle') return;
+  if (!currentViewmodelMixer || currentViewmodelActions.length === 0) return;
+
+  const action = currentViewmodelActions[0];
+  const [start] = M16_RANGES[name];
+
+  currentM16Action = action;
+  activeM16Range = name;
+
+  action.reset();
+  action.enabled = true;
+  action.paused = false;
+  action.clampWhenFinished = true;
+  action.setLoop(THREE.LoopOnce, 1);
+  action.timeScale = timeScale;
+  action.play();
+  action.time = start;
+
+  currentViewmodelMixer.update(0);
+}
+
 function clearCurrentWeaponMesh(): void {
   if (currentWeaponMesh) {
     vmGroup.remove(currentWeaponMesh);
     currentWeaponMesh = null;
   }
+
+  activeM16Range = null;
+  currentM16Action = null;
+  wasReloading = false;
 
   if (currentViewmodelActions.length > 0) {
     for (const action of currentViewmodelActions) {
@@ -417,19 +478,22 @@ function attachLoadedM16(): void {
   const cloneRoot = skeletonClone(cachedM16.scene) as THREE.Group;
   prepRenderable(cloneRoot);
 
+  cloneRoot.scale.setScalar(M16_VIEWMODEL_TUNE.scale);
+  cloneRoot.position.copy(M16_VIEWMODEL_TUNE.position);
+  cloneRoot.rotation.copy(M16_VIEWMODEL_TUNE.rotation);
+
   currentWeaponMesh = cloneRoot;
   vmGroup.add(currentWeaponMesh);
 
   currentViewmodelMixer = null;
   currentViewmodelActions = [];
+  currentM16Action = null;
+  activeM16Range = null;
 
   if (cachedM16.animations.length > 0) {
     currentViewmodelMixer = new THREE.AnimationMixer(cloneRoot);
     currentViewmodelActions = cachedM16.animations.map((clip) => currentViewmodelMixer!.clipAction(clip));
-
-    // We deliberately do NOT autoplay the clip yet.
-    // The asset may contain a combined reload + melee timeline.
-    // First we just show the static pose and log the clip info.
+    holdM16IdlePose();
   }
 }
 
@@ -444,15 +508,15 @@ function applyWeaponSwap(weaponId: WeaponId): void {
   clearCurrentWeaponMesh();
 
   currentWeaponId = weaponId;
-  const layout = VM_LAYOUTS[weaponId];
 
   if (weaponId === 'assault_rifle' && cachedM16) {
     attachLoadedM16();
+  } else {
+    const layout = VM_LAYOUTS[weaponId];
+    applyProceduralWeapon(weaponId);
     if (currentWeaponMesh) {
       currentWeaponMesh.scale.setScalar(layout.scale);
     }
-  } else {
-    applyProceduralWeapon(weaponId);
   }
 
   recoilZ = 0;
@@ -549,18 +613,44 @@ export function fireViewmodel(): void {
   gameState.recoilYaw += kickSide;
   gameState.recoilRecoveryPitch += kickUp;
   gameState.recoilRecoveryYaw += kickSide;
+
+  if (currentWeaponId === 'assault_rifle' && currentViewmodelMixer) {
+    playM16Range('shoot', 1.0);
+  }
+}
+
+export function playViewmodelHit(): void {
+  if (currentWeaponId === 'assault_rifle' && currentViewmodelMixer) {
+    playM16Range('hit', 1.0);
+  }
 }
 
 export function updateViewmodel(dt: number): void {
   if (!vmGroup) return;
 
-  if (currentViewmodelMixer) {
-    currentViewmodelMixer.update(dt);
-  }
-
   const { keys, pDead, pReloading, mouseDeltaX, mouseDeltaY } = gameState;
   const isMoving = keys.w || keys.a || keys.s || keys.d;
   const isSprinting = keys.shift && isMoving;
+
+  if (currentWeaponId === 'assault_rifle') {
+    if (pReloading && !wasReloading && currentViewmodelMixer) {
+      playM16Range('reload', 1.0);
+    }
+    wasReloading = pReloading;
+  } else {
+    wasReloading = false;
+  }
+
+  if (currentViewmodelMixer) {
+    currentViewmodelMixer.update(dt);
+
+    if (activeM16Range && currentM16Action) {
+      const [, end] = M16_RANGES[activeM16Range];
+      if (currentM16Action.time >= end) {
+        holdM16IdlePose();
+      }
+    }
+  }
 
   gameState.mouseDeltaX = 0;
   gameState.mouseDeltaY = 0;
@@ -651,7 +741,7 @@ export function updateViewmodel(dt: number): void {
   vmMuzzleMesh.position.set(mOff[0], mOff[1], mOff[2]);
   vmMuzzleSprite.position.set(mOff[0], mOff[1], mOff[2]);
 
-  if (gameState.recoilPitch > 0.0001) {
+  if (Math.abs(gameState.recoilPitch) > 0.0001) {
     const apply = gameState.recoilPitch * Math.min(1, dt * 20);
     gameState.cameraPitch += apply;
     gameState.recoilPitch -= apply;
