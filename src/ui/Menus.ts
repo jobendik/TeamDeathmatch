@@ -55,15 +55,16 @@ const MODE_DESCRIPTIONS: Record<GameMode, string> = {
   ffa: 'Alle mot alle — start uten våpen, plukk opp fra kartet.',
   ctf: 'Capture The Flag — ta fiendens flagg og bring det hjem.',
   elimination: 'Eliminering — ingen respawn. Siste lag som lever vinner runden. Først til 3.',
+  br: 'Battle Royale — stort kart, loot våpen, sist mann stående vinner.',
 };
 
 function updateMenuCopy(): void {
   const mode = (dom.modeSelect.value || 'tdm') as GameMode;
   const label = getModeLabel(mode);
-  dom.startBtn.textContent = `START ${label}`;
+  dom.startBtn.textContent = `DEPLOY ${label}`;
 
-  // Update description text
-  const descEl = dom.mainMenu.querySelector('.menu-panel p');
+  const descEl = dom.mainMenu.querySelector('.menu-panel p.menu-sub') as HTMLElement | null
+              ?? dom.mainMenu.querySelector('.menu-panel p') as HTMLElement | null;
   if (descEl) {
     descEl.textContent = MODE_DESCRIPTIONS[mode] || '';
   }
