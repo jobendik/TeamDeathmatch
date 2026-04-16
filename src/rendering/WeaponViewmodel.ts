@@ -545,7 +545,6 @@ async function tryLoadSpecialViewmodel(weaponId: WeaponId): Promise<void> {
   const loaded = await loadM16Viewmodel();
   if (!loaded) return;
 
-  // If the rifle is already the active or pending weapon, force-refresh it
   if (currentWeaponId === 'assault_rifle' || pendingWeaponId === 'assault_rifle') {
     applyWeaponSwap('assault_rifle');
     pendingWeaponId = null;
