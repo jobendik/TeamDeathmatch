@@ -64,7 +64,7 @@ type M16RangeName = 'shoot' | 'reload' | 'hit';
 
 const M16_VIEWMODEL_TUNE = {
   desiredMaxDimension: 0.8,
-  position: new THREE.Vector3(0.14, -0.18, -0.08),
+  position: new THREE.Vector3(0.20, -0.18, -0.08),
   rotation: new THREE.Euler(0, 0, 0),
   idleTime: 0.05,
 };
