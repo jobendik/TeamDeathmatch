@@ -63,7 +63,7 @@ type CachedGLB = {
 type M16RangeName = 'shoot' | 'reload' | 'hit';
 
 const M16_VIEWMODEL_TUNE = {
-  desiredMaxDimension: 0.62,
+  desiredMaxDimension: 0.8,
   position: new THREE.Vector3(0.10, -0.16, -0.10),
   rotation: new THREE.Euler(0, 0, 0),
   idleTime: 0.05,
