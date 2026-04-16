@@ -38,6 +38,7 @@ declare module 'yuka' {
 
   export class GameEntity {
     name: string;
+    active: boolean;
     position: Vector3;
     rotation: Quaternion;
     boundingRadius: number;

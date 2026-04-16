@@ -29,11 +29,12 @@ export function updateHUD(): void {
   // ── Weapon card ──
   const wep = WEAPONS[gameState.pWeaponId];
   const isUnarmed = gameState.pWeaponId === 'unarmed';
+  const isKnife = gameState.pWeaponId === 'knife';
 
-  if (isUnarmed) {
+  if (isUnarmed || isKnife) {
     dom.ammoTxt.textContent = '—';
     dom.ammoMax.textContent = '';
-    dom.weaponName.textContent = 'UNARMED';
+    dom.weaponName.textContent = wep.name;
   } else {
     dom.ammoTxt.textContent = String(gameState.pAmmo);
     dom.ammoMax.textContent = '/ ' + wep.magSize;
@@ -41,7 +42,7 @@ export function updateHUD(): void {
   }
 
   // Low-ammo pulse
-  const lowAmmo = !isUnarmed && gameState.pAmmo > 0 && gameState.pAmmo / wep.magSize < 0.2;
+  const lowAmmo = !isUnarmed && !isKnife && gameState.pAmmo > 0 && gameState.pAmmo / wep.magSize < 0.2;
   dom.ammoTxt.classList.toggle('low', lowAmmo);
 
   // Weapon icon + mode
@@ -50,7 +51,7 @@ export function updateHUD(): void {
 
   // Reload hint
   if (dom.wcReloadHint) {
-    const needsReload = !isUnarmed && gameState.pAmmo < wep.magSize && !gameState.pReloading;
+    const needsReload = !isUnarmed && !isKnife && gameState.pAmmo < wep.magSize && !gameState.pReloading;
     dom.wcReloadHint.classList.toggle('on', needsReload);
     dom.wcReloadHint.textContent = 'R';
   }

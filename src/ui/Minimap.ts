@@ -2,6 +2,7 @@ import { gameState } from '@/core/GameState';
 import { ARENA_HALF, TEAM_BLUE } from '@/config/constants';
 import { dom } from './DOMElements';
 import { canSee } from '@/ai/Perception';
+import { zone as brZone } from '@/br/ZoneSystem';
 
 export function drawMinimap(): void {
   const canvas = dom.mmCanvas;
@@ -29,7 +30,8 @@ export function drawMinimap(): void {
     ctx.stroke();
   }
 
-  const scale = w / (ARENA_HALF * 2 + 10);
+  const worldHalf = gameState.mode === 'br' ? 210 : ARENA_HALF + 5;
+  const scale = w / (worldHalf * 2);
   const cx = w / 2;
   const cy = h / 2;
   const toX = (x: number) => cx + x * scale;
@@ -142,6 +144,26 @@ export function drawMinimap(): void {
       }
       ctx.restore();
     }
+  }
+
+  // BR zone circles
+  if (gameState.mode === 'br' && brZone.active) {
+    // Current zone – blue
+    ctx.save();
+    ctx.strokeStyle = 'rgba(74, 168, 255, 0.7)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(toX(brZone.currentCenter.x), toY(brZone.currentCenter.y), brZone.currentRadius * scale, 0, Math.PI * 2);
+    ctx.stroke();
+    // Target zone – white dashed
+    if (brZone.isShrinking) {
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.arc(toX(brZone.targetCenter.x), toY(brZone.targetCenter.y), brZone.targetRadius * scale, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.restore();
   }
 
   // Coords readout

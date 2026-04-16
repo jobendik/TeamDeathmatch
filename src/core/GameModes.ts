@@ -18,11 +18,9 @@ export function getModeLabel(mode: GameMode = gameState.mode): string {
 export function isEnemy(a: TDMAgent, b: TDMAgent): boolean {
   if (a === b) return false;
   if (a.isDead || b.isDead) return false;
-  if (gameState.mode === 'ffa' || gameState.mode === 'elimination') {
-    // In elimination FFA variant, everyone is enemy
-    // In team elimination, use team check
-    if (gameState.mode === 'elimination') return a.team !== b.team;
-    return true;
+  if (gameState.mode === 'ffa' || gameState.mode === 'br') return true;
+  if (gameState.mode === 'elimination') {
+    return a.team !== b.team;
   }
   return a.team !== b.team;
 }

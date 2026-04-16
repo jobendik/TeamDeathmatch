@@ -5,6 +5,8 @@ import { ARENA_HALF } from '@/config/constants';
 import { FP } from '@/config/player';
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
 
+const arenaMeshes: THREE.Object3D[] = [];
+
 /**
  * Build the arena: floor, boundary rings, walls, pillars, and team bases.
  */
@@ -57,6 +59,7 @@ void main(){
   floor.rotation.x = -Math.PI / 2;
   floor.receiveShadow = true;
   scene.add(floor);
+  arenaMeshes.push(floor);
 
   // ── Arena boundary rings ──
   const ringDefs: [number, number, number][] = [
@@ -71,6 +74,7 @@ void main(){
     m.rotation.x = -Math.PI / 2;
     m.position.y = 0.03;
     scene.add(m);
+    arenaMeshes.push(m);
   }
 
   // ── WALLS & COVER ──
@@ -146,6 +150,7 @@ void main(){
   bluePlat.position.set(-48, 0.15, -48);
   bluePlat.receiveShadow = true;
   scene.add(bluePlat);
+  arenaMeshes.push(bluePlat);
 
   const bpr = new THREE.Mesh(
     new THREE.RingGeometry(6, 6.3, 8),
@@ -154,6 +159,7 @@ void main(){
   bpr.rotation.x = -Math.PI / 2;
   bpr.position.set(-48, 0.32, -48);
   scene.add(bpr);
+  arenaMeshes.push(bpr);
 
   // Red base
   const redPlat = new THREE.Mesh(
@@ -165,6 +171,7 @@ void main(){
   redPlat.position.set(48, 0.15, 48);
   redPlat.receiveShadow = true;
   scene.add(redPlat);
+  arenaMeshes.push(redPlat);
 
   const rpr = new THREE.Mesh(
     new THREE.RingGeometry(6, 6.3, 8),
@@ -173,6 +180,7 @@ void main(){
   rpr.rotation.x = -Math.PI / 2;
   rpr.position.set(48, 0.32, 48);
   scene.add(rpr);
+  arenaMeshes.push(rpr);
 
   // ── NavMesh Export Helper ──
   // Placed inside buildArena so it has access to floor, bluePlat, and redPlat!
@@ -234,6 +242,7 @@ function addWall(x: number, y: number, z: number, w: number, h: number, d: numbe
   mesh.castShadow = true;
   mesh.receiveShadow = true;
   scene.add(mesh);
+  arenaMeshes.push(mesh);
 
   mesh.add(
     new THREE.LineSegments(
@@ -275,6 +284,7 @@ function addPillar(x: number, y: number, z: number, r: number): void {
   mesh.castShadow = true;
   mesh.receiveShadow = true;
   scene.add(mesh);
+  arenaMeshes.push(mesh);
 
   const band = new THREE.Mesh(
     new THREE.CylinderGeometry(r + 0.05, r + 0.05, 0.08, 10),
@@ -309,4 +319,19 @@ function addPillar(x: number, y: number, z: number, r: number): void {
   ob.boundingRadius = r + 0.5;
   yukaObs.push(ob);
   entityManager.add(ob);
+}
+
+export function hideArena(): void {
+  for (const m of arenaMeshes) m.visible = false;
+  for (const p of gameState.pickups) {
+    if (p.mesh) p.mesh.visible = false;
+    if (p.ring) p.ring.visible = false;
+  }
+  for (const f of Object.values(gameState.flags)) {
+    if (f.mesh) f.mesh.visible = false;
+  }
+}
+
+export function showArena(): void {
+  for (const m of arenaMeshes) m.visible = true;
 }

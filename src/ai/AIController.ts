@@ -363,7 +363,8 @@ export function updateAI(ag: TDMAgent, dt: number): void {
 
   ag.brain.execute();
 
-  if (ag.position.distanceTo(ag.spawnPos) < 8) {
+  // Passive spawn-heal only in arena modes (not BR — spawn positions are random)
+  if (gameState.mode !== 'br' && ag.position.distanceTo(ag.spawnPos) < 8) {
     ag.hp = Math.min(ag.maxHP, ag.hp + dt * 15);
   }
 

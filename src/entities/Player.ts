@@ -10,10 +10,16 @@ import { dom } from '@/ui/DOMElements';
 import { onShoot } from '@/core/EventManager';
 import type { TDMAgent } from './TDMAgent';
 import type { Collider } from '@/core/GameState';
+import { isPlayerInAir } from '@/br/DropPlane';
+import { playerVehicle } from '@/br/Vehicles';
+import { isInventoryOpen } from '@/br/InventoryUI';
+import { BR_MAP_MARGIN } from '@/br/BRConfig';
 
 function collidesPlayer(x: number, z: number): boolean {
-  if (Math.abs(x) > ARENA_MARGIN || Math.abs(z) > ARENA_MARGIN) return true;
+  const margin = gameState.mode === 'br' ? BR_MAP_MARGIN : ARENA_MARGIN;
+  if (Math.abs(x) > margin || Math.abs(z) > margin) return true;
   for (const c of gameState.colliders) {
+    if (c.yTop !== undefined && gameState.pPosY >= c.yTop) continue;
     if (c.type === 'box') {
       if (Math.abs(x - c.x) <= c.hw && Math.abs(z - c.z) <= c.hd) return true;
     } else {
@@ -26,11 +32,13 @@ function collidesPlayer(x: number, z: number): boolean {
 }
 
 export function keepInside(ag: TDMAgent): void {
+  const boundary = gameState.mode === 'br' ? BR_MAP_MARGIN : ARENA_MARGIN;
   const margin = Math.max(0.55, ag.boundingRadius) + 0.08;
-  ag.position.x = Math.max(-ARENA_MARGIN + margin, Math.min(ARENA_MARGIN - margin, ag.position.x));
-  ag.position.z = Math.max(-ARENA_MARGIN + margin, Math.min(ARENA_MARGIN - margin, ag.position.z));
+  ag.position.x = Math.max(-boundary + margin, Math.min(boundary - margin, ag.position.x));
+  ag.position.z = Math.max(-boundary + margin, Math.min(boundary - margin, ag.position.z));
 
   for (const c of gameState.arenaColliders) {
+    if (c.yTop !== undefined && ag.position.y >= c.yTop) continue;
     if (c.type === 'box') {
       const dx = ag.position.x - c.x;
       const dz = ag.position.z - c.z;
@@ -80,7 +88,7 @@ export function updatePlayer(dt: number): void {
       gameState.pHP = 100;
       player.hp = 100;
       const startsArmed = getModeDefaults(gameState.mode).playerStartsArmed;
-      gameState.pWeaponSlots = startsArmed ? ['assault_rifle', 'pistol'] : ['unarmed'];
+      gameState.pWeaponSlots = startsArmed ? ['assault_rifle', 'pistol'] : ['knife'];
       gameState.pActiveSlot = 0;
       gameState.pWeaponId = gameState.pWeaponSlots[0];
       const respawnWeapon = WEAPONS[gameState.pWeaponId];
@@ -89,6 +97,8 @@ export function updatePlayer(dt: number): void {
       gameState.pReloadDuration = respawnWeapon.reloadTime;
       gameState.pGrenades = startsArmed ? 2 : 0;
       gameState.pReloading = false;
+      gameState.pPosY = 0;
+      gameState.pVelY = 0;
       dom.ds.classList.remove('on');
       const sp = getPlayerSpawn();
       player.position.set(sp[0], 0, sp[2]);
@@ -104,7 +114,27 @@ export function updatePlayer(dt: number): void {
     return;
   }
 
-  const isUnarmed = gameState.pWeaponId === 'unarmed';
+  // BR short-circuits: skip normal movement during air drop, inventory, or vehicle
+  if (isPlayerInAir()) {
+    gameState.camera.position.set(player.position.x, player.position.y + 1.6, player.position.z);
+    gameState.camera.rotation.y = gameState.cameraYaw;
+    gameState.camera.rotation.x = gameState.cameraPitch;
+    return;
+  }
+  if (isInventoryOpen()) {
+    gameState.camera.position.set(player.position.x, gameState.pPosY + FP.height, player.position.z);
+    gameState.camera.rotation.y = gameState.cameraYaw;
+    gameState.camera.rotation.x = gameState.cameraPitch;
+    return;
+  }
+  if (playerVehicle) {
+    gameState.camera.position.set(player.position.x, player.position.y + 2.0, player.position.z);
+    gameState.camera.rotation.y = gameState.cameraYaw;
+    gameState.camera.rotation.x = gameState.cameraPitch;
+    return;
+  }
+
+  const isUnarmed = gameState.pWeaponId === 'unarmed' || gameState.pWeaponId === 'knife';
 
   // Reload (not when unarmed)
   if (gameState.pReloading && !isUnarmed) {
@@ -141,6 +171,21 @@ export function updatePlayer(dt: number): void {
     if (!collidesPlayer(nx, player.position.z)) player.position.x = nx;
     if (!collidesPlayer(player.position.x, nz)) player.position.z = nz;
   }
+
+  // Jump & gravity
+  const onGround = gameState.pPosY <= 0;
+  if (gameState.pJumpRequested && onGround) {
+    gameState.pVelY = FP.jumpVelocity;
+  }
+  gameState.pJumpRequested = false;
+
+  gameState.pVelY -= FP.gravity * dt;
+  gameState.pPosY += gameState.pVelY * dt;
+  if (gameState.pPosY <= 0) {
+    gameState.pPosY = 0;
+    gameState.pVelY = 0;
+  }
+  player.position.y = gameState.pPosY;
 
   // Pickup collection
   for (const pk of pickups) {
@@ -219,7 +264,7 @@ export function updatePlayer(dt: number): void {
   }
 
   // Camera
-  gameState.camera.position.set(player.position.x, FP.height, player.position.z);
+  gameState.camera.position.set(player.position.x, gameState.pPosY + FP.height, player.position.z);
   gameState.camera.rotation.y = gameState.cameraYaw;
   gameState.camera.rotation.x = gameState.cameraPitch;
 }

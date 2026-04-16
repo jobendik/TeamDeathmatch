@@ -3,7 +3,7 @@
  * Each weapon has distinct characteristics that affect gameplay.
  */
 
-export type WeaponId = 'unarmed' | 'pistol' | 'smg' | 'assault_rifle' | 'shotgun' | 'sniper_rifle' | 'rocket_launcher';
+export type WeaponId = 'unarmed' | 'knife' | 'pistol' | 'smg' | 'assault_rifle' | 'shotgun' | 'sniper_rifle' | 'rocket_launcher';
 
 export interface WeaponDef {
   id: WeaponId;
@@ -40,6 +40,15 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
     headshotMult: 1.0, movePenalty: 1.0,
     desirability: 0, pellets: 0, color: 0x444444,
     canFire: false,
+  },
+  knife: {
+    id: 'knife', name: 'KNIFE',
+    damage: 55, fireRate: 0.5, magSize: 0, reloadTime: 0,
+    aimError: 0, range: 3, burstSize: 1, burstDelay: 0,
+    isHitscan: true, projectileSpeed: 0, splashRadius: 0,
+    headshotMult: 1.5, movePenalty: 1.0,
+    desirability: 5, pellets: 1, color: 0x888888,
+    canFire: true,
   },
   pistol: {
     id: 'pistol', name: 'PISTOL',

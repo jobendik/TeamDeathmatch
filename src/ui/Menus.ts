@@ -9,7 +9,7 @@ function setMainMenuVisible(on: boolean): void {
   dom.lockHint.classList.toggle('on', !on && !gameState.mouseLocked && !gameState.paused && !gameState.roundOver);
 }
 
-export function startMatchFromMenu(): void {
+export async function startMatchFromMenu(): Promise<void> {
   const mode = (dom.modeSelect.value || 'tdm') as GameMode;
   const defaults = getModeDefaults(mode);
   gameState.mode = mode;
@@ -17,7 +17,18 @@ export function startMatchFromMenu(): void {
   gameState.scoreLimit = defaults.scoreLimit;
   setMainMenuVisible(false);
   gameState.paused = false;
-  resetMatch(mode);
+
+  if (mode === 'br') {
+    const { preloadBRModules } = await import('@/core/GameLoop');
+    await preloadBRModules();
+    const br = await import('@/br/BRController');
+    await br.startBRMatch();
+  } else {
+    const br = await import('@/br/BRController');
+    br.cleanupBR();
+    resetMatch(mode);
+  }
+
   setTimeout(() => {
     gameState.renderer?.domElement?.requestPointerLock();
   }, 60);

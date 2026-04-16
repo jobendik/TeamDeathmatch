@@ -7,6 +7,7 @@
   <meta name="description" content="WARZONE TDM - Intense team deathmatch with AI bots. First to 10 kills wins.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Exo+2:wght@400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <style>body { opacity: 0; } body.ready { opacity: 1; }</style>
 </head>
 <body>
   <div id="cw"></div>
@@ -89,6 +90,7 @@
         <option value="ffa">Free For All</option>
         <option value="ctf">Capture The Flag</option>
         <option value="elimination">Elimination</option>
+        <option value="br">Battle Royale</option>
       </select>
       <button id="startBtn" class="menu-btn menu-btn-primary">DEPLOY</button>
     </div>
@@ -103,7 +105,7 @@
     </div>
   </div>
 
-  <div id="lockHint" class="on">
+  <div id="lockHint">
     <div class="lh-icon">◆</div>
     <h2>CLICK TO DEPLOY</h2>
     <p>Velg modus i menyen · Esc åpner pausemeny</p>

@@ -40,6 +40,8 @@ async function init(): Promise<void> {
   updateHUD();
   updateScoreboard();
 
+  document.body.classList.add('ready');
+
   animate();
 }
 

@@ -154,6 +154,10 @@ const LOCOMOTION_KEYS = new Set<AgentAnimKey>([
   'crouchWalkForwardRight',
   'crouchWalkBackwardLeft',
   'crouchWalkBackwardRight',
+
+  'jumpUp',
+  'jumpLoop',
+  'jumpDown',
 ]);
 
 function loadFBX(url: string): Promise<THREE.Group> {

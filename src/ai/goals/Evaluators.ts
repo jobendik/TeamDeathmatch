@@ -135,6 +135,7 @@ export class ReloadEvaluator extends YUKA.GoalEvaluator<TDMAgent> {
 // ═══════════════════════════════════════════
 export class SeekHealthEvaluator extends YUKA.GoalEvaluator<TDMAgent> {
   calculateDesirability(ag: TDMAgent): number {
+    if (gameState.mode === 'br') return 0; // BR bots loot via BRBots.seekLoot()
     const hpRatio = ag.hp / ag.maxHP;
     if (hpRatio > 0.85) return 0;
     if (ag.currentTarget && ag.position.distanceTo(ag.currentTarget.position) < 10) return 0;
@@ -169,6 +170,7 @@ export class SeekHealthEvaluator extends YUKA.GoalEvaluator<TDMAgent> {
 // ═══════════════════════════════════════════
 export class GetWeaponEvaluator extends YUKA.GoalEvaluator<TDMAgent> {
   calculateDesirability(ag: TDMAgent): number {
+    if (gameState.mode === 'br') return 0; // BR bots loot via BRBots.seekLoot()
     const isUnarmed = ag.weaponId === 'unarmed';
 
     if (!isUnarmed) {

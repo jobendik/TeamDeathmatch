@@ -7,6 +7,7 @@ import { hitscanShot, shotgunBlast, spawnRocket, spawnGrenade } from '@/combat/H
 import { updateHUD, flashCrosshairFire } from '@/ui/HUD';
 import { fireViewmodel, setViewmodelWeapon, resizeViewmodel } from '@/rendering/WeaponViewmodel';
 import { togglePause } from '@/ui/Menus';
+import { isPlayerInAir } from '@/br/DropPlane';
 
 function startReload(): void {
   if (gameState.pWeaponId === 'unarmed') return; // can't reload unarmed
@@ -44,12 +45,29 @@ export function onShoot(): void {
   if (gameState.pDead || gameState.pReloading) return;
   if (gameState.pWeaponId === 'unarmed') return; // can't shoot unarmed
   if (gameState.pShootTimer > 0) return;
-  if (gameState.pAmmo <= 0) { startReload(); return; }
+  if (isPlayerInAir()) return; // no shooting during BR drop
 
   const { player, cameraYaw, cameraPitch, pWeaponId } = gameState;
   const wep = WEAPONS[pWeaponId];
 
-  const o = new THREE.Vector3(player.position.x, FP.height - 0.2, player.position.z);
+  // Knife melee attack — no ammo needed
+  if (pWeaponId === 'knife') {
+    const o = new THREE.Vector3(player.position.x, player.position.y + FP.height - 0.2, player.position.z);
+    const dir = new THREE.Vector3(
+      -Math.sin(cameraYaw) * Math.cos(cameraPitch),
+      Math.sin(cameraPitch),
+      -Math.cos(cameraYaw) * Math.cos(cameraPitch),
+    ).normalize();
+    hitscanShot(o, dir, 'player', player.team, pWeaponId, 0x60a5fa, player);
+    fireViewmodel();
+    gameState.pShootTimer = wep.fireRate;
+    updateHUD();
+    return;
+  }
+
+  if (gameState.pAmmo <= 0) { startReload(); return; }
+
+  const o = new THREE.Vector3(player.position.x, player.position.y + FP.height - 0.2, player.position.z);
   const fwd = new THREE.Vector3(
     -Math.sin(cameraYaw) * Math.cos(cameraPitch),
     Math.sin(cameraPitch),
@@ -84,9 +102,10 @@ function throwGrenade(): void {
   if (gameState.pDead) return;
   if (gameState.pGrenades <= 0) return;
   if (gameState.pGrenadeCooldown > 0) return;
+  if (isPlayerInAir()) return; // no grenades during BR drop
 
   const { player, cameraYaw, cameraPitch } = gameState;
-  const o = new THREE.Vector3(player.position.x, FP.height, player.position.z);
+  const o = new THREE.Vector3(player.position.x, player.position.y + FP.height, player.position.z);
   const dir = new THREE.Vector3(
     -Math.sin(cameraYaw) * Math.cos(cameraPitch),
     Math.sin(cameraPitch),
@@ -120,7 +139,7 @@ function onMouseMove(e: MouseEvent): void {
 export function bindEvents(): void {
   const { keys } = gameState;
 
-  window.addEventListener('keydown', (e) => {
+  window.addEventListener('keydown', async (e) => {
     const k = e.key.toLowerCase();
     if (k in keys) { (keys as any)[k] = true; e.preventDefault(); }
     if (k === 'tab') { e.preventDefault(); keys.tab = true; }
@@ -135,8 +154,45 @@ export function bindEvents(): void {
     if (k === '2') switchWeapon(1);
     if (k === '3') switchWeapon(2);
 
+    // BR keys
+    if (gameState.mode === 'br') {
+      if (k === 'i') {
+        const ui = await import('@/br/InventoryUI');
+        ui.toggleInventory();
+        e.preventDefault();
+        return;
+      }
+      if (k === 'e') {
+        const ui = await import('@/br/InventoryUI');
+        ui.pickupNearestLoot();
+      }
+      if (k === ' ') {
+        const dp = await import('@/br/DropPlane');
+        if (dp.drop.state === 'onPlane') { dp.playerJumpFromPlane(); return; }
+        if (dp.drop.state === 'freefall') { dp.deployParachute(); return; }
+      }
+      if (k === 'f') {
+        const veh = await import('@/br/Vehicles');
+        if (veh.playerVehicle) {
+          veh.exitVehicle();
+        } else {
+          const near = veh.findNearbyVehicle(gameState.player.position.x, gameState.player.position.z, 3);
+          if (near) veh.enterVehicle(near, true);
+        }
+      }
+    }
+
+    // Jump (all game modes) — Space triggers a ground jump
+    if (k === ' ' && !gameState.pDead) {
+      gameState.pJumpRequested = true;
+    }
+
     if (k === 'escape') {
       e.preventDefault();
+      if (gameState.mode === 'br') {
+        const ui = await import('@/br/InventoryUI');
+        if (ui.isInventoryOpen()) { ui.closeInventory(); return; }
+      }
       togglePause();
       return;
     }

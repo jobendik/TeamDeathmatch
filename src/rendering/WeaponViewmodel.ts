@@ -13,6 +13,7 @@ let vmMuzzleSprite: THREE.Sprite;
 
 let currentWeaponMesh: THREE.Group | null = null;
 let currentWeaponId: WeaponId = 'assault_rifle';
+let vmHidden = false;
 
 let currentViewmodelMixer: THREE.AnimationMixer | null = null;
 let currentViewmodelActions: THREE.AnimationAction[] = [];
@@ -35,6 +36,7 @@ interface VMLayout {
 
 const VM_LAYOUTS: Record<WeaponId, VMLayout> = {
   unarmed:         { pos: [0.14, -0.25, -0.15], rot: [0, 0, 0], scale: 1.0, muzzleOffset: [0, 0, 0], recoilZ: 0, recoilUp: 0, recoilRot: 0 },
+  knife:           { pos: [0.14, -0.12, -0.18], rot: [0, 0, 0], scale: 1.0, muzzleOffset: [0, 0, 0], recoilZ: 0, recoilUp: 0, recoilRot: 0 },
   pistol:          { pos: [0.14, -0.12, -0.20], rot: [0, 0, 0], scale: 1.4, muzzleOffset: [0, 0.008, -0.10], recoilZ: 0.025, recoilUp: 0.012, recoilRot: 0.08 },
   smg:             { pos: [0.12, -0.11, -0.22], rot: [0, 0, 0], scale: 1.3, muzzleOffset: [0, 0.008, -0.14], recoilZ: 0.012, recoilUp: 0.006, recoilRot: 0.04 },
   assault_rifle:   { pos: [0.11, -0.10, -0.24], rot: [0, 0, 0], scale: 1.2, muzzleOffset: [0, 0.010, -0.18], recoilZ: 0.018, recoilUp: 0.008, recoilRot: 0.06 },
@@ -57,6 +59,7 @@ let reloadLerp = 0;
 
 const BASE_URL = import.meta.env.BASE_URL;
 const M16_GLB_URL = `${BASE_URL}models/weapons/m16a2.glb`;
+const KNIFE_GLB_URL = `${BASE_URL}models/weapons/knife.glb`;
 
 type CachedGLB = {
   scene: THREE.Group;
@@ -64,16 +67,17 @@ type CachedGLB = {
 };
 
 type M16RangeName = 'shoot' | 'reload' | 'hit';
+type KnifeRangeName = 'equip' | 'idle' | 'slice1' | 'slice2' | 'slice3';
 
 const M16_VIEWMODEL_TUNE = {
-  desiredMaxDimension: 0.710,
-  position: new THREE.Vector3(0.110, -0.055, -0.180),
+  desiredMaxDimension: 0.930,
+  position: new THREE.Vector3(0.070, -0.055, -0.180),
   rotation: new THREE.Euler(0.020, -0.220, 0.100),
   idleTime: 0.05,
 };
 
 const M16_DEBUG_TUNER = {
-  enabled: true, // set false when done tuning
+  enabled: false, // set true to enable tuning overlay
   position: new THREE.Vector3(
     M16_VIEWMODEL_TUNE.position.x,
     M16_VIEWMODEL_TUNE.position.y,
@@ -93,11 +97,51 @@ const M16_RANGES: Record<M16RangeName, [number, number]> = {
   hit: [6.80, 7.40],
 };
 
+const KNIFE_VIEWMODEL_TUNE = {
+  desiredMaxDimension: 0.930,
+  position: new THREE.Vector3(0.065, -0.160, -0.180),
+  rotation: new THREE.Euler(0.020, 2.922, 0.100),
+  idleTime: 0.00,
+};
+
+const KNIFE_DEBUG_TUNER = {
+  enabled: false, // set true to enable tuning overlay
+  position: new THREE.Vector3(
+    KNIFE_VIEWMODEL_TUNE.position.x,
+    KNIFE_VIEWMODEL_TUNE.position.y,
+    KNIFE_VIEWMODEL_TUNE.position.z,
+  ),
+  rotation: new THREE.Euler(
+    KNIFE_VIEWMODEL_TUNE.rotation.x,
+    KNIFE_VIEWMODEL_TUNE.rotation.y,
+    KNIFE_VIEWMODEL_TUNE.rotation.z,
+  ),
+  desiredMaxDimension: KNIFE_VIEWMODEL_TUNE.desiredMaxDimension,
+};
+
+const KNIFE_RANGES: Record<KnifeRangeName, [number, number]> = {
+  equip:  [4.40, 4.83],
+  idle:   [0.00, 1.35],
+  slice1: [1.36, 2.00],
+  slice2: [2.68, 3.40],
+  slice3: [3.40, 4.15],
+};
+
 const gltfLoader = new GLTFLoader();
 
 let cachedM16: CachedGLB | null = null;
 let cachedM16Promise: Promise<CachedGLB | null> | null = null;
 let loggedM16Clips = false;
+
+let cachedKnife: CachedGLB | null = null;
+let cachedKnifePromise: Promise<CachedGLB | null> | null = null;
+let loggedKnifeClips = false;
+
+let currentKnifeWrapper: THREE.Group | null = null;
+let currentKnifeAction: THREE.AnimationAction | null = null;
+let activeKnifeRange: KnifeRangeName | null = null;
+let knifeEquipPlayed = false;
+let knifeDebugOverlay: HTMLDivElement | null = null;
 
 function prepRenderable(root: THREE.Object3D): void {
   root.traverse((obj) => {
@@ -159,6 +203,48 @@ async function loadM16Viewmodel(): Promise<CachedGLB | null> {
   });
 
   return cachedM16Promise;
+}
+
+async function loadKnifeViewmodel(): Promise<CachedGLB | null> {
+  if (cachedKnife) return cachedKnife;
+  if (cachedKnifePromise) return cachedKnifePromise;
+
+  cachedKnifePromise = new Promise((resolve) => {
+    gltfLoader.load(
+      KNIFE_GLB_URL,
+      (gltf) => {
+        const scene = gltf.scene as THREE.Group;
+        prepRenderable(scene);
+
+        cachedKnife = {
+          scene,
+          animations: gltf.animations ?? [],
+        };
+
+        if (!loggedKnifeClips) {
+          loggedKnifeClips = true;
+          console.info('[WeaponViewmodel] Loaded knife.glb');
+          console.info(
+            '[WeaponViewmodel] Knife animation clips:',
+            cachedKnife.animations.map((clip) => ({
+              name: clip.name,
+              duration: clip.duration,
+              tracks: clip.tracks.length,
+            })),
+          );
+        }
+
+        resolve(cachedKnife);
+      },
+      undefined,
+      (err) => {
+        console.error('[WeaponViewmodel] Failed to load knife GLB.', err);
+        resolve(null);
+      },
+    );
+  });
+
+  return cachedKnifePromise;
 }
 
 function makeMats(wep: { color: number }) {
@@ -655,6 +741,10 @@ function clearCurrentWeaponMesh(): void {
   currentM16Action = null;
   wasReloading = false;
 
+  currentKnifeWrapper = null;
+  activeKnifeRange = null;
+  currentKnifeAction = null;
+
   if (currentViewmodelActions.length > 0) {
     for (const action of currentViewmodelActions) {
       action.stop();
@@ -732,6 +822,282 @@ function attachLoadedM16(): void {
   refreshM16DebugOverlay();
 }
 
+function ensureKnifeDebugOverlay(): void {
+  if (!KNIFE_DEBUG_TUNER.enabled) return;
+  if (knifeDebugOverlay) return;
+
+  const el = document.createElement('div');
+  el.style.position = 'fixed';
+  el.style.right = '12px';
+  el.style.bottom = '12px';
+  el.style.zIndex = '99999';
+  el.style.padding = '10px 12px';
+  el.style.background = 'rgba(0,0,0,0.75)';
+  el.style.color = '#ffe09f';
+  el.style.fontFamily = 'monospace';
+  el.style.fontSize = '12px';
+  el.style.lineHeight = '1.45';
+  el.style.border = '1px solid rgba(255,200,100,0.45)';
+  el.style.borderRadius = '8px';
+  el.style.whiteSpace = 'pre';
+  el.style.pointerEvents = 'none';
+  document.body.appendChild(el);
+
+  knifeDebugOverlay = el;
+  refreshKnifeDebugOverlay();
+}
+
+function refreshKnifeDebugOverlay(): void {
+  if (!knifeDebugOverlay || !KNIFE_DEBUG_TUNER.enabled) return;
+
+  const p = KNIFE_DEBUG_TUNER.position;
+  const r = KNIFE_DEBUG_TUNER.rotation;
+
+  knifeDebugOverlay.textContent =
+`KNIFE VIEWMODEL TUNER
+
+Move:
+J/L = X- / X+
+I/K = Y+ / Y-
+U/O = Z- / Z+
+
+Scale:
+Q/E = size- / size+
+
+Rotate:
+1/2 = pitch- / pitch+
+3/4 = yaw- / yaw+
+5/6 = roll- / roll+
+
+P = print values
+
+desiredMaxDimension: ${KNIFE_DEBUG_TUNER.desiredMaxDimension.toFixed(3)}
+
+position:
+x: ${p.x.toFixed(3)}
+y: ${p.y.toFixed(3)}
+z: ${p.z.toFixed(3)}
+
+rotation:
+x: ${r.x.toFixed(3)}
+y: ${r.y.toFixed(3)}
+z: ${r.z.toFixed(3)}
+`;
+}
+
+function logKnifeTuningValues(): void {
+  const p = KNIFE_DEBUG_TUNER.position;
+  const r = KNIFE_DEBUG_TUNER.rotation;
+
+  console.info(
+`const KNIFE_VIEWMODEL_TUNE = {
+  desiredMaxDimension: ${KNIFE_DEBUG_TUNER.desiredMaxDimension.toFixed(3)},
+  position: new THREE.Vector3(${p.x.toFixed(3)}, ${p.y.toFixed(3)}, ${p.z.toFixed(3)}),
+  rotation: new THREE.Euler(${r.x.toFixed(3)}, ${r.y.toFixed(3)}, ${r.z.toFixed(3)}),
+  idleTime: 0.00,
+};`
+  );
+}
+
+function applyKnifeDebugTransform(): void {
+  if (!currentKnifeWrapper) return;
+  currentKnifeWrapper.position.copy(KNIFE_DEBUG_TUNER.position);
+  currentKnifeWrapper.rotation.copy(KNIFE_DEBUG_TUNER.rotation);
+}
+
+function onKnifeDebugKeyDown(ev: KeyboardEvent): void {
+  if (!KNIFE_DEBUG_TUNER.enabled) return;
+  if (!currentKnifeWrapper) return;
+  if (currentWeaponId !== 'knife') return;
+
+  const tag = (ev.target as HTMLElement | null)?.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+
+  const posStep = ev.shiftKey ? 0.02 : 0.005;
+  const rotStep = ev.shiftKey ? 0.08 : 0.02;
+  const scaleStep = ev.shiftKey ? 0.05 : 0.01;
+
+  let changed = true;
+  let sizeChanged = false;
+
+  switch (ev.key) {
+    case 'j':
+    case 'J':
+      KNIFE_DEBUG_TUNER.position.x -= posStep;
+      break;
+    case 'l':
+    case 'L':
+      KNIFE_DEBUG_TUNER.position.x += posStep;
+      break;
+    case 'i':
+    case 'I':
+      KNIFE_DEBUG_TUNER.position.y += posStep;
+      break;
+    case 'k':
+    case 'K':
+      KNIFE_DEBUG_TUNER.position.y -= posStep;
+      break;
+    case 'u':
+    case 'U':
+      KNIFE_DEBUG_TUNER.position.z -= posStep;
+      break;
+    case 'o':
+    case 'O':
+      KNIFE_DEBUG_TUNER.position.z += posStep;
+      break;
+
+    case 'q':
+    case 'Q':
+      KNIFE_DEBUG_TUNER.desiredMaxDimension = Math.max(0.05, KNIFE_DEBUG_TUNER.desiredMaxDimension - scaleStep);
+      sizeChanged = true;
+      break;
+    case 'e':
+    case 'E':
+      KNIFE_DEBUG_TUNER.desiredMaxDimension += scaleStep;
+      sizeChanged = true;
+      break;
+
+    case '1':
+      KNIFE_DEBUG_TUNER.rotation.x -= rotStep;
+      break;
+    case '2':
+      KNIFE_DEBUG_TUNER.rotation.x += rotStep;
+      break;
+    case '3':
+      KNIFE_DEBUG_TUNER.rotation.y -= rotStep;
+      break;
+    case '4':
+      KNIFE_DEBUG_TUNER.rotation.y += rotStep;
+      break;
+    case '5':
+      KNIFE_DEBUG_TUNER.rotation.z -= rotStep;
+      break;
+    case '6':
+      KNIFE_DEBUG_TUNER.rotation.z += rotStep;
+      break;
+
+    case 'p':
+    case 'P':
+      logKnifeTuningValues();
+      changed = false;
+      break;
+
+    default:
+      changed = false;
+      break;
+  }
+
+  if (!changed) return;
+
+  ev.preventDefault();
+
+  if (sizeChanged) {
+    applyWeaponSwap('knife');
+  } else {
+    applyKnifeDebugTransform();
+  }
+
+  refreshKnifeDebugOverlay();
+}
+
+function holdKnifeIdlePose(): void {
+  if (!currentViewmodelMixer || currentViewmodelActions.length === 0) return;
+
+  const action = currentViewmodelActions[0];
+  currentKnifeAction = action;
+  activeKnifeRange = 'idle';
+
+  action.reset();
+  action.enabled = true;
+  action.clampWhenFinished = false;
+  action.setLoop(THREE.LoopRepeat, Infinity);
+  action.timeScale = 1;
+  action.play();
+  action.time = KNIFE_RANGES.idle[0];
+
+  currentViewmodelMixer.update(0);
+}
+
+function playKnifeRange(name: KnifeRangeName, timeScale = 1): void {
+  if (currentWeaponId !== 'knife') return;
+  if (!currentViewmodelMixer || currentViewmodelActions.length === 0) return;
+
+  const action = currentViewmodelActions[0];
+  const [start] = KNIFE_RANGES[name];
+
+  currentKnifeAction = action;
+  activeKnifeRange = name;
+
+  action.reset();
+  action.enabled = true;
+  action.paused = false;
+  action.clampWhenFinished = true;
+  action.setLoop(THREE.LoopOnce, 1);
+  action.timeScale = timeScale;
+  action.play();
+  action.time = start;
+
+  currentViewmodelMixer.update(0);
+}
+
+function attachLoadedKnife(): void {
+  if (!cachedKnife) {
+    applyProceduralWeapon('knife');
+    return;
+  }
+
+  const wrapper = new THREE.Group();
+  wrapper.name = 'KnifeViewmodelWrapper';
+
+  const cloneRoot = skeletonClone(cachedKnife.scene) as THREE.Group;
+  prepRenderable(cloneRoot);
+
+  const rawBox = new THREE.Box3().setFromObject(cloneRoot);
+  const rawSize = new THREE.Vector3();
+  const rawCenter = new THREE.Vector3();
+  rawBox.getSize(rawSize);
+  rawBox.getCenter(rawCenter);
+
+  cloneRoot.position.sub(rawCenter);
+  wrapper.add(cloneRoot);
+
+  const maxDim = Math.max(rawSize.x, rawSize.y, rawSize.z);
+  const desiredDim = KNIFE_DEBUG_TUNER.enabled
+    ? KNIFE_DEBUG_TUNER.desiredMaxDimension
+    : KNIFE_VIEWMODEL_TUNE.desiredMaxDimension;
+  const scale = desiredDim / Math.max(maxDim, 0.0001);
+
+  wrapper.scale.setScalar(scale);
+  wrapper.position.copy(KNIFE_DEBUG_TUNER.enabled ? KNIFE_DEBUG_TUNER.position : KNIFE_VIEWMODEL_TUNE.position);
+  wrapper.rotation.copy(KNIFE_DEBUG_TUNER.enabled ? KNIFE_DEBUG_TUNER.rotation : KNIFE_VIEWMODEL_TUNE.rotation);
+  wrapper.visible = true;
+
+  currentKnifeWrapper = wrapper;
+  currentWeaponMesh = wrapper;
+  vmGroup.add(currentWeaponMesh);
+
+  currentViewmodelMixer = null;
+  currentViewmodelActions = [];
+  currentKnifeAction = null;
+  activeKnifeRange = null;
+
+  if (cachedKnife.animations.length > 0) {
+    currentViewmodelMixer = new THREE.AnimationMixer(cloneRoot);
+    currentViewmodelActions = cachedKnife.animations.map((clip) =>
+      currentViewmodelMixer!.clipAction(clip),
+    );
+
+    if (!knifeEquipPlayed) {
+      knifeEquipPlayed = true;
+      playKnifeRange('equip', 1.0);
+    } else {
+      holdKnifeIdlePose();
+    }
+  }
+
+  refreshKnifeDebugOverlay();
+}
+
 function applyProceduralWeapon(weaponId: WeaponId): void {
   currentWeaponMesh = buildWeaponMesh(weaponId);
   const layout = VM_LAYOUTS[weaponId];
@@ -744,8 +1110,17 @@ function applyWeaponSwap(weaponId: WeaponId): void {
 
   currentWeaponId = weaponId;
 
+  // Hide muzzle flash objects for weapons that don't need them —
+  // the invisible sphere still writes to the depth buffer and occludes arm geometry.
+  const hasMuzzle = weaponId !== 'knife' && weaponId !== 'unarmed';
+  vmMuzzleFlash.visible = hasMuzzle;
+  vmMuzzleMesh.visible = hasMuzzle;
+  vmMuzzleSprite.visible = hasMuzzle;
+
   if (weaponId === 'assault_rifle' && cachedM16) {
     attachLoadedM16();
+  } else if (weaponId === 'knife' && cachedKnife) {
+    attachLoadedKnife();
   } else {
     const layout = VM_LAYOUTS[weaponId];
     applyProceduralWeapon(weaponId);
@@ -760,16 +1135,24 @@ function applyWeaponSwap(weaponId: WeaponId): void {
 }
 
 async function tryLoadSpecialViewmodel(weaponId: WeaponId): Promise<void> {
-  if (weaponId !== 'assault_rifle') return;
-
-  const loaded = await loadM16Viewmodel();
-  if (!loaded) return;
-
-  if (currentWeaponId === 'assault_rifle' || pendingWeaponId === 'assault_rifle') {
-    applyWeaponSwap('assault_rifle');
-    pendingWeaponId = null;
-    switchDir = 'up';
-    switchProgress = 1;
+  if (weaponId === 'assault_rifle') {
+    const loaded = await loadM16Viewmodel();
+    if (!loaded) return;
+    if (currentWeaponId === 'assault_rifle' || pendingWeaponId === 'assault_rifle') {
+      applyWeaponSwap('assault_rifle');
+      pendingWeaponId = null;
+      switchDir = 'up';
+      switchProgress = 1;
+    }
+  } else if (weaponId === 'knife') {
+    const loaded = await loadKnifeViewmodel();
+    if (!loaded) return;
+    if (currentWeaponId === 'knife' || pendingWeaponId === 'knife') {
+      applyWeaponSwap('knife');
+      pendingWeaponId = null;
+      switchDir = 'up';
+      switchProgress = 1;
+    }
   }
 }
 
@@ -785,6 +1168,11 @@ export function setViewmodelWeapon(weaponId: WeaponId): void {
   switchDir = 'down';
 
   void tryLoadSpecialViewmodel(weaponId);
+}
+
+export function setViewmodelVisible(visible: boolean): void {
+  vmHidden = !visible;
+  if (vmGroup) vmGroup.visible = visible;
 }
 
 export function initViewmodel(): void {
@@ -832,11 +1220,25 @@ export function initViewmodel(): void {
     window.addEventListener('keydown', onM16DebugKeyDown);
   }
 
+  if (KNIFE_DEBUG_TUNER.enabled) {
+    ensureKnifeDebugOverlay();
+    window.addEventListener('keydown', onKnifeDebugKeyDown);
+  }
+
   setViewmodelWeapon(gameState.pWeaponId);
 }
 
 export function fireViewmodel(): void {
   if (currentWeaponId === 'unarmed') return;
+
+  if (currentWeaponId === 'knife') {
+    if (currentViewmodelMixer) {
+      const sliceAnims: KnifeRangeName[] = ['slice1', 'slice2', 'slice3'];
+      const pick = sliceAnims[Math.floor(Math.random() * sliceAnims.length)];
+      playKnifeRange(pick, 1.0);
+    }
+    return;
+  }
 
   const layout = VM_LAYOUTS[currentWeaponId];
 
@@ -893,12 +1295,23 @@ export function updateViewmodel(dt: number): void {
         holdM16IdlePose();
       }
     }
+
+    if (currentWeaponId === 'knife' && activeKnifeRange && currentKnifeAction) {
+      const [, end] = KNIFE_RANGES[activeKnifeRange];
+      if (currentKnifeAction.time >= end) {
+        holdKnifeIdlePose();
+      }
+      // Keep idle animation looping within its range
+      if (activeKnifeRange === 'idle' && currentKnifeAction.time >= end) {
+        currentKnifeAction.time = KNIFE_RANGES.idle[0];
+      }
+    }
   }
 
   gameState.mouseDeltaX = 0;
   gameState.mouseDeltaY = 0;
 
-  if (pDead) {
+  if (pDead || vmHidden) {
     vmGroup.visible = false;
     return;
   }
@@ -1002,6 +1415,7 @@ function easeOutCubic(t: number): number {
 
 export function renderViewmodel(): void {
   if (!vmScene || !vmCamera) return;
+  if (vmGroup && !vmGroup.visible) return;
   const renderer = gameState.renderer;
   renderer.autoClear = false;
   renderer.clearDepth();

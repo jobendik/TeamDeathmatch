@@ -25,6 +25,8 @@ import { clearTeamIntel } from '@/ai/TeamIntel';
 import { showHitMarker, showKillMarker } from '@/ui/HitMarkers';
 import { showDamageArc } from '@/ui/DamageArcs';
 import { getPostFX } from '@/rendering/PostProcess.Bridge';
+import { setViewmodelWeapon } from '@/rendering/WeaponViewmodel';
+import { isPlayerInAir } from '@/br/DropPlane';
 
 function applyWeaponToAgent(ag: TDMAgent, weaponId: WeaponId): void {
   const def = WEAPONS[weaponId];
@@ -45,7 +47,7 @@ function applyPlayerLoadoutForMode(): void {
     gameState.pWeaponSlots = ['assault_rifle', 'pistol'];
     gameState.pActiveSlot = 0;
   } else {
-    gameState.pWeaponSlots = ['unarmed'];
+    gameState.pWeaponSlots = ['knife'];
     gameState.pActiveSlot = 0;
   }
   gameState.pWeaponId = gameState.pWeaponSlots[gameState.pActiveSlot];
@@ -60,7 +62,7 @@ function applyPlayerLoadoutForMode(): void {
 function applyAgentLoadoutForMode(ag: TDMAgent): void {
   if (ag === gameState.player) return;
   if (!getModeDefaults(gameState.mode).playerStartsArmed) {
-    applyWeaponToAgent(ag, 'unarmed');
+    applyWeaponToAgent(ag, 'knife');
   } else {
     const weaponId: WeaponId = CLASS_DEFAULT_WEAPON[ag.botClass] || 'assault_rifle';
     applyWeaponToAgent(ag, weaponId);
@@ -84,6 +86,7 @@ function clearDeadTargetReferences(deadTarget: TDMAgent): void {
 
 export function dealDmgPlayer(dmg: number, attacker: TDMAgent | null = null): void {
   if (gameState.pDead || gameState.roundOver) return;
+  if (isPlayerInAir()) return; // invulnerable during BR drop
   gameState.pHP = Math.max(0, gameState.pHP - dmg);
   gameState.player.hp = gameState.pHP;
   updateHUD();
@@ -106,6 +109,11 @@ function playerDied(attacker: TDMAgent | null): void {
   if (dom.dsWeapon) dom.dsWeapon.textContent = attacker ? WEAPONS[attacker.weaponId].name : 'MYSTERY';
 
   clearDeadTargetReferences(gameState.player);
+
+  if (gameState.mode === 'br') {
+    import('@/br/BRController').then(m => m.onBRDeath(gameState.player));
+  }
+
   for (const team of [TEAM_BLUE, TEAM_RED] as const) {
     if (gameState.flags[team].carriedBy === gameState.player) {
       dropFlag(team, new THREE.Vector3(gameState.player.position.x, 0, gameState.player.position.z));
@@ -171,6 +179,10 @@ function killAgent(ag: TDMAgent, attacker: TDMAgent | null): void {
   }
 
   clearDeadTargetReferences(ag);
+
+  if (gameState.mode === 'br') {
+    import('@/br/BRController').then(m => m.onBRDeath(ag));
+  }
 
   if (attacker) {
     attacker.kills++;
@@ -396,6 +408,7 @@ export function resetMatch(mode = gameState.mode): void {
   gameState.pReloading = false;
   dom.reloadBar.classList.remove('on');
   dom.reloadText.classList.remove('on');
+  setViewmodelWeapon(gameState.pWeaponId);
 
   for (const ag of gameState.agents) {
     if (ag === gameState.player) continue;
@@ -429,6 +442,8 @@ export function resetMatch(mode = gameState.mode): void {
 
 export function updateRespawns(): void {
   if (gameState.roundOver) return;
+
+  if (gameState.mode === 'br') return;
 
   if (gameState.matchTimeRemaining <= 0) {
     gameState.roundOver = true;

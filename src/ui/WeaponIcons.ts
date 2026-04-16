@@ -7,6 +7,8 @@ import type { WeaponId } from '@/config/weapons';
 const ICONS: Record<WeaponId, string> = {
   unarmed: `<svg viewBox="0 0 32 16" width="36" height="18"><path fill="currentColor" d="M6 8 L10 6 L14 6 L14 10 L10 10 Z M18 6 L22 6 L26 8 L22 10 L18 10 Z"/></svg>`,
 
+  knife: `<svg viewBox="0 0 40 20" width="36" height="18"><path fill="currentColor" d="M18 2 L22 2 L24 6 L24 14 L22 16 L18 16 L16 14 L16 6 Z M19 16 L21 16 L21 20 L19 20 Z"/></svg>`,
+
   pistol: `<svg viewBox="0 0 40 20" width="40" height="20"><path fill="currentColor" d="M4 8 L26 8 L28 6 L32 6 L32 10 L28 10 L26 10 L26 14 L22 14 L20 16 L14 16 L14 14 L10 14 L10 10 L4 10 Z"/><rect fill="currentColor" x="22" y="8" width="6" height="2"/></svg>`,
 
   smg: `<svg viewBox="0 0 48 20" width="44" height="18"><path fill="currentColor" d="M4 8 L8 8 L8 6 L18 6 L18 4 L24 4 L24 6 L34 6 L36 8 L44 8 L44 10 L36 10 L36 12 L24 12 L24 14 L20 14 L20 16 L14 16 L14 14 L10 14 L10 10 L4 10 Z"/><rect fill="currentColor" x="34" y="10" width="6" height="4"/></svg>`,
@@ -28,6 +30,7 @@ export function getWeaponIconSVG(id: WeaponId): string {
 export function getWeaponModeLabel(id: WeaponId): string {
   switch (id) {
     case 'pistol': return 'SEMI';
+    case 'knife': return 'MELEE';
     case 'smg': return 'AUTO';
     case 'assault_rifle': return 'BURST';
     case 'shotgun': return 'PUMP';

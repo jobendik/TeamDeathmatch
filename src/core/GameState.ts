@@ -14,6 +14,8 @@ export interface BoxCollider {
   z: number;
   hw: number;
   hd: number;
+  /** If set, collider is ignored when entity Y >= yTop (steppable surfaces). */
+  yTop?: number;
 }
 
 export interface CircleCollider {
@@ -21,6 +23,7 @@ export interface CircleCollider {
   x: number;
   z: number;
   r: number;
+  yTop?: number;
 }
 
 export type Collider = BoxCollider | CircleCollider;
@@ -198,6 +201,11 @@ export const gameState = {
   // Camera recoil
   recoilPitch: 0,
   recoilYaw: 0,
+
+  // Jump state
+  pPosY: 0,
+  pVelY: 0,
+  pJumpRequested: false,
   recoilRecoveryPitch: 0,
   recoilRecoveryYaw: 0,
 

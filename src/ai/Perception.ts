@@ -217,11 +217,13 @@ export function findBestTarget(ag: TDMAgent): { target: TDMAgent | null; dist: n
 }
 
 export function countNearbyAllies(ag: TDMAgent, range: number): number {
+  // BR and FFA are solo — no allies
+  if (gameState.mode === 'ffa' || gameState.mode === 'br') return 0;
   let count = 0;
   const rangeSq = range * range;
   for (const ally of gameState.agents) {
     if (ally === ag || ally.isDead) continue;
-    if (gameState.mode === 'ffa' || ally.team !== ag.team) continue;
+    if (ally.team !== ag.team) continue;
     const dx = ag.position.x - ally.position.x;
     const dz = ag.position.z - ally.position.z;
     if (dx * dx + dz * dz < rangeSq) count++;

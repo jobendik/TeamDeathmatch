@@ -69,6 +69,6 @@ export function buildLights(): void {
   (gameState as any)._flickerLights = [lane1, lane2, lane3, lane4];
 
   // ── SOFTER ATMOSPHERIC FOG — fog-of-mood not fog-of-war ──
-  scene.fog = new THREE.FogExp2(0x1a2438, 0.0045);
+  scene.fog = new THREE.FogExp2(0x1a2438, 0.003);
   scene.background = new THREE.Color(0x0c1220);
 }

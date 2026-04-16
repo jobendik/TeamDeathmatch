@@ -1045,6 +1045,28 @@ canvas { display: block; cursor: none; }
   letter-spacing: 0.14em;
   transition: all 0.2s;
 }
+.menu-select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath fill='%234aa8ff' d='M6 8L0 0h12z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 14px center;
+  background-size: 12px 8px;
+  padding-right: 36px;
+  cursor: pointer;
+}
+.menu-select:focus {
+  outline: none;
+  border-color: rgba(74, 168, 255, 0.6);
+  box-shadow: 0 0 12px rgba(74, 168, 255, 0.2);
+}
+.menu-select option {
+  background: #0c1424;
+  color: #e0eaff;
+  padding: 8px 12px;
+  font-family: var(--hud-font);
+  letter-spacing: 0.1em;
+}
 .menu-btn {
   cursor: pointer;
   font-weight: 900;
