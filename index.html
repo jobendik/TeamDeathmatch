@@ -12,101 +12,201 @@
   <div id="cw"></div>
   <div id="dmg"></div>
   <div id="hlf"></div>
+  <!-- Crosshair + center effects -->
   <div id="xh">
     <div class="xh-line xh-top"></div>
     <div class="xh-line xh-bot"></div>
     <div class="xh-line xh-left"></div>
     <div class="xh-line xh-right"></div>
     <div class="xh-dot"></div>
+    <div class="xh-hit" id="xhHit"></div>
+    <div class="xh-kill" id="xhKill"></div>
+    <div class="xh-reload-ring" id="xhReload">
+      <svg viewBox="0 0 64 64" width="64" height="64">
+        <circle class="xh-reload-track" cx="32" cy="32" r="28"></circle>
+        <circle class="xh-reload-fill" id="xhReloadFill" cx="32" cy="32" r="28"
+                stroke-dasharray="176" stroke-dashoffset="176"
+                transform="rotate(-90 32 32)"></circle>
+      </svg>
+    </div>
   </div>
 
+  <!-- Damage direction indicators -->
+  <div id="dmgArcs">
+    <div class="dmg-arc" data-dir="n"></div>
+    <div class="dmg-arc" data-dir="ne"></div>
+    <div class="dmg-arc" data-dir="e"></div>
+    <div class="dmg-arc" data-dir="se"></div>
+    <div class="dmg-arc" data-dir="s"></div>
+    <div class="dmg-arc" data-dir="sw"></div>
+    <div class="dmg-arc" data-dir="w"></div>
+    <div class="dmg-arc" data-dir="nw"></div>
+  </div>
+
+  <!-- Compass (top center) -->
+  <div id="compass">
+    <div class="compass-inner">
+      <div class="compass-strip" id="compassStrip"></div>
+      <div class="compass-indicator"></div>
+    </div>
+  </div>
+
+  <!-- Top-right: match info + killfeed -->
+  <div id="matchInfo">
+    <div class="mi-mode" id="miMode">TDM</div>
+    <div class="mi-time" id="miTime">05:00</div>
+    <div class="mi-score">
+      <span class="mi-sc mi-blue" id="miScoreBlue">0</span>
+      <span class="mi-sep">—</span>
+      <span class="mi-sc mi-red" id="miScoreRed">0</span>
+    </div>
+  </div>
+  <div id="killfeed"></div>
+
+  <!-- Top-left: minimap -->
+  <div id="minimap">
+    <div class="mm-header">
+      <span class="mm-label">TACTICAL</span>
+      <span class="mm-coords" id="mmCoords">00, 00</span>
+    </div>
+    <canvas id="mmCanvas" width="300" height="300"></canvas>
+    <div class="mm-border"></div>
+  </div>
+
+  <!-- Damage overlays -->
+  <div id="dmg"></div>
+  <div id="hlf"></div>
+
+  <!-- Menu / lock hints -->
   <div id="mainMenu" class="on">
     <div class="menu-panel">
+      <div class="menu-logo">◆</div>
       <h1>WARZONE</h1>
-      <p>Lagkamp — først til 20 kills. Du starter med våpen.</p>
-      <label class="menu-label">Game mode</label>
+      <p class="menu-sub">Tactical Team Combat</p>
+      <label class="menu-label">GAME MODE</label>
       <select id="modeSelect" class="menu-select">
         <option value="tdm">Team Deathmatch</option>
         <option value="ffa">Free For All</option>
         <option value="ctf">Capture The Flag</option>
         <option value="elimination">Elimination</option>
       </select>
-      <button id="startBtn" class="menu-btn">START MATCH</button>
+      <button id="startBtn" class="menu-btn menu-btn-primary">DEPLOY</button>
     </div>
   </div>
 
   <div id="pauseMenu">
     <div class="menu-panel">
       <h1>PAUSED</h1>
-      <button id="pauseResume" class="menu-btn">RESUME</button>
+      <button id="pauseResume" class="menu-btn menu-btn-primary">RESUME</button>
       <button id="pauseRestart" class="menu-btn">RESTART MATCH</button>
-      <button id="pauseQuit" class="menu-btn">QUIT TO MENU</button>
+      <button id="pauseQuit" class="menu-btn menu-btn-danger">QUIT TO MENU</button>
     </div>
   </div>
 
   <div id="lockHint" class="on">
-    <h2>WARZONE TDM</h2>
+    <div class="lh-icon">◆</div>
+    <h2>CLICK TO DEPLOY</h2>
     <p>Velg modus i menyen · Esc åpner pausemeny</p>
-    <p style="margin-top:8px;color:var(--text);font-size:11px">Klikk for å starte</p>
     <div class="keys">
-      <span class="kbd">W</span><span class="kbd">A</span><span class="kbd">S</span><span class="kbd">D</span>
-      <span class="kbd">LMB</span><span class="kbd">R</span><span class="kbd">G</span>
-      <span class="kbd">1/2/3</span><span class="kbd">SCROLL</span><span class="kbd">TAB</span>
+      <span class="kbd">WASD</span>
+      <span class="kbd">LMB</span>
+      <span class="kbd">R</span>
+      <span class="kbd">G</span>
+      <span class="kbd">1/2/3</span>
+      <span class="kbd">TAB</span>
     </div>
   </div>
 
   <div id="kn"></div>
-  <div id="ds"><h2>◆ ELIMINERT ◆</h2><p id="dsp">Respawner om 3s…</p></div>
-
-  <div id="killfeed"></div>
-
-  <div id="scoreboard">
-    <div class="sb-team sb-blue" id="sbBlue">0</div>
-    <div class="sb-mid" id="sbMid">TDM · 05:00</div>
-    <div class="sb-team sb-red" id="sbRed">0</div>
+  <div id="ds">
+    <div class="ds-inner">
+      <div class="ds-header">◆ KILLED IN ACTION ◆</div>
+      <div class="ds-killer" id="dsKiller">—</div>
+      <div class="ds-weapon" id="dsWeapon">—</div>
+      <p id="dsp">Respawner om 3s…</p>
+    </div>
   </div>
 
-  <div id="hud">
-    <div class="hb">
-      <div class="hl" id="weaponName">ASSAULT RIFLE</div>
-      <div class="hl">HELSE</div>
-      <div style="display:flex;align-items:center;gap:6px">
-        <div class="hhw"><div class="hhf" id="hpFill" style="width:100%"></div></div>
-        <div class="hht" id="hpTxt">100</div>
+  <!-- BOTTOM HUD: weapon card + health + grenades + slots -->
+  <div id="bottomHud">
+    <!-- Left: health + armor -->
+    <div class="bh-section bh-left">
+      <div class="bh-hp-group">
+        <div class="bh-hp-icon">❤</div>
+        <div class="bh-hp-stack">
+          <div class="bh-label">HEALTH</div>
+          <div class="bh-hp-bar">
+            <div class="bh-hp-fill" id="hpFill"></div>
+            <div class="bh-hp-text" id="hpTxt">100</div>
+          </div>
+        </div>
+      </div>
+      <div class="bh-armor-group">
+        <div class="bh-armor-icon">🛡</div>
+        <div class="bh-hp-stack">
+          <div class="bh-label">ARMOR</div>
+          <div class="bh-armor-bar">
+            <div class="bh-armor-fill" id="armorFill"></div>
+            <div class="bh-armor-text" id="armorTxt">0</div>
+          </div>
+        </div>
       </div>
     </div>
-    <div class="hsep"></div>
-    <div class="hb">
-      <div class="hl">AMMO</div>
-      <div class="hamo" id="ammoTxt">30</div>
-      <div class="hksub" id="ammoMax">/ 30</div>
+
+    <!-- Center: weapon slots -->
+    <div class="bh-section bh-slots">
+      <div class="bh-slot" id="slot0" data-slot="0">
+        <div class="bh-slot-key">1</div>
+        <div class="bh-slot-icon" id="slot0icon">—</div>
+        <div class="bh-slot-name" id="slot0name">—</div>
+      </div>
+      <div class="bh-slot" id="slot1" data-slot="1">
+        <div class="bh-slot-key">2</div>
+        <div class="bh-slot-icon" id="slot1icon">—</div>
+        <div class="bh-slot-name" id="slot1name">—</div>
+      </div>
+      <div class="bh-slot" id="slot2" data-slot="2">
+        <div class="bh-slot-key">3</div>
+        <div class="bh-slot-icon" id="slot2icon">—</div>
+        <div class="bh-slot-name" id="slot2name">—</div>
+      </div>
     </div>
-    <div class="hsep"></div>
-    <div class="hb">
-      <div class="hl">GRENADES</div>
-      <div class="hkil" style="color:var(--accent)" id="grenadeTxt">🧨 2</div>
-    </div>
-    <div class="hsep"></div>
-    <div class="hb">
-      <div class="hl">KILLS</div>
-      <div class="hkil" style="color:var(--green)" id="killTxt">0</div>
-    </div>
-    <div class="hsep"></div>
-    <div class="hb">
-      <div class="hl">DEATHS</div>
-      <div class="hkil" style="color:var(--red)" id="deathTxt">0</div>
+
+    <!-- Right: active weapon card + grenades -->
+    <div class="bh-section bh-right">
+      <div class="bh-gadgets">
+        <div class="bh-gadget">
+          <div class="bh-gadget-icon">🧨</div>
+          <div class="bh-gadget-count" id="grenadeTxt">2</div>
+          <div class="bh-gadget-key">G</div>
+        </div>
+      </div>
+      <div class="bh-weapon-card">
+        <div class="bh-wc-top">
+          <div class="bh-wc-icon" id="wcIcon">◆</div>
+          <div class="bh-wc-meta">
+            <div class="bh-wc-name" id="weaponName">ASSAULT RIFLE</div>
+            <div class="bh-wc-mode" id="wcMode">AUTO</div>
+          </div>
+        </div>
+        <div class="bh-wc-ammo-row">
+          <div class="bh-wc-ammo" id="ammoTxt">30</div>
+          <div class="bh-wc-reserve" id="ammoMax">/ 30</div>
+          <div class="bh-wc-reload-hint" id="wcReloadHint">R</div>
+        </div>
+      </div>
     </div>
   </div>
 
+  <!-- Reload text (legacy, but restyled) -->
   <div id="reloadBar"><div id="reloadFill"></div></div>
   <div id="reloadText">RELOADING</div>
 
-  <div id="minimap"><canvas id="mmCanvas" width="300" height="300"></canvas></div>
-
+  <!-- Tab scoreboard -->
   <div id="tabboard">
     <div class="tb-inner">
-      <div class="tb-title">◈ SCOREBOARD</div>
-      <div class="tb-header"><span>SPILLER</span><span>K</span><span>D</span><span>POENG</span></div>
+      <div class="tb-title">◈ SCOREBOARD ◈</div>
+      <div class="tb-header"><span>OPERATOR</span><span>KILLS</span><span>DEATHS</span><span>SCORE</span></div>
       <div id="tbBody"></div>
     </div>
   </div>
@@ -118,7 +218,7 @@
       <div class="rs-mvp" id="rsMvp"></div>
       <div class="rs-podium" id="rsPodium"></div>
       <div class="rs-stats" id="rsStats"></div>
-      <button class="rs-btn" id="rsBtn">PLAY AGAIN</button>
+      <button class="rs-btn" id="rsBtn">NEXT MATCH</button>
     </div>
   </div>
 
