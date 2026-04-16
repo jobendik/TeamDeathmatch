@@ -63,9 +63,9 @@ type CachedGLB = {
 type M16RangeName = 'shoot' | 'reload' | 'hit';
 
 const M16_VIEWMODEL_TUNE = {
-  scale: 0.3,
-  position: new THREE.Vector3(0, 0, 0),
-  rotation: new THREE.Euler(0, 0, 0),
+  scale: 0.018,
+  position: new THREE.Vector3(0.16, -0.18, -0.10),
+  rotation: new THREE.Euler(0, Math.PI, 0),
   idleTime: 0.0,
 };
 
@@ -475,14 +475,35 @@ function attachLoadedM16(): void {
     return;
   }
 
+  const wrapper = new THREE.Group();
+  wrapper.name = 'M16ViewmodelWrapper';
+
   const cloneRoot = skeletonClone(cachedM16.scene) as THREE.Group;
   prepRenderable(cloneRoot);
 
-  cloneRoot.scale.setScalar(M16_VIEWMODEL_TUNE.scale);
-  cloneRoot.position.copy(M16_VIEWMODEL_TUNE.position);
-  cloneRoot.rotation.copy(M16_VIEWMODEL_TUNE.rotation);
+  // Compute bounds before scaling/positioning so we can recenter the asset
+  const rawBox = new THREE.Box3().setFromObject(cloneRoot);
+  const rawSize = new THREE.Vector3();
+  const rawCenter = new THREE.Vector3();
+  rawBox.getSize(rawSize);
+  rawBox.getCenter(rawCenter);
 
-  currentWeaponMesh = cloneRoot;
+  console.info('[WeaponViewmodel] M16 raw bounds size:', rawSize);
+  console.info('[WeaponViewmodel] M16 raw bounds center:', rawCenter);
+
+  // Recenter the visible geometry around local origin
+  cloneRoot.position.sub(rawCenter);
+
+  // Add the recentered model under a wrapper
+  wrapper.add(cloneRoot);
+
+  // Apply FPS tuning to the wrapper, not the raw imported root
+  wrapper.scale.setScalar(M16_VIEWMODEL_TUNE.scale);
+  wrapper.position.copy(M16_VIEWMODEL_TUNE.position);
+  wrapper.rotation.copy(M16_VIEWMODEL_TUNE.rotation);
+  wrapper.visible = true;
+
+  currentWeaponMesh = wrapper;
   vmGroup.add(currentWeaponMesh);
 
   currentViewmodelMixer = null;
@@ -492,13 +513,20 @@ function attachLoadedM16(): void {
 
   if (cachedM16.animations.length > 0) {
     currentViewmodelMixer = new THREE.AnimationMixer(cloneRoot);
-    currentViewmodelActions = cachedM16.animations.map((clip) => currentViewmodelMixer!.clipAction(clip));
+    currentViewmodelActions = cachedM16.animations.map((clip) =>
+      currentViewmodelMixer!.clipAction(clip),
+    );
     holdM16IdlePose();
   }
-const box = new THREE.Box3().setFromObject(cloneRoot);
-const size = new THREE.Vector3();
-box.getSize(size);
-console.log('[WeaponViewmodel] M16 bounds size:', size);
+
+  const finalBox = new THREE.Box3().setFromObject(wrapper);
+  const finalSize = new THREE.Vector3();
+  const finalCenter = new THREE.Vector3();
+  finalBox.getSize(finalSize);
+  finalBox.getCenter(finalCenter);
+
+  console.info('[WeaponViewmodel] M16 final bounds size:', finalSize);
+  console.info('[WeaponViewmodel] M16 final bounds center:', finalCenter);
 }
 
 function applyProceduralWeapon(weaponId: WeaponId): void {
@@ -534,8 +562,12 @@ async function tryLoadSpecialViewmodel(weaponId: WeaponId): Promise<void> {
   const loaded = await loadM16Viewmodel();
   if (!loaded) return;
 
-  if (currentWeaponId === 'assault_rifle' && switchProgress >= 1 && !pendingWeaponId) {
+  // If the rifle is already the active or pending weapon, force-refresh it
+  if (currentWeaponId === 'assault_rifle' || pendingWeaponId === 'assault_rifle') {
     applyWeaponSwap('assault_rifle');
+    pendingWeaponId = null;
+    switchDir = 'up';
+    switchProgress = 1;
   }
 }
 
