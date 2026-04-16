@@ -1,9 +1,3 @@
-/**
- * WARZONE TDM — Entry Point
- *
- * Initializes all game systems and starts the main loop.
- */
-
 import '@/styles/index.css';
 
 import { initScene } from '@/core/SceneSetup';
@@ -19,6 +13,8 @@ import { initViewmodel } from '@/rendering/WeaponViewmodel';
 import { initMenus } from '@/ui/Menus';
 import { updateHUD } from '@/ui/HUD';
 import { updateScoreboard } from '@/ui/Scoreboard';
+import { initPostProcess } from '@/rendering/PostProcess';
+import { setPostFX } from '@/rendering/PostProcess.Bridge';
 
 async function init(): Promise<void> {
   initScene();
@@ -33,12 +29,18 @@ async function init(): Promise<void> {
   initViewmodel();
   bindEvents();
   initMenus();
+
+  // Post-process pipeline
+  const fx = initPostProcess();
+  setPostFX(fx);
+
+  // Hook resize into post-FX too
+  window.addEventListener('resize', () => fx.resize());
+
   updateHUD();
   updateScoreboard();
 
   animate();
 }
 
-init().catch((err) => {
-  console.error('[main] Failed to initialize game:', err);
-});
+init().catch((err) => console.error('[main] init failed:', err));
