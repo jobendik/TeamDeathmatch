@@ -3,6 +3,8 @@ import * as YUKA from 'yuka';
 import { CLASS_CONFIGS, type BotClass } from '@/config/classes';
 import { TEAM_COLORS, type TeamId } from '@/config/constants';
 import { CLASS_DEFAULT_WEAPON, WEAPONS, type WeaponId } from '@/config/weapons';
+import type { Personality } from '@/ai/Personality';
+import { createAimState, type AimState } from '@/ai/HumanAim';
 
 /**
  * Tactical memory entry for a known enemy.
@@ -144,9 +146,6 @@ export class TDMAgent extends YUKA.Vehicle {
   /** Confidence level (0-100): builds on kills, drops on deaths. Affects aggression. */
   confidence: number;
 
-  /** Preferred engagement distance for this class */
-  preferredRange: number;
-
   /** Number of nearby alive teammates (updated periodically) */
   nearbyAllies: number;
   /** Timer for counting nearby allies */
@@ -206,6 +205,38 @@ export class TDMAgent extends YUKA.Vehicle {
   navTolerance: number;
   navRepathTimer: number;
   navCurrentRegion: any;
+
+  /** Preferred engagement distance for this class */
+  preferredRange: number;
+
+  // ═══════════════════════════════════════════════
+  //  HUMANIZATION
+  // ═══════════════════════════════════════════════
+
+  /** Personality profile — assigned by factory */
+  personality: Personality | null;
+
+  /** Simulated crosshair state */
+  aim: AimState | null;
+
+  /** Temporary skill debuff from being tilted (0 = no tilt, 1 = fully tilted) */
+  tiltLevel: number;
+
+  /** World time until which this bot is committed to current goal (prevents flip-flopping) */
+  commitmentUntil: number;
+
+  /** Timer for when to think about repositioning proactively */
+  repositionUrge: number;
+
+  /** Target of a "revenge hunt" — bot who killed them recently */
+  grudge: TDMAgent | null;
+  grudgeExpiry: number;
+
+  /** Pre-aim target — speculative direction for corner peeks */
+  preAimPos: YUKA.Vector3 | null;
+
+  /** How much time has been spent focused on same area (builds focus, burns attention) */
+  focusTime: number;
 
   constructor(name: string, team: TeamId, botClass: BotClass) {
     super();
@@ -351,11 +382,30 @@ export class TDMAgent extends YUKA.Vehicle {
 
     // Preferred engagement range by class / weapon
     switch (botClass) {
-      case 'sniper':   this.preferredRange = 35; break;
-      case 'assault':  this.preferredRange = 10; break;
-      case 'flanker':  this.preferredRange = 8; break;
-      default:         this.preferredRange = 18; break;
+      case 'sniper':
+        this.preferredRange = 35;
+        break;
+      case 'assault':
+        this.preferredRange = 10;
+        break;
+      case 'flanker':
+        this.preferredRange = 8;
+        break;
+      default:
+        this.preferredRange = 18;
+        break;
     }
+
+    // ── Humanization ──
+    this.personality = null;
+    this.aim = createAimState();
+    this.tiltLevel = 0;
+    this.commitmentUntil = 0;
+    this.repositionUrge = 0;
+    this.grudge = null;
+    this.grudgeExpiry = 0;
+    this.preAimPos = null;
+    this.focusTime = 0;
   }
 
   /**
@@ -399,5 +449,15 @@ export class TDMAgent extends YUKA.Vehicle {
     this.navDestination = null;
     this.navMode = 'none';
     this.navRepathTimer = 0;
+
+    // Humanization — note we DO NOT reset personality (persistent across lives)
+    // but tilt decays over time, grudge can persist briefly
+    this.aim = createAimState();
+    this.commitmentUntil = 0;
+    this.repositionUrge = 0;
+    this.preAimPos = null;
+    this.focusTime = 0;
+    // tiltLevel is preserved so respawning doesn't instantly undo a bad run's tilt
+    // grudge is preserved so they hunt their killer after respawn
   }
 }
