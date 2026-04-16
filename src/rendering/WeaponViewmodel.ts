@@ -20,6 +20,9 @@ let currentM16Action: THREE.AnimationAction | null = null;
 let activeM16Range: M16RangeName | null = null;
 let wasReloading = false;
 
+let currentM16Wrapper: THREE.Group | null = null;
+let m16DebugOverlay: HTMLDivElement | null = null;
+
 interface VMLayout {
   pos: [number, number, number];
   rot: [number, number, number];
@@ -63,10 +66,25 @@ type CachedGLB = {
 type M16RangeName = 'shoot' | 'reload' | 'hit';
 
 const M16_VIEWMODEL_TUNE = {
-  desiredMaxDimension: 0.8,
-  position: new THREE.Vector3(0.20, -0.18, -0.08),
+  desiredMaxDimension: 0.42,
+  position: new THREE.Vector3(0.02, -0.08, -0.18),
   rotation: new THREE.Euler(0, 0, 0),
   idleTime: 0.05,
+};
+
+const M16_DEBUG_TUNER = {
+  enabled: true, // set false when done tuning
+  position: new THREE.Vector3(
+    M16_VIEWMODEL_TUNE.position.x,
+    M16_VIEWMODEL_TUNE.position.y,
+    M16_VIEWMODEL_TUNE.position.z,
+  ),
+  rotation: new THREE.Euler(
+    M16_VIEWMODEL_TUNE.rotation.x,
+    M16_VIEWMODEL_TUNE.rotation.y,
+    M16_VIEWMODEL_TUNE.rotation.z,
+  ),
+  desiredMaxDimension: M16_VIEWMODEL_TUNE.desiredMaxDimension,
 };
 
 const M16_RANGES: Record<M16RangeName, [number, number]> = {
@@ -92,10 +110,10 @@ function prepRenderable(root: THREE.Object3D): void {
       const mat = mesh.material as THREE.Material | THREE.Material[] | undefined;
       if (Array.isArray(mat)) {
         for (const m of mat) {
-          if ('transparent' in m) m.transparent = true;
+          if ('transparent' in m) (m as THREE.Material & { transparent?: boolean }).transparent = true;
         }
       } else if (mat && 'transparent' in mat) {
-        mat.transparent = true;
+        (mat as THREE.Material & { transparent?: boolean }).transparent = true;
       }
     }
   });
@@ -409,6 +427,184 @@ function buildWeaponMesh(weaponId: WeaponId): THREE.Group {
   return g;
 }
 
+function ensureM16DebugOverlay(): void {
+  if (!M16_DEBUG_TUNER.enabled) return;
+  if (m16DebugOverlay) return;
+
+  const el = document.createElement('div');
+  el.style.position = 'fixed';
+  el.style.left = '12px';
+  el.style.bottom = '12px';
+  el.style.zIndex = '99999';
+  el.style.padding = '10px 12px';
+  el.style.background = 'rgba(0,0,0,0.75)';
+  el.style.color = '#9fe8ff';
+  el.style.fontFamily = 'monospace';
+  el.style.fontSize = '12px';
+  el.style.lineHeight = '1.45';
+  el.style.border = '1px solid rgba(100,200,255,0.45)';
+  el.style.borderRadius = '8px';
+  el.style.whiteSpace = 'pre';
+  el.style.pointerEvents = 'none';
+  document.body.appendChild(el);
+
+  m16DebugOverlay = el;
+  refreshM16DebugOverlay();
+}
+
+function refreshM16DebugOverlay(): void {
+  if (!m16DebugOverlay || !M16_DEBUG_TUNER.enabled) return;
+
+  const p = M16_DEBUG_TUNER.position;
+  const r = M16_DEBUG_TUNER.rotation;
+
+  m16DebugOverlay.textContent =
+`M16 VIEWMODEL TUNER
+
+Move:
+J/L = X- / X+
+I/K = Y+ / Y-
+U/O = Z- / Z+
+
+Scale:
+Q/E = size- / size+
+
+Rotate:
+1/2 = pitch- / pitch+
+3/4 = yaw- / yaw+
+5/6 = roll- / roll+
+
+P = print values
+
+desiredMaxDimension: ${M16_DEBUG_TUNER.desiredMaxDimension.toFixed(3)}
+
+position:
+x: ${p.x.toFixed(3)}
+y: ${p.y.toFixed(3)}
+z: ${p.z.toFixed(3)}
+
+rotation:
+x: ${r.x.toFixed(3)}
+y: ${r.y.toFixed(3)}
+z: ${r.z.toFixed(3)}
+`;
+}
+
+function logM16TuningValues(): void {
+  const p = M16_DEBUG_TUNER.position;
+  const r = M16_DEBUG_TUNER.rotation;
+
+  console.info(
+`const M16_VIEWMODEL_TUNE = {
+  desiredMaxDimension: ${M16_DEBUG_TUNER.desiredMaxDimension.toFixed(3)},
+  position: new THREE.Vector3(${p.x.toFixed(3)}, ${p.y.toFixed(3)}, ${p.z.toFixed(3)}),
+  rotation: new THREE.Euler(${r.x.toFixed(3)}, ${r.y.toFixed(3)}, ${r.z.toFixed(3)}),
+  idleTime: 0.05,
+};`
+  );
+}
+
+function applyM16DebugTransform(): void {
+  if (!currentM16Wrapper) return;
+  currentM16Wrapper.position.copy(M16_DEBUG_TUNER.position);
+  currentM16Wrapper.rotation.copy(M16_DEBUG_TUNER.rotation);
+}
+
+function onM16DebugKeyDown(ev: KeyboardEvent): void {
+  if (!M16_DEBUG_TUNER.enabled) return;
+  if (!currentM16Wrapper) return;
+  if (currentWeaponId !== 'assault_rifle') return;
+
+  const tag = (ev.target as HTMLElement | null)?.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+
+  const posStep = ev.shiftKey ? 0.02 : 0.005;
+  const rotStep = ev.shiftKey ? 0.08 : 0.02;
+  const scaleStep = ev.shiftKey ? 0.05 : 0.01;
+
+  let changed = true;
+  let sizeChanged = false;
+
+  switch (ev.key) {
+    case 'j':
+    case 'J':
+      M16_DEBUG_TUNER.position.x -= posStep;
+      break;
+    case 'l':
+    case 'L':
+      M16_DEBUG_TUNER.position.x += posStep;
+      break;
+    case 'i':
+    case 'I':
+      M16_DEBUG_TUNER.position.y += posStep;
+      break;
+    case 'k':
+    case 'K':
+      M16_DEBUG_TUNER.position.y -= posStep;
+      break;
+    case 'u':
+    case 'U':
+      M16_DEBUG_TUNER.position.z -= posStep;
+      break;
+    case 'o':
+    case 'O':
+      M16_DEBUG_TUNER.position.z += posStep;
+      break;
+
+    case 'q':
+    case 'Q':
+      M16_DEBUG_TUNER.desiredMaxDimension = Math.max(0.05, M16_DEBUG_TUNER.desiredMaxDimension - scaleStep);
+      sizeChanged = true;
+      break;
+    case 'e':
+    case 'E':
+      M16_DEBUG_TUNER.desiredMaxDimension += scaleStep;
+      sizeChanged = true;
+      break;
+
+    case '1':
+      M16_DEBUG_TUNER.rotation.x -= rotStep;
+      break;
+    case '2':
+      M16_DEBUG_TUNER.rotation.x += rotStep;
+      break;
+    case '3':
+      M16_DEBUG_TUNER.rotation.y -= rotStep;
+      break;
+    case '4':
+      M16_DEBUG_TUNER.rotation.y += rotStep;
+      break;
+    case '5':
+      M16_DEBUG_TUNER.rotation.z -= rotStep;
+      break;
+    case '6':
+      M16_DEBUG_TUNER.rotation.z += rotStep;
+      break;
+
+    case 'p':
+    case 'P':
+      logM16TuningValues();
+      changed = false;
+      break;
+
+    default:
+      changed = false;
+      break;
+  }
+
+  if (!changed) return;
+
+  ev.preventDefault();
+
+  if (sizeChanged) {
+    applyWeaponSwap('assault_rifle');
+  } else {
+    applyM16DebugTransform();
+  }
+
+  refreshM16DebugOverlay();
+}
+
 function holdM16IdlePose(): void {
   if (!currentViewmodelMixer || currentViewmodelActions.length === 0) return;
 
@@ -454,6 +650,7 @@ function clearCurrentWeaponMesh(): void {
     currentWeaponMesh = null;
   }
 
+  currentM16Wrapper = null;
   activeM16Range = null;
   currentM16Action = null;
   wasReloading = false;
@@ -496,13 +693,17 @@ function attachLoadedM16(): void {
   wrapper.add(cloneRoot);
 
   const maxDim = Math.max(rawSize.x, rawSize.y, rawSize.z);
-  const scale = M16_VIEWMODEL_TUNE.desiredMaxDimension / Math.max(maxDim, 0.0001);
+  const desiredDim = M16_DEBUG_TUNER.enabled
+    ? M16_DEBUG_TUNER.desiredMaxDimension
+    : M16_VIEWMODEL_TUNE.desiredMaxDimension;
+  const scale = desiredDim / Math.max(maxDim, 0.0001);
 
   wrapper.scale.setScalar(scale);
-  wrapper.position.copy(M16_VIEWMODEL_TUNE.position);
-  wrapper.rotation.copy(M16_VIEWMODEL_TUNE.rotation);
+  wrapper.position.copy(M16_DEBUG_TUNER.enabled ? M16_DEBUG_TUNER.position : M16_VIEWMODEL_TUNE.position);
+  wrapper.rotation.copy(M16_DEBUG_TUNER.enabled ? M16_DEBUG_TUNER.rotation : M16_VIEWMODEL_TUNE.rotation);
   wrapper.visible = true;
 
+  currentM16Wrapper = wrapper;
   currentWeaponMesh = wrapper;
   vmGroup.add(currentWeaponMesh);
 
@@ -527,6 +728,8 @@ function attachLoadedM16(): void {
 
   console.info('[WeaponViewmodel] M16 final bounds size:', finalSize.toArray());
   console.info('[WeaponViewmodel] M16 final bounds center:', finalCenter.toArray());
+
+  refreshM16DebugOverlay();
 }
 
 function applyProceduralWeapon(weaponId: WeaponId): void {
@@ -623,6 +826,11 @@ export function initViewmodel(): void {
 
   gameState.vmScene = vmScene;
   gameState.vmCamera = vmCamera;
+
+  if (M16_DEBUG_TUNER.enabled) {
+    ensureM16DebugOverlay();
+    window.addEventListener('keydown', onM16DebugKeyDown);
+  }
 
   setViewmodelWeapon(gameState.pWeaponId);
 }
