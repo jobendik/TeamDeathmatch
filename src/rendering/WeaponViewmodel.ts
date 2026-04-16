@@ -63,8 +63,8 @@ type CachedGLB = {
 type M16RangeName = 'shoot' | 'reload' | 'hit';
 
 const M16_VIEWMODEL_TUNE = {
-  scale: 0.045,
-  position: new THREE.Vector3(0.02, -0.02, 0.04),
+  desiredMaxDimension: 0.38,
+  position: new THREE.Vector3(0.02, -0.03, 0.02),
   rotation: new THREE.Euler(0, 0, 0),
   idleTime: 0.0,
 };
@@ -87,6 +87,8 @@ function prepRenderable(root: THREE.Object3D): void {
     if ((mesh as any).isMesh) {
       mesh.castShadow = true;
       mesh.receiveShadow = true;
+      mesh.frustumCulled = false;
+
       const mat = mesh.material as THREE.Material | THREE.Material[] | undefined;
       if (Array.isArray(mat)) {
         for (const m of mat) {
@@ -500,16 +502,6 @@ function attachLoadedM16(): void {
   }
 
   console.info('[WeaponViewmodel] M16 attached with simple transform.');
-}
-
-  const finalBox = new THREE.Box3().setFromObject(wrapper);
-  const finalSize = new THREE.Vector3();
-  const finalCenter = new THREE.Vector3();
-  finalBox.getSize(finalSize);
-  finalBox.getCenter(finalCenter);
-
-  console.info('[WeaponViewmodel] M16 final bounds size:', finalSize);
-  console.info('[WeaponViewmodel] M16 final bounds center:', finalCenter);
 }
 
 function applyProceduralWeapon(weaponId: WeaponId): void {
