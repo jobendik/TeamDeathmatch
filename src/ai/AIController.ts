@@ -12,16 +12,11 @@ import { findCoverFrom, pushOutOfWall } from './CoverSystem';
 import { hitscanShot, shotgunBlast, spawnRocket, spawnGrenade } from '@/combat/Hitscan';
 import { spawnMuzzleFlash } from '@/combat/Particles';
 import { keepInside } from '@/entities/Player';
-import { updateAim, getAimDirection, isAimOnTarget } from './HumanAim';
+import { updateAim, getAimDirection } from './HumanAim';
 import { deliverPendingCallouts, queueCallout } from './TeamIntel';
 
-// ── Cached temporaries ──
 const _muzzlePos = new THREE.Vector3();
 
-/**
- * Once per frame (not per agent) — deliver any queued callouts.
- * Called from updateAI via a module-level flag to avoid redundant calls.
- */
 let _lastCalloutFrame = -1;
 function deliverCalloutsOncePerFrame(): void {
   if (_lastCalloutFrame !== gameState.perceptionFrame) {
@@ -30,16 +25,12 @@ function deliverCalloutsOncePerFrame(): void {
   }
 }
 
-// ═══════════════════════════════════════════
-//  SHOOTING — now uses simulated crosshair
-// ═══════════════════════════════════════════
-
+/** Fire the agent's weapon using the simulated crosshair direction. */
 function aiShoot(ag: TDMAgent): void {
   if (ag.isDead || !ag.currentTarget || ag.currentTarget.isDead) return;
   if (ag.weaponId === 'unarmed') return;
 
   const { dir, origin } = getAimDirection(ag);
-
   const col = ag.team === TEAM_BLUE ? 0x60a5fa : 0xff6644;
 
   _muzzlePos.set(origin.x + dir.x * 0.6, 1.0, origin.z + dir.z * 0.6);
@@ -55,10 +46,6 @@ function aiShoot(ag: TDMAgent): void {
   ag.ammo--;
 }
 
-// ═══════════════════════════════════════════
-//  STRAFE — now personality-modulated
-// ═══════════════════════════════════════════
-
 function updateStrafing(ag: TDMAgent, dt: number): void {
   ag.strafeTimer -= dt;
   if (ag.strafeTimer > 0) return;
@@ -66,17 +53,12 @@ function updateStrafing(ag: TDMAgent, dt: number): void {
   const p = ag.personality;
   const repos = p ? p.repositionFrequency : 0.5;
 
-  // Higher reposition freq → shorter intervals, more direction flips
   const baseInterval = 0.3 + (1 - repos) * 0.7;
   const flipChance = 0.4 + repos * 0.4;
 
   if (Math.random() < flipChance) ag.strafeDir *= -1;
   ag.strafeTimer = baseInterval * (0.6 + Math.random() * 0.8);
 }
-
-// ═══════════════════════════════════════════
-//  DAMAGE PRESSURE
-// ═══════════════════════════════════════════
 
 function updateDamagePressure(ag: TDMAgent, dt: number): void {
   const timeSinceDamage = gameState.worldElapsed - ag.lastDamageTime;
@@ -90,14 +72,11 @@ function updateDamagePressure(ag: TDMAgent, dt: number): void {
   const recentDamageRatio = ag.recentDamage / ag.maxHP;
   const recency = Math.max(0, 1 - timeSinceDamage / 3);
   const baseP = recentDamageRatio * recency * 2;
-  // Flinchy personalities feel pressure harder
   const flinch = p ? p.flinchFactor : 0.3;
   ag.pressureLevel = Math.min(1, baseP * (0.8 + flinch * 0.6));
   ag.underPressure = ag.pressureLevel > 0.25;
 
-  // Under pressure: fire discipline lapses (panic pull-through) or pauses (freeze)
   if (ag.pressureLevel > 0.5 && ag.shootTimer < 0.1 && p) {
-    // Panicky personalities pull the trigger; disciplined ones hesitate
     if (p.panicSprayFactor < 0.5) {
       ag.shootTimer += ag.pressureLevel * 0.08;
     }
@@ -110,23 +89,14 @@ function updateDamagePressure(ag: TDMAgent, dt: number): void {
   ag.recentDamage = Math.max(0, ag.recentDamage - dt * 20);
 }
 
-// ═══════════════════════════════════════════
-//  TILT DECAY
-// ═══════════════════════════════════════════
-
 function updateTilt(ag: TDMAgent, dt: number): void {
   if (ag.tiltLevel > 0) {
-    ag.tiltLevel = Math.max(0, ag.tiltLevel - dt * 0.05); // tilt decays over ~20s
+    ag.tiltLevel = Math.max(0, ag.tiltLevel - dt * 0.05);
   }
-  // Grudge expires
   if (ag.grudge && gameState.worldElapsed > ag.grudgeExpiry) {
     ag.grudge = null;
   }
 }
-
-// ═══════════════════════════════════════════
-//  GRENADES
-// ═══════════════════════════════════════════
 
 function tryThrowGrenade(ag: TDMAgent, target: TDMAgent, dist: number): boolean {
   if (ag.grenades <= 0 || ag.grenadeCooldown > 0) return false;
@@ -145,7 +115,6 @@ function tryThrowGrenade(ag: TDMAgent, target: TDMAgent, dist: number): boolean 
   const o = new THREE.Vector3(ag.position.x, 1.2, ag.position.z);
   const tPos = new THREE.Vector3(target.position.x, 0, target.position.z);
   const d = tPos.clone().sub(o).normalize();
-  // Grenade accuracy scales with skill
   const throwNoise = 0.08 + (p ? (1 - p.skill) * 0.15 : 0.07);
   d.x += (Math.random() - 0.5) * throwNoise;
   d.z += (Math.random() - 0.5) * throwNoise;
@@ -157,14 +126,8 @@ function tryThrowGrenade(ag: TDMAgent, target: TDMAgent, dist: number): boolean 
   return true;
 }
 
-// ═══════════════════════════════════════════
-//  COMMITMENT — prevent decision flip-flop
-// ═══════════════════════════════════════════
-
 function shouldReplan(ag: TDMAgent): boolean {
-  // Always replan if committed time has passed
   if (gameState.worldElapsed >= ag.commitmentUntil) return true;
-  // ALSO replan on major events: took significant damage, target died, out of ammo
   if (ag.currentTarget?.isDead) return true;
   if (ag.recentDamage > ag.maxHP * 0.3) return true;
   return false;
@@ -173,10 +136,6 @@ function shouldReplan(ag: TDMAgent): boolean {
 function setCommitment(ag: TDMAgent, seconds: number): void {
   ag.commitmentUntil = gameState.worldElapsed + seconds;
 }
-
-// ═══════════════════════════════════════════
-//  MAIN AI UPDATE
-// ═══════════════════════════════════════════
 
 export function updateAI(ag: TDMAgent, dt: number): void {
   if (ag === gameState.player || ag.isDead) return;
@@ -188,7 +147,7 @@ export function updateAI(ag: TDMAgent, dt: number): void {
   updateDamagePressure(ag, dt);
   updateTilt(ag, dt);
   decayEnemyMemory(ag, dt);
-  updateAim(ag, dt); // simulated crosshair updates every frame
+  updateAim(ag, dt);
 
   if (gameState.pDead && ag.currentTarget === gameState.player) {
     ag.currentTarget = null;
@@ -197,7 +156,7 @@ export function updateAI(ag: TDMAgent, dt: number): void {
     ag.burstCount = 0;
   }
 
-  // ── Stuck detection ──
+  // Stuck detection
   const movedDist = ag.position.distanceTo(ag.lastStuckCheckPos);
   if (movedDist < 0.15) ag.stuckTime += dt;
   else ag.stuckTime = 0;
@@ -211,7 +170,11 @@ export function updateAI(ag: TDMAgent, dt: number): void {
     ag.seekPickupPos = null;
     const pushed = pushOutOfWall(ag.position.x, ag.position.z);
     if (ag.seekB) {
-      (ag.seekB as any).target.set(pushed.x + (Math.random() - 0.5) * 4, 0, pushed.z + (Math.random() - 0.5) * 4);
+      (ag.seekB as any).target.set(
+        pushed.x + (Math.random() - 0.5) * 4,
+        0,
+        pushed.z + (Math.random() - 0.5) * 4,
+      );
       ag.seekB.weight = 2;
     }
     ag.stateName = 'PATROL';
@@ -242,7 +205,6 @@ export function updateAI(ag: TDMAgent, dt: number): void {
 
     updateEnemyMemory(ag, target, 'visual');
 
-    // ── Delayed callout system ──
     if (!hadTarget || prevTarget !== target) {
       queueCallout(ag, target);
     }
@@ -251,7 +213,6 @@ export function updateAI(ag: TDMAgent, dt: number): void {
     else ag.trackingTime = 0;
 
     if (!hadTarget) {
-      // Reaction time now personality-modulated
       const p = ag.personality;
       const skillMod = p ? (1.3 - p.skill * 0.6) : 1.0;
       const tiltMod = 1 + ag.tiltLevel * 0.4;
@@ -270,11 +231,10 @@ export function updateAI(ag: TDMAgent, dt: number): void {
       ag.currentCover = ag.currentTarget ? findCoverFrom(ag, ag.currentTarget.position) : ag.currentCover;
     }
 
-    // ── Decision making with commitment ──
+    // Decision making with commitment
     ag.decisionTimer -= dt;
     if (ag.decisionTimer <= 0 && shouldReplan(ag)) {
       const baseInterval = ag.underPressure ? 0.1 + Math.random() * 0.1 : 0.2 + Math.random() * 0.25;
-      // Patient personalities commit longer
       const p = ag.personality;
       const commitScale = p ? (1 + p.patienceBias) : 1;
       ag.decisionTimer = baseInterval * commitScale;
@@ -286,14 +246,13 @@ export function updateAI(ag: TDMAgent, dt: number): void {
       if (scoreDiff > 5 && ag.hp / ag.maxHP < 0.5) ag.fuzzyAggr = Math.max(0, ag.fuzzyAggr - 10);
 
       ag.brain.arbitrate();
-      // Commit to this goal for a bit to prevent flip-flopping
       const baseCommit = 0.6 + (p?.patienceBias ?? 0) * 0.8;
       setCommitment(ag, Math.max(0.3, baseCommit));
     }
 
     // ── Shooting ──
     if (ag.weaponId === 'unarmed') {
-      // unarmed: don't shoot
+      // unarmed: cannot shoot
     } else if (canReact && canSee(ag, target)) {
       if (dist > 10 && ag.grenadeCooldown <= 0 && ag.grenades > 0) {
         tryThrowGrenade(ag, target, dist);
@@ -313,22 +272,14 @@ export function updateAI(ag: TDMAgent, dt: number): void {
           if (cover) ag.currentCover = cover;
         }
       } else {
-        // NEW: use simulated crosshair settled check + aim-on-target gate
-        const { settled } = getAimDirection(ag);
-        const onTarget = isAimOnTarget(ag, target, 0.22);
+        // Panic skip — only when heavily pressured AND personality is disciplined
         const p = ag.personality;
-        const trigHappy = p ? p.trigHappy : 0.5;
-        const triggerDisc = p ? p.triggerDiscipline : 0.5;
+        const pressureSkip =
+          ag.pressureLevel > 0.7 &&
+          p !== null &&
+          Math.random() < ag.pressureLevel * 0.3 * (1 - p.panicSprayFactor);
 
-        // Low-discipline bots fire before settled; high-discipline wait.
-        // Trig-happy bots fire even when off-target occasionally.
-        const mustBeSettled = triggerDisc > 0.6 && Math.random() > trigHappy;
-        const mustBeOnTarget = !(trigHappy > 0.7 && Math.random() < 0.25);
-        const pressureSkip = ag.pressureLevel > 0.6 && Math.random() < ag.pressureLevel * 0.3 * (p ? (1 - p.panicSprayFactor) : 0.5);
-
-        const gate = (!mustBeSettled || settled) && (!mustBeOnTarget || onTarget) && !pressureSkip;
-
-        if (gate) {
+        if (!pressureSkip) {
           ag.shootTimer -= dt;
           if (ag.shootTimer <= 0) {
             // Personality-modulated burst size
@@ -345,7 +296,7 @@ export function updateAI(ag: TDMAgent, dt: number): void {
               }
             } else {
               ag.burstCount = 0;
-              // Trigger discipline adds inter-burst pause
+              // Disciplined bots pause longer between bursts
               const discPause = p ? (p.triggerDiscipline * 0.15) : 0.05;
               ag.shootTimer = ag.fireRate + discPause + Math.random() * 0.12;
             }
@@ -353,7 +304,7 @@ export function updateAI(ag: TDMAgent, dt: number): void {
         }
       }
     } else if (canReact && ag.hasLastKnown && ag.alertLevel > 60 && !ag.isReloading && ag.ammo > 3) {
-      // Suppressive fire — reduced under pressure, personality-modulated
+      // Suppressive fire
       const p = ag.personality;
       const suppress = p ? (0.25 + p.trigHappy * 0.4) : 0.3;
       if (!ag.underPressure || Math.random() < 0.15) {
@@ -361,7 +312,6 @@ export function updateAI(ag: TDMAgent, dt: number): void {
         if (timeSinceTarget < 1.5 && Math.random() < suppress) {
           ag.shootTimer -= dt;
           if (ag.shootTimer <= 0) {
-            // Suppressive fire uses the simulated crosshair too
             const { dir, origin } = getAimDirection(ag);
             const col = ag.team === TEAM_BLUE ? 0x60a5fa : 0xff6644;
             const mz = new THREE.Vector3(origin.x + dir.x * 0.6, 1.0, origin.z + dir.z * 0.6);
@@ -374,7 +324,7 @@ export function updateAI(ag: TDMAgent, dt: number): void {
       }
     }
   } else {
-    // ── No target ──
+    // No target
     ag.hasTarget = false;
     ag.currentTarget = null;
     ag.trackingTime = 0;
