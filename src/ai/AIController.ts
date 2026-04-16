@@ -3,166 +3,152 @@ import * as YUKA from 'yuka';
 import { gameState } from '@/core/GameState';
 import { TEAM_BLUE } from '@/config/constants';
 import type { TDMAgent } from '@/entities/TDMAgent';
-import { findBestTarget, canSee, broadcastEnemyPosition, checkAudioAwareness, countNearbyAllies, updateEnemyMemory, decayEnemyMemory } from './Perception';
+import {
+  findBestTarget, canSee, checkAudioAwareness,
+  countNearbyAllies, updateEnemyMemory, decayEnemyMemory,
+} from './Perception';
 import { evalFuzzy } from './FuzzyLogic';
 import { findCoverFrom, pushOutOfWall } from './CoverSystem';
-import { hitscanShot, shotgunBlast, spawnRocket } from '@/combat/Hitscan';
+import { hitscanShot, shotgunBlast, spawnRocket, spawnGrenade } from '@/combat/Hitscan';
 import { spawnMuzzleFlash } from '@/combat/Particles';
-import { spawnGrenade } from '@/combat/Hitscan';
 import { keepInside } from '@/entities/Player';
-import { WEAPONS } from '@/config/weapons';
+import { updateAim, getAimDirection, isAimOnTarget } from './HumanAim';
+import { deliverPendingCallouts, queueCallout } from './TeamIntel';
 
-// ── Cached temporaries for hot-loop use ──
-const _shootOrigin = new THREE.Vector3();
-const _shootTarget = new THREE.Vector3();
-const _shootDir = new THREE.Vector3();
+// ── Cached temporaries ──
 const _muzzlePos = new THREE.Vector3();
-const _suppressDir = new THREE.Vector3();
-const _suppressOrigin = new THREE.Vector3();
-const _suppressMuzzle = new THREE.Vector3();
-
-// ═══════════════════════════════════════════
-//  AIM SYSTEM — human-like tracking & leading
-// ═══════════════════════════════════════════
-
-function getEffectiveAimError(ag: TDMAgent, target: TDMAgent, dist: number): number {
-  let error = ag.aimError;
-
-  // Tracking bonus: accuracy improves over time
-  const trackBonus = Math.min(ag.trackingTime * 0.6, 0.7);
-  error *= (1 - trackBonus);
-
-  // Distance penalty
-  if (dist > 25) error *= 1 + (dist - 25) * 0.015;
-
-  // Confidence bonus
-  if (ag.confidence > 70) error *= 0.8;
-  else if (ag.confidence < 30) error *= 1.2;
-
-  // Under-fire penalty — scales with pressure intensity
-  if (ag.pressureLevel > 0.3) {
-    error *= 1.0 + ag.pressureLevel * 0.6; // up to 1.6x at max pressure
-  }
-
-  // Moving penalty
-  if (ag.stateName === 'ENGAGE' || ag.stateName === 'TEAM_PUSH') error *= 1.1;
-
-  return error;
-}
 
 /**
- * AI shooting — uses hitscan like the player for instant-hit combat.
- * Unarmed bots cannot fire.
+ * Once per frame (not per agent) — deliver any queued callouts.
+ * Called from updateAI via a module-level flag to avoid redundant calls.
  */
-function aiShoot(ag: TDMAgent, target: TDMAgent): void {
-  if (ag.isDead || !target || target.isDead) return;
-  if (ag.weaponId === 'unarmed') return; // cannot shoot without a weapon
+let _lastCalloutFrame = -1;
+function deliverCalloutsOncePerFrame(): void {
+  if (_lastCalloutFrame !== gameState.perceptionFrame) {
+    _lastCalloutFrame = gameState.perceptionFrame;
+    deliverPendingCallouts();
+  }
+}
 
-  _shootOrigin.set(ag.position.x, 0.9, ag.position.z);
-  _shootTarget.set(target.position.x, 1.0, target.position.z);
+// ═══════════════════════════════════════════
+//  SHOOTING — now uses simulated crosshair
+// ═══════════════════════════════════════════
 
-  _shootDir.subVectors(_shootTarget, _shootOrigin).normalize();
-  const dist = _shootOrigin.distanceTo(_shootTarget);
+function aiShoot(ag: TDMAgent): void {
+  if (ag.isDead || !ag.currentTarget || ag.currentTarget.isDead) return;
+  if (ag.weaponId === 'unarmed') return;
 
-  // Apply effective aim error
-  const err = getEffectiveAimError(ag, target, dist);
-  _shootDir.x += (Math.random() - 0.5) * err;
-  _shootDir.y += (Math.random() - 0.5) * err * 0.4;
-  _shootDir.z += (Math.random() - 0.5) * err;
-  _shootDir.normalize();
+  const { dir, origin } = getAimDirection(ag);
 
   const col = ag.team === TEAM_BLUE ? 0x60a5fa : 0xff6644;
 
-  _muzzlePos.set(ag.position.x + _shootDir.x * 0.6, 1.0, ag.position.z + _shootDir.z * 0.6);
+  _muzzlePos.set(origin.x + dir.x * 0.6, 1.0, origin.z + dir.z * 0.6);
   spawnMuzzleFlash(_muzzlePos.clone(), col);
 
   if (ag.weaponId === 'shotgun') {
-    shotgunBlast(_shootOrigin.clone(), _shootDir.clone(), 'ai', ag.team, col, ag);
+    shotgunBlast(origin.clone(), dir.clone(), 'ai', ag.team, col, ag);
   } else if (ag.weaponId === 'rocket_launcher') {
-    spawnRocket(_shootOrigin.clone(), _shootDir.clone(), 'ai', ag.team, col, ag);
+    spawnRocket(origin.clone(), dir.clone(), 'ai', ag.team, col, ag);
   } else {
-    hitscanShot(_shootOrigin.clone(), _shootDir.clone(), 'ai', ag.team, ag.weaponId, col, ag);
+    hitscanShot(origin.clone(), dir.clone(), 'ai', ag.team, ag.weaponId, col, ag);
   }
   ag.ammo--;
 }
 
 // ═══════════════════════════════════════════
-//  COMBAT STRAFING
+//  STRAFE — now personality-modulated
 // ═══════════════════════════════════════════
 
 function updateStrafing(ag: TDMAgent, dt: number): void {
   ag.strafeTimer -= dt;
-  if (ag.strafeTimer <= 0) {
-    if (ag.botClass === 'flanker') {
-      ag.strafeDir *= -1;
-      ag.strafeTimer = 0.15 + Math.random() * 0.3;
-    } else if (ag.botClass === 'assault') {
-      if (Math.random() < 0.7) ag.strafeDir *= -1;
-      ag.strafeTimer = 0.2 + Math.random() * 0.4;
-    } else if (ag.botClass === 'sniper') {
-      if (Math.random() < 0.5) ag.strafeDir *= -1;
-      ag.strafeTimer = 0.6 + Math.random() * 1.0;
-    } else {
-      if (Math.random() < 0.6) ag.strafeDir *= -1;
-      ag.strafeTimer = 0.25 + Math.random() * 0.6;
-    }
-  }
+  if (ag.strafeTimer > 0) return;
+
+  const p = ag.personality;
+  const repos = p ? p.repositionFrequency : 0.5;
+
+  // Higher reposition freq → shorter intervals, more direction flips
+  const baseInterval = 0.3 + (1 - repos) * 0.7;
+  const flipChance = 0.4 + repos * 0.4;
+
+  if (Math.random() < flipChance) ag.strafeDir *= -1;
+  ag.strafeTimer = baseInterval * (0.6 + Math.random() * 0.8);
 }
 
 // ═══════════════════════════════════════════
-//  DAMAGE PRESSURE — now materially affects behavior
+//  DAMAGE PRESSURE
 // ═══════════════════════════════════════════
 
 function updateDamagePressure(ag: TDMAgent, dt: number): void {
   const timeSinceDamage = gameState.worldElapsed - ag.lastDamageTime;
+  const p = ag.personality;
 
-  // Immediate dodge: if just hit, impulse strafe
   if (timeSinceDamage < 0.3) {
     ag.strafeDir *= -1;
     ag.strafeTimer = 0.4;
   }
 
-  // Calculate pressure level (0-1)
   const recentDamageRatio = ag.recentDamage / ag.maxHP;
   const recency = Math.max(0, 1 - timeSinceDamage / 3);
-  ag.pressureLevel = Math.min(1, recentDamageRatio * recency * 2);
+  const baseP = recentDamageRatio * recency * 2;
+  // Flinchy personalities feel pressure harder
+  const flinch = p ? p.flinchFactor : 0.3;
+  ag.pressureLevel = Math.min(1, baseP * (0.8 + flinch * 0.6));
   ag.underPressure = ag.pressureLevel > 0.25;
 
-  // Pressure materially affects behavior:
-  // 1. Fire discipline: under pressure, bots pause shooting more
-  if (ag.pressureLevel > 0.5 && ag.shootTimer < 0.1) {
-    ag.shootTimer += ag.pressureLevel * 0.08; // slight delay under fire
+  // Under pressure: fire discipline lapses (panic pull-through) or pauses (freeze)
+  if (ag.pressureLevel > 0.5 && ag.shootTimer < 0.1 && p) {
+    // Panicky personalities pull the trigger; disciplined ones hesitate
+    if (p.panicSprayFactor < 0.5) {
+      ag.shootTimer += ag.pressureLevel * 0.08;
+    }
   }
 
-  // 2. Aggression suppression: reduce fuzzy aggression under pressure
   if (ag.underPressure) {
     ag.fuzzyAggr = Math.max(0, ag.fuzzyAggr - ag.pressureLevel * 25);
   }
 
-  // Decay recent damage over time
   ag.recentDamage = Math.max(0, ag.recentDamage - dt * 20);
 }
 
 // ═══════════════════════════════════════════
-//  AI GRENADE THROWING
+//  TILT DECAY
+// ═══════════════════════════════════════════
+
+function updateTilt(ag: TDMAgent, dt: number): void {
+  if (ag.tiltLevel > 0) {
+    ag.tiltLevel = Math.max(0, ag.tiltLevel - dt * 0.05); // tilt decays over ~20s
+  }
+  // Grudge expires
+  if (ag.grudge && gameState.worldElapsed > ag.grudgeExpiry) {
+    ag.grudge = null;
+  }
+}
+
+// ═══════════════════════════════════════════
+//  GRENADES
 // ═══════════════════════════════════════════
 
 function tryThrowGrenade(ag: TDMAgent, target: TDMAgent, dist: number): boolean {
   if (ag.grenades <= 0 || ag.grenadeCooldown > 0) return false;
   if (dist < 5 || dist > 30) return false;
 
+  const p = ag.personality;
+  const aggroMul = p ? (1 + p.aggressionBias * 0.5) : 1;
+
   const shouldThrow =
     (dist > 10 && dist < 25 && ag.stateName === 'COVER') ||
-    (ag.nearbyAllies >= 2 && ag.confidence > 50) ||
-    (ag.stateName === 'ENGAGE' && dist > 12 && Math.random() < 0.02);
+    (ag.nearbyAllies >= 2 && ag.confidence > 50 && Math.random() < 0.04 * aggroMul) ||
+    (ag.stateName === 'ENGAGE' && dist > 12 && Math.random() < 0.02 * aggroMul);
 
   if (!shouldThrow) return false;
 
   const o = new THREE.Vector3(ag.position.x, 1.2, ag.position.z);
   const tPos = new THREE.Vector3(target.position.x, 0, target.position.z);
   const d = tPos.clone().sub(o).normalize();
-  d.x += (Math.random() - 0.5) * 0.15;
-  d.z += (Math.random() - 0.5) * 0.15;
+  // Grenade accuracy scales with skill
+  const throwNoise = 0.08 + (p ? (1 - p.skill) * 0.15 : 0.07);
+  d.x += (Math.random() - 0.5) * throwNoise;
+  d.z += (Math.random() - 0.5) * throwNoise;
   d.normalize();
 
   spawnGrenade(o, d, 'ai', ag.team, ag);
@@ -172,17 +158,37 @@ function tryThrowGrenade(ag: TDMAgent, target: TDMAgent, dist: number): boolean 
 }
 
 // ═══════════════════════════════════════════
+//  COMMITMENT — prevent decision flip-flop
+// ═══════════════════════════════════════════
+
+function shouldReplan(ag: TDMAgent): boolean {
+  // Always replan if committed time has passed
+  if (gameState.worldElapsed >= ag.commitmentUntil) return true;
+  // ALSO replan on major events: took significant damage, target died, out of ammo
+  if (ag.currentTarget?.isDead) return true;
+  if (ag.recentDamage > ag.maxHP * 0.3) return true;
+  return false;
+}
+
+function setCommitment(ag: TDMAgent, seconds: number): void {
+  ag.commitmentUntil = gameState.worldElapsed + seconds;
+}
+
+// ═══════════════════════════════════════════
 //  MAIN AI UPDATE
 // ═══════════════════════════════════════════
 
 export function updateAI(ag: TDMAgent, dt: number): void {
   if (ag === gameState.player || ag.isDead) return;
 
-  // ── Update timers ──
+  deliverCalloutsOncePerFrame();
+
   ag.stateTime += dt;
   updateStrafing(ag, dt);
   updateDamagePressure(ag, dt);
+  updateTilt(ag, dt);
   decayEnemyMemory(ag, dt);
+  updateAim(ag, dt); // simulated crosshair updates every frame
 
   if (gameState.pDead && ag.currentTarget === gameState.player) {
     ag.currentTarget = null;
@@ -193,14 +199,10 @@ export function updateAI(ag: TDMAgent, dt: number): void {
 
   // ── Stuck detection ──
   const movedDist = ag.position.distanceTo(ag.lastStuckCheckPos);
-  if (movedDist < 0.15) {
-    ag.stuckTime += dt;
-  } else {
-    ag.stuckTime = 0;
-  }
-  if (Math.random() < 0.1) {
-    ag.lastStuckCheckPos.copy(ag.position);
-  }
+  if (movedDist < 0.15) ag.stuckTime += dt;
+  else ag.stuckTime = 0;
+
+  if (Math.random() < 0.1) ag.lastStuckCheckPos.copy(ag.position);
   if (ag.stuckTime > 0.8) {
     ag.stuckTime = 0;
     ag.hasLastKnown = false;
@@ -215,22 +217,19 @@ export function updateAI(ag: TDMAgent, dt: number): void {
     ag.stateName = 'PATROL';
     ag.brain.clearSubgoals();
     ag.brain.arbitrate();
+    setCommitment(ag, 1.5);
   }
 
-  // ── Grenade cooldown ──
   if (ag.grenadeCooldown > 0) ag.grenadeCooldown -= dt;
 
-  // ── Audio awareness ──
   checkAudioAwareness(ag);
 
-  // ── Periodically count nearby allies ──
   ag.allyCheckTimer -= dt;
   if (ag.allyCheckTimer <= 0) {
     ag.allyCheckTimer = 0.8 + Math.random() * 0.4;
     ag.nearbyAllies = countNearbyAllies(ag, 20);
   }
 
-  // ── Find target ──
   const { target, dist } = findBestTarget(ag);
   const hadTarget = ag.hasTarget;
 
@@ -241,48 +240,45 @@ export function updateAI(ag: TDMAgent, dt: number): void {
     ag.hasLastKnown = true;
     ag.alertLevel = Math.min(100, ag.alertLevel + dt * 30);
 
-    // Update tactical memory
     updateEnemyMemory(ag, target, 'visual');
 
-    // Broadcast to teammates
-    broadcastEnemyPosition(ag, target);
+    // ── Delayed callout system ──
+    if (!hadTarget || prevTarget !== target) {
+      queueCallout(ag, target);
+    }
 
-    // Track target
     if (hadTarget && prevTarget === target) ag.trackingTime += dt;
     else ag.trackingTime = 0;
 
-    // Reaction delay on first sight
     if (!hadTarget) {
-      ag.reactionTimer = ag.reactionTime * (0.7 + Math.random() * 0.6);
+      // Reaction time now personality-modulated
+      const p = ag.personality;
+      const skillMod = p ? (1.3 - p.skill * 0.6) : 1.0;
+      const tiltMod = 1 + ag.tiltLevel * 0.4;
+      ag.reactionTimer = ag.reactionTime * skillMod * tiltMod * (0.7 + Math.random() * 0.6);
       ag.hasTarget = true;
     }
     ag.reactionTimer = Math.max(0, ag.reactionTimer - dt);
 
-    // Set pursuit target
-    if (ag.pursuitB && target) {
-      (ag.pursuitB as any).evader = target;
-    }
+    if (ag.pursuitB && target) (ag.pursuitB as any).evader = target;
 
-    // Evaluate fuzzy aggression
     evalFuzzy(ag, dist);
 
     const canReact = ag.reactionTimer <= 0;
 
-    // Under heavy pressure: seek cover more aggressively
     if (ag.underPressure && ag.hp < ag.maxHP * 0.55) {
       ag.currentCover = ag.currentTarget ? findCoverFrom(ag, ag.currentTarget.position) : ag.currentCover;
     }
 
-    // ══════════════════════════════════
-    //  DECISION MAKING (the brain)
-    // ══════════════════════════════════
+    // ── Decision making with commitment ──
     ag.decisionTimer -= dt;
-    if (ag.decisionTimer <= 0) {
-      // Under pressure: re-evaluate faster
-      const decisionInterval = ag.underPressure ? 0.1 + Math.random() * 0.1 : 0.15 + Math.random() * 0.2;
-      ag.decisionTimer = decisionInterval;
+    if (ag.decisionTimer <= 0 && shouldReplan(ag)) {
+      const baseInterval = ag.underPressure ? 0.1 + Math.random() * 0.1 : 0.2 + Math.random() * 0.25;
+      // Patient personalities commit longer
+      const p = ag.personality;
+      const commitScale = p ? (1 + p.patienceBias) : 1;
+      ag.decisionTimer = baseInterval * commitScale;
 
-      // Score pressure: more aggressive when losing, more cautious when ahead
       const myTeamScore = gameState.teamScores[ag.team];
       const enemyTeamScore = gameState.teamScores[ag.team === TEAM_BLUE ? 1 : 0];
       const scoreDiff = myTeamScore - enemyTeamScore;
@@ -290,15 +286,15 @@ export function updateAI(ag: TDMAgent, dt: number): void {
       if (scoreDiff > 5 && ag.hp / ag.maxHP < 0.5) ag.fuzzyAggr = Math.max(0, ag.fuzzyAggr - 10);
 
       ag.brain.arbitrate();
+      // Commit to this goal for a bit to prevent flip-flopping
+      const baseCommit = 0.6 + (p?.patienceBias ?? 0) * 0.8;
+      setCommitment(ag, Math.max(0.3, baseCommit));
     }
 
-    // ══════════════════════════════════
-    //  SHOOTING (only if armed)
-    // ══════════════════════════════════
+    // ── Shooting ──
     if (ag.weaponId === 'unarmed') {
-      // Unarmed: don't try to shoot, just seek weapons
+      // unarmed: don't shoot
     } else if (canReact && canSee(ag, target)) {
-      // Try grenades
       if (dist > 10 && ag.grenadeCooldown <= 0 && ag.grenades > 0) {
         tryThrowGrenade(ag, target, dist);
       }
@@ -317,46 +313,60 @@ export function updateAI(ag: TDMAgent, dt: number): void {
           if (cover) ag.currentCover = cover;
         }
       } else {
-        // Fire discipline under pressure: occasionally skip shots
-        const pressureSkip = ag.pressureLevel > 0.6 && Math.random() < ag.pressureLevel * 0.3;
-        if (!pressureSkip) {
+        // NEW: use simulated crosshair settled check + aim-on-target gate
+        const { settled } = getAimDirection(ag);
+        const onTarget = isAimOnTarget(ag, target, 0.22);
+        const p = ag.personality;
+        const trigHappy = p ? p.trigHappy : 0.5;
+        const triggerDisc = p ? p.triggerDiscipline : 0.5;
+
+        // Low-discipline bots fire before settled; high-discipline wait.
+        // Trig-happy bots fire even when off-target occasionally.
+        const mustBeSettled = triggerDisc > 0.6 && Math.random() > trigHappy;
+        const mustBeOnTarget = !(trigHappy > 0.7 && Math.random() < 0.25);
+        const pressureSkip = ag.pressureLevel > 0.6 && Math.random() < ag.pressureLevel * 0.3 * (p ? (1 - p.panicSprayFactor) : 0.5);
+
+        const gate = (!mustBeSettled || settled) && (!mustBeOnTarget || onTarget) && !pressureSkip;
+
+        if (gate) {
           ag.shootTimer -= dt;
           if (ag.shootTimer <= 0) {
-            if (ag.burstCount < ag.burstSize) {
+            // Personality-modulated burst size
+            const effectiveBurst = p
+              ? Math.max(1, Math.round(ag.burstSize * (1 + (Math.random() - 0.5) * p.burstLengthVariance * 0.8)))
+              : ag.burstSize;
+
+            if (ag.burstCount < effectiveBurst) {
               ag.burstTimer -= dt;
               if (ag.burstTimer <= 0) {
-                aiShoot(ag, target);
+                aiShoot(ag);
                 ag.burstCount++;
                 ag.burstTimer = ag.burstDelay;
               }
             } else {
               ag.burstCount = 0;
-              ag.shootTimer = ag.fireRate + Math.random() * 0.12;
+              // Trigger discipline adds inter-burst pause
+              const discPause = p ? (p.triggerDiscipline * 0.15) : 0.05;
+              ag.shootTimer = ag.fireRate + discPause + Math.random() * 0.12;
             }
           }
         }
       }
     } else if (canReact && ag.hasLastKnown && ag.alertLevel > 60 && !ag.isReloading && ag.ammo > 3) {
-      // ── Suppressive fire (reduced under pressure) ──
+      // Suppressive fire — reduced under pressure, personality-modulated
+      const p = ag.personality;
+      const suppress = p ? (0.25 + p.trigHappy * 0.4) : 0.3;
       if (!ag.underPressure || Math.random() < 0.15) {
         const timeSinceTarget = ag.stateTime;
-        if (timeSinceTarget < 1.5 && Math.random() < 0.3) {
+        if (timeSinceTarget < 1.5 && Math.random() < suppress) {
           ag.shootTimer -= dt;
           if (ag.shootTimer <= 0) {
-            _suppressDir.set(
-              ag.lastKnownPos.x - ag.position.x,
-              0,
-              ag.lastKnownPos.z - ag.position.z,
-            ).normalize();
-            _suppressDir.x += (Math.random() - 0.5) * 0.15;
-            _suppressDir.z += (Math.random() - 0.5) * 0.15;
-            _suppressDir.normalize();
-
-            _suppressOrigin.set(ag.position.x, 0.9, ag.position.z);
+            // Suppressive fire uses the simulated crosshair too
+            const { dir, origin } = getAimDirection(ag);
             const col = ag.team === TEAM_BLUE ? 0x60a5fa : 0xff6644;
-            _suppressMuzzle.set(ag.position.x + _suppressDir.x * 0.6, 1.0, ag.position.z + _suppressDir.z * 0.6);
-            spawnMuzzleFlash(_suppressMuzzle.clone(), col);
-            hitscanShot(_suppressOrigin.clone(), _suppressDir.clone(), 'ai', ag.team, ag.weaponId, col, ag);
+            const mz = new THREE.Vector3(origin.x + dir.x * 0.6, 1.0, origin.z + dir.z * 0.6);
+            spawnMuzzleFlash(mz, col);
+            hitscanShot(origin.clone(), dir.clone(), 'ai', ag.team, ag.weaponId, col, ag);
             ag.ammo--;
             ag.shootTimer = ag.fireRate * 1.5;
           }
@@ -364,9 +374,7 @@ export function updateAI(ag: TDMAgent, dt: number): void {
       }
     }
   } else {
-    // ══════════════════════════════════
-    //  NO TARGET VISIBLE
-    // ══════════════════════════════════
+    // ── No target ──
     ag.hasTarget = false;
     ag.currentTarget = null;
     ag.trackingTime = 0;
@@ -379,7 +387,6 @@ export function updateAI(ag: TDMAgent, dt: number): void {
       ag.alertLevel = 80;
     }
 
-    // Use tactical memory: investigate highest-confidence remembered enemy
     if (!ag.hasLastKnown) {
       let bestMemConf = 0;
       let bestMemPos: YUKA.Vector3 | null = null;
@@ -397,20 +404,18 @@ export function updateAI(ag: TDMAgent, dt: number): void {
     }
 
     ag.decisionTimer -= dt;
-    if (ag.decisionTimer <= 0) {
+    if (ag.decisionTimer <= 0 && shouldReplan(ag)) {
       ag.decisionTimer = 0.3 + Math.random() * 0.3;
       ag.brain.arbitrate();
+      setCommitment(ag, 0.8);
     }
   }
 
-  // ── Execute the goal-driven brain ──
   ag.brain.execute();
 
-  // ── Regen when near spawn ──
   if (ag.position.distanceTo(ag.spawnPos) < 8) {
     ag.hp = Math.min(ag.maxHP, ag.hp + dt * 15);
   }
 
-  // ── Keep inside arena ──
   keepInside(ag);
 }
