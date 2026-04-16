@@ -16,17 +16,11 @@ import {
 } from './Goals';
 
 // ═══════════════════════════════════════════
-//  GOAL EVALUATORS — each scores a desire 0–1
+//  ATTACK — engage the current target
 // ═══════════════════════════════════════════
-
-/**
- * Attack: desire to engage the current target.
- * Reduced by damage pressure, increased by aggression/confidence.
- */
 export class AttackEvaluator extends YUKA.GoalEvaluator<TDMAgent> {
   calculateDesirability(ag: TDMAgent): number {
     if (!ag.currentTarget || ag.currentTarget.isDead) return 0;
-    // Cannot attack if unarmed
     if (ag.weaponId === 'unarmed') return 0;
 
     const hpRatio = ag.hp / ag.maxHP;
@@ -38,23 +32,24 @@ export class AttackEvaluator extends YUKA.GoalEvaluator<TDMAgent> {
     desire += ammoRatio * 0.15;
     desire += (ag.confidence / 100) * 0.1;
 
-    // Class personality
     if (ag.botClass === 'assault') desire += 0.08;
     if (ag.botClass === 'flanker') desire += 0.05;
     if (ag.botClass === 'sniper') desire -= 0.05;
 
-    // Score pressure
     const myScore = gameState.teamScores[ag.team];
     const enemyScore = gameState.teamScores[ag.team === TEAM_BLUE ? 1 : 0];
     if (myScore - enemyScore < -3) desire += 0.1;
     if (myScore - enemyScore > 5) desire -= 0.05;
 
-    // Nearby allies boost
     if (ag.nearbyAllies >= 2) desire += 0.08;
+    if (ag.underPressure) desire -= ag.pressureLevel * 0.3;
 
-    // ── Damage pressure suppresses attack desire ──
-    if (ag.underPressure) {
-      desire -= ag.pressureLevel * 0.3;
+    // Personality
+    const p = ag.personality;
+    if (p) {
+      desire += p.aggressionBias * 0.25;
+      desire += p.egoismBias * 0.08;
+      if (ag.grudge === ag.currentTarget) desire += p.revengeBias * 0.2;
     }
 
     return Math.max(0, Math.min(1, desire)) * this.characterBias;
@@ -69,10 +64,9 @@ export class AttackEvaluator extends YUKA.GoalEvaluator<TDMAgent> {
   }
 }
 
-/**
- * Survive: desire to retreat/heal when hurt and under pressure.
- * Dramatically increased by damage pressure.
- */
+// ═══════════════════════════════════════════
+//  SURVIVE — retreat/heal
+// ═══════════════════════════════════════════
 export class SurviveEvaluator extends YUKA.GoalEvaluator<TDMAgent> {
   calculateDesirability(ag: TDMAgent): number {
     const hpRatio = ag.hp / ag.maxHP;
@@ -83,18 +77,17 @@ export class SurviveEvaluator extends YUKA.GoalEvaluator<TDMAgent> {
 
     if (!criticalHP && !lowHP && !ag.underPressure) return 0;
 
-    let desire = 1 - hpRatio;
-
+    let desire = (1 - hpRatio);
     if (criticalHP && underFire) desire += 0.3;
     if (ag.recentDamage > ag.maxHP * 0.4) desire += 0.2;
-
     desire += (1 - ag.fuzzyAggr / 100) * 0.15;
-
     if (ag.botClass === 'sniper') desire += 0.1;
+    if (ag.underPressure) desire += ag.pressureLevel * 0.35;
 
-    // ── Damage pressure strongly drives retreat ──
-    if (ag.underPressure) {
-      desire += ag.pressureLevel * 0.35;
+    const p = ag.personality;
+    if (p) {
+      desire += p.cautionBias * 0.3;
+      desire -= p.aggressionBias * 0.15;
     }
 
     return Math.max(0, Math.min(1, desire)) * this.characterBias;
@@ -109,9 +102,9 @@ export class SurviveEvaluator extends YUKA.GoalEvaluator<TDMAgent> {
   }
 }
 
-/**
- * Reload: desire to find safety while reloading.
- */
+// ═══════════════════════════════════════════
+//  RELOAD — get to safety, reload
+// ═══════════════════════════════════════════
 export class ReloadEvaluator extends YUKA.GoalEvaluator<TDMAgent> {
   calculateDesirability(ag: TDMAgent): number {
     if (ag.weaponId === 'unarmed') return 0;
@@ -137,9 +130,9 @@ export class ReloadEvaluator extends YUKA.GoalEvaluator<TDMAgent> {
   }
 }
 
-/**
- * Seek health: desire to find health pickups when wounded.
- */
+// ═══════════════════════════════════════════
+//  SEEK HEALTH — pickup when wounded
+// ═══════════════════════════════════════════
 export class SeekHealthEvaluator extends YUKA.GoalEvaluator<TDMAgent> {
   calculateDesirability(ag: TDMAgent): number {
     const hpRatio = ag.hp / ag.maxHP;
@@ -153,8 +146,11 @@ export class SeekHealthEvaluator extends YUKA.GoalEvaluator<TDMAgent> {
     if (pickupDist > 40) return 0;
 
     let desire = (1 - hpRatio) * 0.6;
-    desire += Math.max(0, 1 - pickupDist / 40) * 0.3;
+    desire += Math.max(0, (1 - pickupDist / 40)) * 0.3;
     if (!ag.currentTarget) desire += 0.15;
+
+    const p = ag.personality;
+    if (p) desire += p.cautionBias * 0.2;
 
     return Math.max(0, Math.min(1, desire)) * this.characterBias;
   }
@@ -168,10 +164,9 @@ export class SeekHealthEvaluator extends YUKA.GoalEvaluator<TDMAgent> {
   }
 }
 
-/**
- * Get weapon: desire to upgrade weapon when safe.
- * CRITICAL: extremely high desire when unarmed (FFA start).
- */
+// ═══════════════════════════════════════════
+//  GET WEAPON — unarmed or want upgrade
+// ═══════════════════════════════════════════
 export class GetWeaponEvaluator extends YUKA.GoalEvaluator<TDMAgent> {
   calculateDesirability(ag: TDMAgent): number {
     const isUnarmed = ag.weaponId === 'unarmed';
@@ -189,7 +184,6 @@ export class GetWeaponEvaluator extends YUKA.GoalEvaluator<TDMAgent> {
     if (pickupDist > 50) return 0;
 
     if (isUnarmed) {
-      // Unarmed: weapon is top priority
       let desire = 0.95;
       desire -= pickupDist * 0.005;
       return Math.max(0.5, Math.min(1, desire)) * this.characterBias;
@@ -197,7 +191,7 @@ export class GetWeaponEvaluator extends YUKA.GoalEvaluator<TDMAgent> {
 
     const curDesirability = WEAPONS[ag.weaponId].desirability;
     let desire = (1 - curDesirability / 100) * (gameState.mode === 'ffa' ? 0.65 : 0.4);
-    desire += Math.max(0, 1 - pickupDist / 40) * 0.2;
+    desire += Math.max(0, (1 - pickupDist / 40)) * 0.2;
     if (!ag.currentTarget) desire += 0.15;
 
     return Math.max(0, Math.min(1, desire)) * this.characterBias;
@@ -212,13 +206,12 @@ export class GetWeaponEvaluator extends YUKA.GoalEvaluator<TDMAgent> {
   }
 }
 
-/**
- * Hunt: desire to proactively seek enemies when idle.
- */
+// ═══════════════════════════════════════════
+//  HUNT — proactive search when idle
+// ═══════════════════════════════════════════
 export class HuntEvaluator extends YUKA.GoalEvaluator<TDMAgent> {
   calculateDesirability(ag: TDMAgent): number {
     if (ag.currentTarget) return 0;
-    // Don't hunt when unarmed
     if (ag.weaponId === 'unarmed') return 0.05;
 
     const hpRatio = ag.hp / ag.maxHP;
@@ -230,17 +223,19 @@ export class HuntEvaluator extends YUKA.GoalEvaluator<TDMAgent> {
     desire += (ag.confidence / 100) * 0.1;
 
     if (ag.botClass === 'assault' || ag.botClass === 'flanker') desire += 0.05;
-
     if (ag.teamCallout && gameState.worldElapsed - ag.teamCalloutTime < 5) desire += 0.2;
     if (gameState.mode === 'ctf') desire += 0.15;
     if (ag.hasLastKnown && ag.alertLevel > 20) desire += 0.15;
 
-    // Check tactical memory for known enemies
     for (const [, entry] of ag.enemyMemory) {
-      if (entry.confidence > 0.3) {
-        desire += 0.1;
-        break;
-      }
+      if (entry.confidence > 0.3) { desire += 0.1; break; }
+    }
+
+    const p = ag.personality;
+    if (p) {
+      desire += p.egoismBias * 0.15;
+      desire -= p.patienceBias * 0.1;
+      if (ag.grudge) desire += p.revengeBias * 0.25;
     }
 
     return Math.max(0, Math.min(1, desire)) * this.characterBias;
@@ -248,6 +243,15 @@ export class HuntEvaluator extends YUKA.GoalEvaluator<TDMAgent> {
 
   setGoal(ag: TDMAgent): void {
     const brain = ag.brain;
+
+    // Grudge: hunt killer directly
+    if (ag.grudge && !ag.grudge.isDead) {
+      brain.clearSubgoals();
+      ag.lastKnownPos.copy(ag.grudge.position);
+      ag.hasLastKnown = true;
+      brain.addSubgoal(new MoveToPositionGoal(ag, ag.lastKnownPos));
+      return;
+    }
 
     if (ag.teamCallout && gameState.worldElapsed - ag.teamCalloutTime < 5) {
       brain.clearSubgoals();
@@ -271,9 +275,9 @@ export class HuntEvaluator extends YUKA.GoalEvaluator<TDMAgent> {
   }
 }
 
-/**
- * Patrol: lowest-priority fallback.
- */
+// ═══════════════════════════════════════════
+//  PATROL — fallback
+// ═══════════════════════════════════════════
 export class PatrolEvaluator extends YUKA.GoalEvaluator<TDMAgent> {
   calculateDesirability(_ag: TDMAgent): number {
     return 0.1 * this.characterBias;
@@ -291,7 +295,6 @@ export class PatrolEvaluator extends YUKA.GoalEvaluator<TDMAgent> {
 // ═══════════════════════════════════════════
 //  HELPER
 // ═══════════════════════════════════════════
-
 function hasGoalType(brain: YUKA.Think<TDMAgent>, Type: new (...args: any[]) => any): boolean {
   if (!brain.hasSubgoals()) return false;
   const current = brain.currentSubgoal();
