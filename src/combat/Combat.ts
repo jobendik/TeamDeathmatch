@@ -16,6 +16,9 @@ import { dom } from '@/ui/DOMElements';
 import { showRoundSummary } from '@/ui/RoundSummary';
 import { allowsRespawn, getFacingYawTowardsArena, getModeDefaults, getPlayerSpawn, getSpawnForAgent, getModeLabel } from '@/core/GameModes';
 import { updateObjectiveVisibility } from './Objectives';
+import { applyAimFlinch } from '@/ai/HumanAim';
+import { registerDeath } from '@/ai/MatchMemory';
+import { clearTeamIntel } from '@/ai/TeamIntel';
 
 function applyWeaponToAgent(ag: TDMAgent, weaponId: WeaponId): void {
   const def = WEAPONS[weaponId];
@@ -116,6 +119,11 @@ export function dealDmgAgent(ag: TDMAgent, dmg: number, attacker: TDMAgent | nul
   ag.lastDamageTime = gameState.worldElapsed;
   ag.recentDamage += dmg;
   if (attacker) ag.lastAttacker = attacker;
+
+  // NEW: aim flinch proportional to damage
+  const dmgFrac = Math.min(1, dmg / ag.maxHP);
+  applyAimFlinch(ag, dmgFrac);
+
   if (ag.hp <= 0) killAgent(ag, attacker);
 }
 
@@ -128,6 +136,18 @@ function killAgent(ag: TDMAgent, attacker: TDMAgent | null): void {
   spawnDeath(new THREE.Vector3(ag.position.x, 0.5, ag.position.z), TEAM_COLORS[ag.team]);
   ag.confidence = Math.max(10, ag.confidence - 15);
   ag.killStreak = 0;
+
+  // NEW: match-wide danger tracking
+  registerDeath(ag.team, ag.position.x, ag.position.z);
+
+  // NEW: grudge + tilt
+  if (attacker && attacker !== ag && ag.personality) {
+    ag.grudge = attacker;
+    ag.grudgeExpiry = gameState.worldElapsed + 20 + ag.personality.revengeBias * 25;
+    // Tilt — accumulates, decays slowly; rookies/wildcards tilt harder
+    ag.tiltLevel = Math.min(1, ag.tiltLevel + 0.3 + ag.personality.tiltFactor * 0.3);
+  }
+
   clearDeadTargetReferences(ag);
 
   if (attacker) {
@@ -316,6 +336,7 @@ export function resetMatch(mode = gameState.mode): void {
   gameState.pKills = 0;
   gameState.pDeaths = 0;
   gameState.killfeedEntries = [];
+  clearTeamIntel();
   dom.killfeed.innerHTML = '';
   gameState.eliminationRound = 0;
 
