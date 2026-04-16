@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { clone as skeletonClone } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { gameState } from '@/core/GameState';
 import { WEAPONS, type WeaponId } from '@/config/weapons';
 
@@ -11,6 +13,9 @@ let vmMuzzleSprite: THREE.Sprite;
 
 let currentWeaponMesh: THREE.Group | null = null;
 let currentWeaponId: WeaponId = 'assault_rifle';
+
+let currentViewmodelMixer: THREE.AnimationMixer | null = null;
+let currentViewmodelActions: THREE.AnimationAction[] = [];
 
 interface VMLayout {
   pos: [number, number, number];
@@ -44,6 +49,442 @@ let switchDir: 'down' | 'up' = 'up';
 let pendingWeaponId: WeaponId | null = null;
 let reloadLerp = 0;
 
+const BASE_URL = import.meta.env.BASE_URL;
+const M16_GLB_URL = `${BASE_URL}models/weapons/m16a2.glb`;
+
+const gltfLoader = new GLTFLoader();
+
+type CachedGLB = {
+  scene: THREE.Group;
+  animations: THREE.AnimationClip[];
+};
+
+let cachedM16: CachedGLB | null = null;
+let cachedM16Promise: Promise<CachedGLB | null> | null = null;
+let loggedM16Clips = false;
+
+function prepRenderable(root: THREE.Object3D): void {
+  root.traverse((obj) => {
+    const mesh = obj as THREE.Mesh;
+    if ((mesh as any).isMesh) {
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      const mat = mesh.material as THREE.Material | THREE.Material[] | undefined;
+      if (Array.isArray(mat)) {
+        for (const m of mat) {
+          if ('transparent' in m) m.transparent = true;
+        }
+      } else if (mat && 'transparent' in mat) {
+        mat.transparent = true;
+      }
+    }
+  });
+}
+
+async function loadM16Viewmodel(): Promise<CachedGLB | null> {
+  if (cachedM16) return cachedM16;
+  if (cachedM16Promise) return cachedM16Promise;
+
+  cachedM16Promise = new Promise((resolve) => {
+    gltfLoader.load(
+      M16_GLB_URL,
+      (gltf) => {
+        const scene = gltf.scene as THREE.Group;
+        prepRenderable(scene);
+
+        cachedM16 = {
+          scene,
+          animations: gltf.animations ?? [],
+        };
+
+        if (!loggedM16Clips) {
+          loggedM16Clips = true;
+          console.info('[WeaponViewmodel] Loaded m16a2.glb');
+          console.info(
+            '[WeaponViewmodel] M16 animation clips:',
+            cachedM16.animations.map((clip) => ({
+              name: clip.name,
+              duration: clip.duration,
+              tracks: clip.tracks.length,
+            })),
+          );
+        }
+
+        resolve(cachedM16);
+      },
+      undefined,
+      (err) => {
+        console.error('[WeaponViewmodel] Failed to load M16 GLB. Falling back to procedural rifle.', err);
+        resolve(null);
+      },
+    );
+  });
+
+  return cachedM16Promise;
+}
+
+function makeMats(wep: { color: number }) {
+  const bodyMat = new THREE.MeshStandardMaterial({ color: wep.color, roughness: 0.35, metalness: 0.65 });
+  const darkMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.8, metalness: 0.3 });
+  const accentMat = new THREE.MeshStandardMaterial({
+    color: 0x38bdf8,
+    roughness: 0.15,
+    metalness: 0.9,
+    emissive: 0x38bdf8,
+    emissiveIntensity: 0.35,
+  });
+  const gripMat = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.9, metalness: 0.1 });
+  return { bodyMat, darkMat, accentMat, gripMat };
+}
+
+function buildWeaponMesh(weaponId: WeaponId): THREE.Group {
+  const wep = WEAPONS[weaponId];
+  const g = new THREE.Group();
+
+  if (weaponId === 'unarmed') {
+    const skinMat = new THREE.MeshStandardMaterial({ color: 0x8d6e5a, roughness: 0.7, metalness: 0.1 });
+    const fist = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.035, 0.05), skinMat);
+    fist.position.set(0, -0.01, 0);
+    g.add(fist);
+
+    const fingers = new THREE.Mesh(new THREE.BoxGeometry(0.038, 0.015, 0.03), skinMat);
+    fingers.position.set(0, -0.025, -0.015);
+    g.add(fingers);
+
+    return g;
+  }
+
+  const { bodyMat, darkMat, accentMat, gripMat } = makeMats(wep);
+
+  switch (weaponId) {
+    case 'pistol': {
+      const slide = new THREE.Mesh(new THREE.BoxGeometry(0.032, 0.035, 0.095), bodyMat);
+      slide.position.set(0, 0.005, 0);
+      g.add(slide);
+
+      const frame = new THREE.Mesh(new THREE.BoxGeometry(0.028, 0.025, 0.065), darkMat);
+      frame.position.set(0, -0.015, 0.01);
+      g.add(frame);
+
+      const grip = new THREE.Mesh(new THREE.BoxGeometry(0.026, 0.058, 0.028), gripMat);
+      grip.position.set(0, -0.045, 0.018);
+      grip.rotation.x = 0.2;
+      g.add(grip);
+
+      const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, 0.04, 8), darkMat);
+      barrel.rotation.x = Math.PI / 2;
+      barrel.position.set(0, 0.008, -0.065);
+      g.add(barrel);
+
+      const tg = new THREE.Mesh(new THREE.BoxGeometry(0.020, 0.005, 0.025), darkMat);
+      tg.position.set(0, -0.025, 0.005);
+      g.add(tg);
+
+      const fs = new THREE.Mesh(new THREE.BoxGeometry(0.006, 0.010, 0.006), accentMat);
+      fs.position.set(0, 0.028, -0.038);
+      g.add(fs);
+      break;
+    }
+
+    case 'smg': {
+      const recv = new THREE.Mesh(new THREE.BoxGeometry(0.038, 0.042, 0.14), bodyMat);
+      g.add(recv);
+
+      const shroud = new THREE.Mesh(new THREE.BoxGeometry(0.030, 0.030, 0.06), darkMat);
+      shroud.position.set(0, 0, -0.095);
+      g.add(shroud);
+
+      const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.007, 0.007, 0.055, 8), darkMat);
+      barrel.rotation.x = Math.PI / 2;
+      barrel.position.set(0, 0.005, -0.120);
+      g.add(barrel);
+
+      const mag = new THREE.Mesh(new THREE.BoxGeometry(0.022, 0.065, 0.022), gripMat);
+      mag.position.set(0, -0.045, 0.015);
+      mag.rotation.x = 0.05;
+      g.add(mag);
+
+      const grip = new THREE.Mesh(new THREE.BoxGeometry(0.022, 0.045, 0.020), gripMat);
+      grip.position.set(0, -0.035, 0.06);
+      grip.rotation.x = 0.15;
+      g.add(grip);
+
+      const stock = new THREE.Mesh(new THREE.BoxGeometry(0.018, 0.028, 0.055), bodyMat);
+      stock.position.set(0, -0.008, 0.095);
+      g.add(stock);
+
+      const al = new THREE.Mesh(new THREE.BoxGeometry(0.040, 0.004, 0.14), accentMat);
+      al.position.set(0, 0.024, 0);
+      g.add(al);
+      break;
+    }
+
+    case 'assault_rifle': {
+      const body = new THREE.Mesh(new THREE.BoxGeometry(0.042, 0.050, 0.22), bodyMat);
+      g.add(body);
+
+      const hg = new THREE.Mesh(new THREE.BoxGeometry(0.036, 0.038, 0.08), darkMat);
+      hg.position.set(0, -0.004, -0.12);
+      g.add(hg);
+
+      const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.09, 8), darkMat);
+      barrel.rotation.x = Math.PI / 2;
+      barrel.position.set(0, 0.008, -0.155);
+      g.add(barrel);
+
+      const mb = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.010, 0.02, 8), bodyMat);
+      mb.rotation.x = Math.PI / 2;
+      mb.position.set(0, 0.008, -0.195);
+      g.add(mb);
+
+      const mag = new THREE.Mesh(new THREE.BoxGeometry(0.024, 0.072, 0.028), gripMat);
+      mag.position.set(0, -0.050, 0.015);
+      mag.rotation.x = 0.12;
+      g.add(mag);
+
+      const grip = new THREE.Mesh(new THREE.BoxGeometry(0.020, 0.042, 0.018), gripMat);
+      grip.position.set(0, -0.040, 0.065);
+      grip.rotation.x = 0.2;
+      g.add(grip);
+
+      const stock = new THREE.Mesh(new THREE.BoxGeometry(0.032, 0.042, 0.085), bodyMat);
+      stock.position.set(0, -0.006, 0.145);
+      g.add(stock);
+
+      const sp = new THREE.Mesh(new THREE.BoxGeometry(0.034, 0.048, 0.008), gripMat);
+      sp.position.set(0, -0.006, 0.190);
+      g.add(sp);
+
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(0.018, 0.008, 0.10), darkMat);
+      rail.position.set(0, 0.032, -0.02);
+      g.add(rail);
+
+      const rds = new THREE.Mesh(new THREE.BoxGeometry(0.016, 0.018, 0.025), accentMat);
+      rds.position.set(0, 0.045, -0.02);
+      g.add(rds);
+
+      const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.044, 0.004, 0.22), accentMat);
+      stripe.position.set(0, 0.028, 0);
+      g.add(stripe);
+      break;
+    }
+
+    case 'shotgun': {
+      const body = new THREE.Mesh(new THREE.BoxGeometry(0.048, 0.050, 0.20), bodyMat);
+      g.add(body);
+
+      const b1 = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.14, 8), darkMat);
+      b1.rotation.x = Math.PI / 2;
+      b1.position.set(0.008, 0.012, -0.165);
+      g.add(b1);
+
+      const b2 = b1.clone();
+      b2.position.x = -0.008;
+      g.add(b2);
+
+      const pump = new THREE.Mesh(new THREE.BoxGeometry(0.040, 0.028, 0.065), bodyMat);
+      pump.position.set(0, -0.022, -0.06);
+      g.add(pump);
+
+      const grip = new THREE.Mesh(new THREE.BoxGeometry(0.024, 0.050, 0.022), gripMat);
+      grip.position.set(0, -0.040, 0.055);
+      grip.rotation.x = 0.2;
+      g.add(grip);
+
+      const stock = new THREE.Mesh(new THREE.BoxGeometry(0.038, 0.048, 0.10), bodyMat);
+      stock.position.set(0, -0.010, 0.145);
+      g.add(stock);
+
+      const bead = new THREE.Mesh(new THREE.SphereGeometry(0.005, 6, 6), accentMat);
+      bead.position.set(0, 0.032, -0.22);
+      g.add(bead);
+      break;
+    }
+
+    case 'sniper_rifle': {
+      const body = new THREE.Mesh(new THREE.BoxGeometry(0.036, 0.048, 0.30), bodyMat);
+      g.add(body);
+
+      const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.007, 0.007, 0.18, 8), darkMat);
+      barrel.rotation.x = Math.PI / 2;
+      barrel.position.set(0, 0.008, -0.235);
+      g.add(barrel);
+
+      const sup = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.010, 0.04, 8), darkMat);
+      sup.rotation.x = Math.PI / 2;
+      sup.position.set(0, 0.008, -0.32);
+      g.add(sup);
+
+      const scopeBody = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.10, 10), accentMat);
+      scopeBody.rotation.x = Math.PI / 2;
+      scopeBody.position.set(0, 0.048, -0.02);
+      g.add(scopeBody);
+
+      for (const zz of [-0.05, 0.03]) {
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(0.016, 0.003, 6, 12), darkMat);
+        ring.position.set(0, 0.048, zz);
+        g.add(ring);
+      }
+
+      const mag = new THREE.Mesh(new THREE.BoxGeometry(0.020, 0.055, 0.028), gripMat);
+      mag.position.set(0, -0.042, 0.04);
+      g.add(mag);
+
+      for (const side of [-1, 1]) {
+        const leg = new THREE.Mesh(new THREE.BoxGeometry(0.004, 0.035, 0.008), darkMat);
+        leg.position.set(side * 0.020, -0.035, -0.12);
+        leg.rotation.x = 0.3;
+        g.add(leg);
+      }
+
+      const stock = new THREE.Mesh(new THREE.BoxGeometry(0.032, 0.052, 0.10), bodyMat);
+      stock.position.set(0, -0.005, 0.195);
+      g.add(stock);
+
+      const cheek = new THREE.Mesh(new THREE.BoxGeometry(0.028, 0.012, 0.06), gripMat);
+      cheek.position.set(0, 0.024, 0.16);
+      g.add(cheek);
+      break;
+    }
+
+    case 'rocket_launcher': {
+      const tube = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.028, 0.32, 10), bodyMat);
+      tube.rotation.x = Math.PI / 2;
+      g.add(tube);
+
+      const front = new THREE.Mesh(new THREE.RingGeometry(0.018, 0.030, 10), darkMat);
+      front.position.set(0, 0, -0.161);
+      g.add(front);
+
+      const rear = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.038, 0.04, 10), darkMat);
+      rear.rotation.x = Math.PI / 2;
+      rear.position.set(0, 0, 0.175);
+      g.add(rear);
+
+      const grip = new THREE.Mesh(new THREE.BoxGeometry(0.024, 0.060, 0.026), gripMat);
+      grip.position.set(0, -0.045, 0.05);
+      grip.rotation.x = 0.15;
+      g.add(grip);
+
+      const sight = new THREE.Mesh(new THREE.BoxGeometry(0.014, 0.025, 0.040), accentMat);
+      sight.position.set(0, 0.042, -0.03);
+      g.add(sight);
+
+      const ws = new THREE.Mesh(
+        new THREE.BoxGeometry(0.030, 0.005, 0.06),
+        new THREE.MeshStandardMaterial({
+          color: 0xffaa00,
+          roughness: 0.5,
+          metalness: 0.3,
+          emissive: 0xffaa00,
+          emissiveIntensity: 0.2,
+        }),
+      );
+      ws.position.set(0, 0.030, 0.10);
+      g.add(ws);
+      break;
+    }
+  }
+
+  return g;
+}
+
+function clearCurrentWeaponMesh(): void {
+  if (currentWeaponMesh) {
+    vmGroup.remove(currentWeaponMesh);
+    currentWeaponMesh = null;
+  }
+
+  if (currentViewmodelActions.length > 0) {
+    for (const action of currentViewmodelActions) {
+      action.stop();
+    }
+    currentViewmodelActions = [];
+  }
+
+  if (currentViewmodelMixer) {
+    currentViewmodelMixer.stopAllAction();
+    currentViewmodelMixer = null;
+  }
+}
+
+function attachLoadedM16(): void {
+  if (!cachedM16) {
+    applyProceduralWeapon('assault_rifle');
+    return;
+  }
+
+  const cloneRoot = skeletonClone(cachedM16.scene) as THREE.Group;
+  prepRenderable(cloneRoot);
+
+  currentWeaponMesh = cloneRoot;
+  vmGroup.add(currentWeaponMesh);
+
+  currentViewmodelMixer = null;
+  currentViewmodelActions = [];
+
+  if (cachedM16.animations.length > 0) {
+    currentViewmodelMixer = new THREE.AnimationMixer(cloneRoot);
+    currentViewmodelActions = cachedM16.animations.map((clip) => currentViewmodelMixer!.clipAction(clip));
+
+    // We deliberately do NOT autoplay the clip yet.
+    // The asset may contain a combined reload + melee timeline.
+    // First we just show the static pose and log the clip info.
+  }
+}
+
+function applyProceduralWeapon(weaponId: WeaponId): void {
+  currentWeaponMesh = buildWeaponMesh(weaponId);
+  const layout = VM_LAYOUTS[weaponId];
+  currentWeaponMesh.scale.setScalar(layout.scale);
+  vmGroup.add(currentWeaponMesh);
+}
+
+function applyWeaponSwap(weaponId: WeaponId): void {
+  clearCurrentWeaponMesh();
+
+  currentWeaponId = weaponId;
+  const layout = VM_LAYOUTS[weaponId];
+
+  if (weaponId === 'assault_rifle' && cachedM16) {
+    attachLoadedM16();
+    if (currentWeaponMesh) {
+      currentWeaponMesh.scale.setScalar(layout.scale);
+    }
+  } else {
+    applyProceduralWeapon(weaponId);
+  }
+
+  recoilZ = 0;
+  recoilUp = 0;
+  recoilRot = 0;
+}
+
+async function tryLoadSpecialViewmodel(weaponId: WeaponId): Promise<void> {
+  if (weaponId !== 'assault_rifle') return;
+
+  const loaded = await loadM16Viewmodel();
+  if (!loaded) return;
+
+  if (currentWeaponId === 'assault_rifle' && switchProgress >= 1 && !pendingWeaponId) {
+    applyWeaponSwap('assault_rifle');
+  }
+}
+
+export function setViewmodelWeapon(weaponId: WeaponId): void {
+  if (!vmGroup) {
+    currentWeaponId = weaponId;
+    return;
+  }
+
+  if (weaponId === currentWeaponId && currentWeaponMesh && switchProgress >= 1) return;
+
+  pendingWeaponId = weaponId;
+  switchDir = 'down';
+
+  void tryLoadSpecialViewmodel(weaponId);
+}
+
 export function initViewmodel(): void {
   vmScene = new THREE.Scene();
 
@@ -51,6 +492,7 @@ export function initViewmodel(): void {
   const dl = new THREE.DirectionalLight(0xffffff, 1.0);
   dl.position.set(2, 3, 4);
   vmScene.add(dl);
+
   const rim = new THREE.DirectionalLight(0x38bdf8, 0.3);
   rim.position.set(-2, 1, -1);
   vmScene.add(rim);
@@ -86,242 +528,8 @@ export function initViewmodel(): void {
   setViewmodelWeapon(gameState.pWeaponId);
 }
 
-function makeMats(wep: { color: number }) {
-  const bodyMat = new THREE.MeshStandardMaterial({ color: wep.color, roughness: 0.35, metalness: 0.65 });
-  const darkMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.8, metalness: 0.3 });
-  const accentMat = new THREE.MeshStandardMaterial({
-    color: 0x38bdf8, roughness: 0.15, metalness: 0.9, emissive: 0x38bdf8, emissiveIntensity: 0.35,
-  });
-  const gripMat = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.9, metalness: 0.1 });
-  return { bodyMat, darkMat, accentMat, gripMat };
-}
-
-function buildWeaponMesh(weaponId: WeaponId): THREE.Group {
-  const wep = WEAPONS[weaponId];
-  const g = new THREE.Group();
-
-  // Unarmed: empty hand (just a small fist shape)
-  if (weaponId === 'unarmed') {
-    const skinMat = new THREE.MeshStandardMaterial({ color: 0x8d6e5a, roughness: 0.7, metalness: 0.1 });
-    const fist = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.035, 0.05), skinMat);
-    fist.position.set(0, -0.01, 0);
-    g.add(fist);
-    // Fingers curled
-    const fingers = new THREE.Mesh(new THREE.BoxGeometry(0.038, 0.015, 0.03), skinMat);
-    fingers.position.set(0, -0.025, -0.015);
-    g.add(fingers);
-    return g;
-  }
-
-  const { bodyMat, darkMat, accentMat, gripMat } = makeMats(wep);
-
-  switch (weaponId) {
-    case 'pistol': {
-      const slide = new THREE.Mesh(new THREE.BoxGeometry(0.032, 0.035, 0.095), bodyMat);
-      slide.position.set(0, 0.005, 0);
-      g.add(slide);
-      const frame = new THREE.Mesh(new THREE.BoxGeometry(0.028, 0.025, 0.065), darkMat);
-      frame.position.set(0, -0.015, 0.01);
-      g.add(frame);
-      const grip = new THREE.Mesh(new THREE.BoxGeometry(0.026, 0.058, 0.028), gripMat);
-      grip.position.set(0, -0.045, 0.018);
-      grip.rotation.x = 0.2;
-      g.add(grip);
-      const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, 0.04, 8), darkMat);
-      barrel.rotation.x = Math.PI / 2;
-      barrel.position.set(0, 0.008, -0.065);
-      g.add(barrel);
-      const tg = new THREE.Mesh(new THREE.BoxGeometry(0.020, 0.005, 0.025), darkMat);
-      tg.position.set(0, -0.025, 0.005);
-      g.add(tg);
-      const fs = new THREE.Mesh(new THREE.BoxGeometry(0.006, 0.010, 0.006), accentMat);
-      fs.position.set(0, 0.028, -0.038);
-      g.add(fs);
-      break;
-    }
-    case 'smg': {
-      const recv = new THREE.Mesh(new THREE.BoxGeometry(0.038, 0.042, 0.14), bodyMat);
-      g.add(recv);
-      const shroud = new THREE.Mesh(new THREE.BoxGeometry(0.030, 0.030, 0.06), darkMat);
-      shroud.position.set(0, 0, -0.095);
-      g.add(shroud);
-      const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.007, 0.007, 0.055, 8), darkMat);
-      barrel.rotation.x = Math.PI / 2;
-      barrel.position.set(0, 0.005, -0.120);
-      g.add(barrel);
-      const mag = new THREE.Mesh(new THREE.BoxGeometry(0.022, 0.065, 0.022), gripMat);
-      mag.position.set(0, -0.045, 0.015);
-      mag.rotation.x = 0.05;
-      g.add(mag);
-      const grip = new THREE.Mesh(new THREE.BoxGeometry(0.022, 0.045, 0.020), gripMat);
-      grip.position.set(0, -0.035, 0.06);
-      grip.rotation.x = 0.15;
-      g.add(grip);
-      const stock = new THREE.Mesh(new THREE.BoxGeometry(0.018, 0.028, 0.055), bodyMat);
-      stock.position.set(0, -0.008, 0.095);
-      g.add(stock);
-      const al = new THREE.Mesh(new THREE.BoxGeometry(0.040, 0.004, 0.14), accentMat);
-      al.position.set(0, 0.024, 0);
-      g.add(al);
-      break;
-    }
-    case 'assault_rifle': {
-      const body = new THREE.Mesh(new THREE.BoxGeometry(0.042, 0.050, 0.22), bodyMat);
-      g.add(body);
-      const hg = new THREE.Mesh(new THREE.BoxGeometry(0.036, 0.038, 0.08), darkMat);
-      hg.position.set(0, -0.004, -0.12);
-      g.add(hg);
-      const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.09, 8), darkMat);
-      barrel.rotation.x = Math.PI / 2;
-      barrel.position.set(0, 0.008, -0.155);
-      g.add(barrel);
-      const mb = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.010, 0.02, 8), bodyMat);
-      mb.rotation.x = Math.PI / 2;
-      mb.position.set(0, 0.008, -0.195);
-      g.add(mb);
-      const mag = new THREE.Mesh(new THREE.BoxGeometry(0.024, 0.072, 0.028), gripMat);
-      mag.position.set(0, -0.050, 0.015);
-      mag.rotation.x = 0.12;
-      g.add(mag);
-      const grip = new THREE.Mesh(new THREE.BoxGeometry(0.020, 0.042, 0.018), gripMat);
-      grip.position.set(0, -0.040, 0.065);
-      grip.rotation.x = 0.2;
-      g.add(grip);
-      const stock = new THREE.Mesh(new THREE.BoxGeometry(0.032, 0.042, 0.085), bodyMat);
-      stock.position.set(0, -0.006, 0.145);
-      g.add(stock);
-      const sp = new THREE.Mesh(new THREE.BoxGeometry(0.034, 0.048, 0.008), gripMat);
-      sp.position.set(0, -0.006, 0.190);
-      g.add(sp);
-      const rail = new THREE.Mesh(new THREE.BoxGeometry(0.018, 0.008, 0.10), darkMat);
-      rail.position.set(0, 0.032, -0.02);
-      g.add(rail);
-      const rds = new THREE.Mesh(new THREE.BoxGeometry(0.016, 0.018, 0.025), accentMat);
-      rds.position.set(0, 0.045, -0.02);
-      g.add(rds);
-      const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.044, 0.004, 0.22), accentMat);
-      stripe.position.set(0, 0.028, 0);
-      g.add(stripe);
-      break;
-    }
-    case 'shotgun': {
-      const body = new THREE.Mesh(new THREE.BoxGeometry(0.048, 0.050, 0.20), bodyMat);
-      g.add(body);
-      const b1 = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.14, 8), darkMat);
-      b1.rotation.x = Math.PI / 2;
-      b1.position.set(0.008, 0.012, -0.165);
-      g.add(b1);
-      const b2 = b1.clone();
-      b2.position.x = -0.008;
-      g.add(b2);
-      const pump = new THREE.Mesh(new THREE.BoxGeometry(0.040, 0.028, 0.065), bodyMat);
-      pump.position.set(0, -0.022, -0.06);
-      g.add(pump);
-      const grip = new THREE.Mesh(new THREE.BoxGeometry(0.024, 0.050, 0.022), gripMat);
-      grip.position.set(0, -0.040, 0.055);
-      grip.rotation.x = 0.2;
-      g.add(grip);
-      const stock = new THREE.Mesh(new THREE.BoxGeometry(0.038, 0.048, 0.10), bodyMat);
-      stock.position.set(0, -0.010, 0.145);
-      g.add(stock);
-      const bead = new THREE.Mesh(new THREE.SphereGeometry(0.005, 6, 6), accentMat);
-      bead.position.set(0, 0.032, -0.22);
-      g.add(bead);
-      break;
-    }
-    case 'sniper_rifle': {
-      const body = new THREE.Mesh(new THREE.BoxGeometry(0.036, 0.048, 0.30), bodyMat);
-      g.add(body);
-      const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.007, 0.007, 0.18, 8), darkMat);
-      barrel.rotation.x = Math.PI / 2;
-      barrel.position.set(0, 0.008, -0.235);
-      g.add(barrel);
-      const sup = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.010, 0.04, 8), darkMat);
-      sup.rotation.x = Math.PI / 2;
-      sup.position.set(0, 0.008, -0.32);
-      g.add(sup);
-      const scopeBody = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.10, 10), accentMat);
-      scopeBody.rotation.x = Math.PI / 2;
-      scopeBody.position.set(0, 0.048, -0.02);
-      g.add(scopeBody);
-      for (const zz of [-0.05, 0.03]) {
-        const ring = new THREE.Mesh(new THREE.TorusGeometry(0.016, 0.003, 6, 12), darkMat);
-        ring.position.set(0, 0.048, zz);
-        g.add(ring);
-      }
-      const mag = new THREE.Mesh(new THREE.BoxGeometry(0.020, 0.055, 0.028), gripMat);
-      mag.position.set(0, -0.042, 0.04);
-      g.add(mag);
-      for (const side of [-1, 1]) {
-        const leg = new THREE.Mesh(new THREE.BoxGeometry(0.004, 0.035, 0.008), darkMat);
-        leg.position.set(side * 0.020, -0.035, -0.12);
-        leg.rotation.x = 0.3;
-        g.add(leg);
-      }
-      const stock = new THREE.Mesh(new THREE.BoxGeometry(0.032, 0.052, 0.10), bodyMat);
-      stock.position.set(0, -0.005, 0.195);
-      g.add(stock);
-      const cheek = new THREE.Mesh(new THREE.BoxGeometry(0.028, 0.012, 0.06), gripMat);
-      cheek.position.set(0, 0.024, 0.16);
-      g.add(cheek);
-      break;
-    }
-    case 'rocket_launcher': {
-      const tube = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.028, 0.32, 10), bodyMat);
-      tube.rotation.x = Math.PI / 2;
-      g.add(tube);
-      const front = new THREE.Mesh(new THREE.RingGeometry(0.018, 0.030, 10), darkMat);
-      front.position.set(0, 0, -0.161);
-      g.add(front);
-      const rear = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.038, 0.04, 10), darkMat);
-      rear.rotation.x = Math.PI / 2;
-      rear.position.set(0, 0, 0.175);
-      g.add(rear);
-      const grip = new THREE.Mesh(new THREE.BoxGeometry(0.024, 0.060, 0.026), gripMat);
-      grip.position.set(0, -0.045, 0.05);
-      grip.rotation.x = 0.15;
-      g.add(grip);
-      const sight = new THREE.Mesh(new THREE.BoxGeometry(0.014, 0.025, 0.040), accentMat);
-      sight.position.set(0, 0.042, -0.03);
-      g.add(sight);
-      const ws = new THREE.Mesh(new THREE.BoxGeometry(0.030, 0.005, 0.06), new THREE.MeshStandardMaterial({
-        color: 0xffaa00, roughness: 0.5, metalness: 0.3, emissive: 0xffaa00, emissiveIntensity: 0.2,
-      }));
-      ws.position.set(0, 0.030, 0.10);
-      g.add(ws);
-      break;
-    }
-  }
-
-  return g;
-}
-
-export function setViewmodelWeapon(weaponId: WeaponId): void {
-  if (!vmGroup) {
-    currentWeaponId = weaponId;
-    return;
-  }
-
-  if (weaponId === currentWeaponId && currentWeaponMesh && switchProgress >= 1) return;
-
-  pendingWeaponId = weaponId;
-  switchDir = 'down';
-}
-
-function applyWeaponSwap(weaponId: WeaponId): void {
-  if (currentWeaponMesh) vmGroup.remove(currentWeaponMesh);
-  currentWeaponId = weaponId;
-  currentWeaponMesh = buildWeaponMesh(weaponId);
-  const layout = VM_LAYOUTS[weaponId];
-  currentWeaponMesh.scale.setScalar(layout.scale);
-  vmGroup.add(currentWeaponMesh);
-  recoilZ = 0;
-  recoilUp = 0;
-  recoilRot = 0;
-}
-
 export function fireViewmodel(): void {
-  if (currentWeaponId === 'unarmed') return; // no muzzle flash for unarmed
+  if (currentWeaponId === 'unarmed') return;
 
   const layout = VM_LAYOUTS[currentWeaponId];
 
@@ -346,6 +554,10 @@ export function fireViewmodel(): void {
 export function updateViewmodel(dt: number): void {
   if (!vmGroup) return;
 
+  if (currentViewmodelMixer) {
+    currentViewmodelMixer.update(dt);
+  }
+
   const { keys, pDead, pReloading, mouseDeltaX, mouseDeltaY } = gameState;
   const isMoving = keys.w || keys.a || keys.s || keys.d;
   const isSprinting = keys.shift && isMoving;
@@ -361,7 +573,6 @@ export function updateViewmodel(dt: number): void {
 
   const layout = VM_LAYOUTS[currentWeaponId];
 
-  // Weapon switch animation
   if (switchDir === 'down') {
     switchProgress = Math.max(0, switchProgress - dt * 6);
     if (switchProgress <= 0 && pendingWeaponId) {
@@ -373,17 +584,16 @@ export function updateViewmodel(dt: number): void {
     switchProgress = Math.min(1, switchProgress + dt * 5);
   }
 
-  // Bobbing
   if (isMoving) {
     bobPhase += dt * (isSprinting ? 15 : 10);
   } else {
     bobPhase += dt * 1.8;
   }
+
   const bobAmt = isMoving ? (isSprinting ? 0.008 : 0.004) : 0.0012;
   const bobX = Math.sin(bobPhase) * bobAmt;
   const bobY = Math.abs(Math.cos(bobPhase * 2)) * bobAmt * 0.7;
 
-  // Sway
   const targetSwayX = -mouseDeltaX * 0.0008;
   const targetSwayY = -mouseDeltaY * 0.0008;
   swayX += (targetSwayX - swayX) * Math.min(1, dt * 12);
@@ -391,20 +601,16 @@ export function updateViewmodel(dt: number): void {
   swayX *= Math.max(0, 1 - dt * 5);
   swayY *= Math.max(0, 1 - dt * 5);
 
-  // Sprint
   const sprintTarget = isSprinting ? 1 : 0;
   sprintLerp += (sprintTarget - sprintLerp) * Math.min(1, dt * 8);
 
-  // Reload
   const reloadTarget = pReloading ? 1 : 0;
   reloadLerp += (reloadTarget - reloadLerp) * Math.min(1, dt * 6);
 
-  // Recoil return
   recoilZ *= Math.max(0, 1 - dt * 15);
   recoilUp *= Math.max(0, 1 - dt * 13);
   recoilRot *= Math.max(0, 1 - dt * 14);
 
-  // Camera recoil recovery
   const recoverySpeed = dt * 8;
   if (Math.abs(gameState.recoilRecoveryPitch) > 0.0001) {
     const recover = gameState.recoilRecoveryPitch * Math.min(1, recoverySpeed);
@@ -417,7 +623,6 @@ export function updateViewmodel(dt: number): void {
     gameState.recoilRecoveryYaw -= recover;
   }
 
-  // Muzzle flash decay
   vmMuzzleFlash.intensity *= Math.max(0, 1 - dt * 25);
   const flashMat = vmMuzzleMesh.material as THREE.MeshBasicMaterial;
   flashMat.opacity *= Math.max(0, 1 - dt * 20);
@@ -425,7 +630,6 @@ export function updateViewmodel(dt: number): void {
   spriteMat.opacity *= Math.max(0, 1 - dt * 18);
   vmMuzzleSprite.scale.multiplyScalar(Math.max(0.8, 1 - dt * 8));
 
-  // Compose
   const switchDrop = (1 - easeOutCubic(switchProgress)) * 0.15;
   const reloadDrop = reloadLerp * 0.08;
   const reloadTilt = reloadLerp * 0.6;
