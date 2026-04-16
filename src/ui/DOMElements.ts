@@ -8,6 +8,11 @@ function maybeEl<T extends HTMLElement>(id: string): T | null {
   return (document.getElementById(id) as T | null) ?? null;
 }
 
+/** Lookup for SVG elements (which don't extend HTMLElement). */
+function maybeSvg<T extends SVGElement>(id: string): T | null {
+  return (document.getElementById(id) as unknown as T | null) ?? null;
+}
+
 export const dom = {
   get cw() { return getEl<HTMLDivElement>('cw'); },
 
@@ -51,13 +56,13 @@ export const dom = {
   get dsWeapon() { return maybeEl<HTMLDivElement>('dsWeapon'); },
   get lockHint() { return getEl<HTMLDivElement>('lockHint'); },
 
-  // Match info (new) + legacy scoreboard
+  // Match info
   get miMode() { return maybeEl<HTMLDivElement>('miMode'); },
   get miTime() { return maybeEl<HTMLDivElement>('miTime'); },
   get miScoreBlue() { return maybeEl<HTMLDivElement>('miScoreBlue'); },
   get miScoreRed() { return maybeEl<HTMLDivElement>('miScoreRed'); },
 
-  // Legacy (fallbacks)
+  // Legacy fallbacks — resolve to new match-info panel if old elements aren't present
   get sbBlue() { return maybeEl<HTMLDivElement>('sbBlue') ?? getEl<HTMLDivElement>('miScoreBlue'); },
   get sbRed() { return maybeEl<HTMLDivElement>('sbRed') ?? getEl<HTMLDivElement>('miScoreRed'); },
   get sbMid() { return maybeEl<HTMLDivElement>('sbMid') ?? getEl<HTMLDivElement>('miTime'); },
@@ -65,13 +70,13 @@ export const dom = {
   // Compass
   get compassStrip() { return maybeEl<HTMLDivElement>('compassStrip'); },
 
-  // Crosshair enhancements
+  // Crosshair feedback
   get xhHit() { return maybeEl<HTMLDivElement>('xhHit'); },
   get xhKill() { return maybeEl<HTMLDivElement>('xhKill'); },
   get xhReload() { return maybeEl<HTMLDivElement>('xhReload'); },
-  get xhReloadFill() { return maybeEl<SVGCircleElement>('xhReloadFill') as any; },
+  get xhReloadFill() { return maybeSvg<SVGCircleElement>('xhReloadFill'); },
 
-  // Damage direction arcs
+  // Damage arcs
   get dmgArcs() { return maybeEl<HTMLDivElement>('dmgArcs'); },
 
   // Minimap
