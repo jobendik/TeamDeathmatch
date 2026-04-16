@@ -10,6 +10,9 @@ import { updateHUD, flashDmg } from '@/ui/HUD';
 import { updateScoreboard } from '@/ui/Scoreboard';
 import { addKillfeedEntry } from '@/ui/Killfeed';
 import { showKillNotif } from '@/ui/KillNotification';
+import { showHitMarker, showKillMarker } from '@/ui/HitMarkers';
+import { showDamageArc } from '@/ui/DamageArcs';
+import { getPostFX } from '@/rendering/PostProcess.Bridge';
 import { resetAgentAnimation } from '@/rendering/AgentAnimations';
 import { CLASS_DEFAULT_WEAPON, WEAPONS, type WeaponId } from '@/config/weapons';
 import { dom } from '@/ui/DOMElements';
@@ -85,6 +88,12 @@ export function dealDmgPlayer(dmg: number, attacker: TDMAgent | null = null): vo
   gameState.player.hp = gameState.pHP;
   updateHUD();
   flashDmg();
+
+  // NEW: damage direction arc
+  if (attacker) showDamageArc(attacker.position.x, attacker.position.z);
+  // NEW: red screen pulse (post-FX)
+  getPostFX()?.triggerHit(Math.min(1, dmg / 30) * 0.7);
+
   if (gameState.pHP <= 0) playerDied(attacker);
 }
 
@@ -93,6 +102,8 @@ function playerDied(attacker: TDMAgent | null): void {
   gameState.player.isDead = true;
   gameState.respTimer = RESPAWN_TIME;
   dom.ds.classList.add('on');
+  if (dom.dsKiller) dom.dsKiller.textContent = attacker ? attacker.name.toUpperCase() : 'UNKNOWN';
+  if (dom.dsWeapon) dom.dsWeapon.textContent = attacker ? WEAPONS[attacker.weaponId].name : 'UNKNOWN';
   gameState.pDeaths++;
   dom.deathTxt.textContent = String(gameState.pDeaths);
   clearDeadTargetReferences(gameState.player);
@@ -119,6 +130,11 @@ export function dealDmgAgent(ag: TDMAgent, dmg: number, attacker: TDMAgent | nul
   ag.lastDamageTime = gameState.worldElapsed;
   ag.recentDamage += dmg;
   if (attacker) ag.lastAttacker = attacker;
+
+  // NEW: hit marker for the player
+  if (attacker === gameState.player) {
+    showHitMarker(false);
+  }
 
   // NEW: aim flinch proportional to damage
   const dmgFrac = Math.min(1, dmg / ag.maxHP);
@@ -166,6 +182,7 @@ function killAgent(ag: TDMAgent, attacker: TDMAgent | null): void {
     gameState.pKills++;
     dom.killTxt.textContent = String(gameState.pKills);
     showKillNotif(ag.name, ag.team);
+    showKillMarker(); // NEW
   }
 
   addKillfeedEntry(attacker ? attacker.name : 'Unknown', ag.name, attacker ? attacker.team : TEAM_RED, ag.team, attacker ? WEAPONS[attacker.weaponId].name : undefined);
