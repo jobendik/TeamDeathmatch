@@ -63,10 +63,10 @@ type CachedGLB = {
 type M16RangeName = 'shoot' | 'reload' | 'hit';
 
 const M16_VIEWMODEL_TUNE = {
-  desiredMaxDimension: 0.38,
-  position: new THREE.Vector3(0.02, -0.03, 0.02),
+  desiredMaxDimension: 0.42,
+  position: new THREE.Vector3(0.02, -0.08, -0.18),
   rotation: new THREE.Euler(0, 0, 0),
-  idleTime: 0.0,
+  idleTime: 0.05,
 };
 
 const M16_RANGES: Record<M16RangeName, [number, number]> = {
@@ -477,15 +477,33 @@ function attachLoadedM16(): void {
     return;
   }
 
+  const wrapper = new THREE.Group();
+  wrapper.name = 'M16ViewmodelWrapper';
+
   const cloneRoot = skeletonClone(cachedM16.scene) as THREE.Group;
   prepRenderable(cloneRoot);
 
-  cloneRoot.scale.setScalar(M16_VIEWMODEL_TUNE.scale);
-  cloneRoot.position.copy(M16_VIEWMODEL_TUNE.position);
-  cloneRoot.rotation.copy(M16_VIEWMODEL_TUNE.rotation);
-  cloneRoot.visible = true;
+  const rawBox = new THREE.Box3().setFromObject(cloneRoot);
+  const rawSize = new THREE.Vector3();
+  const rawCenter = new THREE.Vector3();
+  rawBox.getSize(rawSize);
+  rawBox.getCenter(rawCenter);
 
-  currentWeaponMesh = cloneRoot;
+  console.info('[WeaponViewmodel] M16 raw bounds size:', rawSize.toArray());
+  console.info('[WeaponViewmodel] M16 raw bounds center:', rawCenter.toArray());
+
+  cloneRoot.position.sub(rawCenter);
+  wrapper.add(cloneRoot);
+
+  const maxDim = Math.max(rawSize.x, rawSize.y, rawSize.z);
+  const scale = M16_VIEWMODEL_TUNE.desiredMaxDimension / Math.max(maxDim, 0.0001);
+
+  wrapper.scale.setScalar(scale);
+  wrapper.position.copy(M16_VIEWMODEL_TUNE.position);
+  wrapper.rotation.copy(M16_VIEWMODEL_TUNE.rotation);
+  wrapper.visible = true;
+
+  currentWeaponMesh = wrapper;
   vmGroup.add(currentWeaponMesh);
 
   currentViewmodelMixer = null;
@@ -501,7 +519,14 @@ function attachLoadedM16(): void {
     holdM16IdlePose();
   }
 
-  console.info('[WeaponViewmodel] M16 attached with simple transform.');
+  const finalBox = new THREE.Box3().setFromObject(wrapper);
+  const finalSize = new THREE.Vector3();
+  const finalCenter = new THREE.Vector3();
+  finalBox.getSize(finalSize);
+  finalBox.getCenter(finalCenter);
+
+  console.info('[WeaponViewmodel] M16 final bounds size:', finalSize.toArray());
+  console.info('[WeaponViewmodel] M16 final bounds center:', finalCenter.toArray());
 }
 
 function applyProceduralWeapon(weaponId: WeaponId): void {
