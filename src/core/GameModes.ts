@@ -3,13 +3,14 @@ import type { TDMAgent } from '@/entities/TDMAgent';
 import { TEAM_BLUE, TEAM_RED, type TeamId, BLUE_SPAWNS, RED_SPAWNS } from '@/config/constants';
 import { gameState } from './GameState';
 
-export type GameMode = 'tdm' | 'ffa' | 'ctf' | 'elimination';
+export type GameMode = 'tdm' | 'ffa' | 'ctf' | 'elimination' | 'br';
 
 export function getModeLabel(mode: GameMode = gameState.mode): string {
   switch (mode) {
     case 'ffa': return 'FFA';
     case 'ctf': return 'CTF';
     case 'elimination': return 'ELIM';
+    case 'br': return 'BR';
     default: return 'TDM';
   }
 }
@@ -59,7 +60,7 @@ export function getEnemyFlagTeam(team: TeamId): TeamId {
 
 /** Whether respawning is allowed in the current mode */
 export function allowsRespawn(): boolean {
-  return gameState.mode !== 'elimination';
+  return gameState.mode !== 'elimination' && gameState.mode !== 'br';
 }
 
 export function getModeDefaults(mode: GameMode = gameState.mode): { matchTime: number; scoreLimit: number; playerStartsArmed: boolean } {
@@ -70,6 +71,8 @@ export function getModeDefaults(mode: GameMode = gameState.mode): { matchTime: n
       return { matchTime: 420, scoreLimit: 3, playerStartsArmed: true };
     case 'elimination':
       return { matchTime: 180, scoreLimit: 3, playerStartsArmed: true };
+    case 'br':
+      return { matchTime: 900, scoreLimit: 1, playerStartsArmed: false };
     default:
       return { matchTime: 300, scoreLimit: 20, playerStartsArmed: true };
   }
