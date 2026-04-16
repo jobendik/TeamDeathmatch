@@ -83,7 +83,7 @@ export class SurviveEvaluator extends YUKA.GoalEvaluator<TDMAgent> {
 
     if (!criticalHP && !lowHP && !ag.underPressure) return 0;
 
-    let desire = (1 - hpRatio);
+    let desire = 1 - hpRatio;
 
     if (criticalHP && underFire) desire += 0.3;
     if (ag.recentDamage > ag.maxHP * 0.4) desire += 0.2;
@@ -153,7 +153,7 @@ export class SeekHealthEvaluator extends YUKA.GoalEvaluator<TDMAgent> {
     if (pickupDist > 40) return 0;
 
     let desire = (1 - hpRatio) * 0.6;
-    desire += Math.max(0, (1 - pickupDist / 40)) * 0.3;
+    desire += Math.max(0, 1 - pickupDist / 40) * 0.3;
     if (!ag.currentTarget) desire += 0.15;
 
     return Math.max(0, Math.min(1, desire)) * this.characterBias;
@@ -191,13 +191,13 @@ export class GetWeaponEvaluator extends YUKA.GoalEvaluator<TDMAgent> {
     if (isUnarmed) {
       // Unarmed: weapon is top priority
       let desire = 0.95;
-      desire -= pickupDist * 0.005; // still prefer closer
+      desire -= pickupDist * 0.005;
       return Math.max(0.5, Math.min(1, desire)) * this.characterBias;
     }
 
     const curDesirability = WEAPONS[ag.weaponId].desirability;
     let desire = (1 - curDesirability / 100) * (gameState.mode === 'ffa' ? 0.65 : 0.4);
-    desire += Math.max(0, (1 - pickupDist / 40)) * 0.2;
+    desire += Math.max(0, 1 - pickupDist / 40) * 0.2;
     if (!ag.currentTarget) desire += 0.15;
 
     return Math.max(0, Math.min(1, desire)) * this.characterBias;
