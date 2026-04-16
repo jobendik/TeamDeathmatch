@@ -13,11 +13,11 @@ export function buildArena(): void {
 
   // ── Floor with hex-grid shader ──
   const floorMat = new THREE.ShaderMaterial({
-    uniforms: {
+uniforms: {
       uTime: { value: 0 },
-      uBase: { value: new THREE.Color(0x020a16) },
-      uGrid: { value: new THREE.Color(0x0b2244) },
-      uGlow: { value: new THREE.Color(0x0e3266) },
+      uBase: { value: new THREE.Color(0x0a1628) },   // brighter base
+      uGrid: { value: new THREE.Color(0x2a5088) },   // more visible grid
+      uGlow: { value: new THREE.Color(0x3b7bc4) },   // stronger glow
     },
     vertexShader: `
       varying vec2 vW;
@@ -37,14 +37,16 @@ export function buildArena(): void {
         vec2 a = mod(uv, r) - h, b = mod(uv - h, r) - h;
         return dot(a,a) < dot(b,b) ? vec4(a, floor(uv/r)) : vec4(b, floor((uv-h)/r));
       }
-      void main(){
+void main(){
         vec4 c = hc(vW * .18);
         float d = hd(c.xy);
-        float e = smoothstep(.45, .49, d);
+        float e = smoothstep(.42, .50, d);
         float pulse = sin(uTime * .5 + length(c.zw) * .4) * .5 + .5;
-        float rad = 1. - smoothstep(48., 60., length(vW));
-        vec3 col = mix(uBase, mix(uGrid, uGlow, pulse * .4), e * rad * .8);
-        col += uGlow * e * pulse * rad * .12;
+        float rad = 1. - smoothstep(52., 62., length(vW));
+        vec3 col = mix(uBase, mix(uGrid, uGlow, pulse * .5), e * rad * 1.1);
+        col += uGlow * e * pulse * rad * .25;
+        // Soft radial glow at center
+        col += uGlow * 0.08 * (1. - smoothstep(0., 30., length(vW)));
         gl_FragColor = vec4(col, 1.);
       }
     `,
