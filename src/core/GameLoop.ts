@@ -18,7 +18,7 @@ export function animate(): void {
   requestAnimationFrame(animate);
 
   const rawDt = Math.min(gameState.time.update().getDelta(), 0.05);
-  const frozen = !!gameState.isPaused || !!gameState.inMainMenu;
+  const frozen = !!gameState.paused;
   const dt = frozen ? 0 : rawDt;
 
   if (gameState.floorMat) {
