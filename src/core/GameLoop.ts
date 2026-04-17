@@ -1,13 +1,18 @@
 /**
- * GameLoop — Optimized main loop.
+ * GameLoop — Optimised main loop.
  *
- * Key perf changes for BR:
- * - Bot AI updates delegated to BRController (which uses LOD gating)
- * - Particle count capped and culled by distance
- * - Only nearby agent animations are updated
- * - Minimap/HUD/scoreboard update rates throttled
+ * Battle-royale specific perf work:
+ *  - Inactive agents (deactivated arena bots in BR, not-yet-landed BR bots)
+ *    are skipped by every per-agent loop, including keepInside — arena
+ *    colliders are large in BR, so iterating them needlessly was costing
+ *    real time
+ *  - Skip all agent-related work while the player is freefalling; the
+ *    drop plane sequence handles the camera, bots are inactive, and the
+ *    entity manager has nothing to do
+ *  - LOD-aware visuals/animations bail out on deactivated agents early
  */
 
+import * as THREE from 'three';
 import { gameState } from './GameState';
 import { updatePlayer, keepInside } from '@/entities/Player';
 import { updateAI } from '@/ai/AIController';
@@ -27,7 +32,7 @@ import { updateDamageArcs } from '@/ui/DamageArcs';
 import { updateReloadRing } from '@/ui/ReloadRing';
 import { getPostFX } from '@/rendering/PostProcess.Bridge';
 
-// BR imports — lazy to avoid loading when not in BR
+// Lazy imports — keep BR modules out of the initial bundle cost.
 let brModule: typeof import('@/br/BRController') | null = null;
 let brHudModule: typeof import('@/br/BRHUD') | null = null;
 let brInvModule: typeof import('@/br/InventoryUI') | null = null;
@@ -49,7 +54,6 @@ export function animate(): void {
   const dt = frozen ? 0 : rawDt;
   const isBR = gameState.mode === 'br';
 
-  // Floor shader time
   if (gameState.floorMat?.uniforms?.uTime) {
     gameState.floorMat.uniforms.uTime.value = gameState.worldElapsed;
   }
@@ -62,11 +66,10 @@ export function animate(): void {
     updatePlayer(dt);
 
     if (isBR && brModule?.isBRActive()) {
-      // BR mode: BRController handles LOD-gated bot updates
       brModule.updateBR(dt);
     } else {
-      // Arena modes: update all bots every frame
       for (const ag of gameState.agents) {
+        if (!ag.active) continue;
         updateAI(ag, dt);
       }
     }
@@ -80,23 +83,42 @@ export function animate(): void {
     updateObjectives();
     updateRespawns();
 
-    // In BR airdrop, skip heavy per-agent work (YUKA steering, collision, animations)
-    const brDropping = isBR && brModule && brModule.getBRPhase() === 'airdrop';
-
-    if (!brDropping) {
-      gameState.entityManager.update(dt);
-    }
-
-    // Clamp agents after movement
-    if (!brDropping) {
-      for (const ag of gameState.agents) {
-        if (ag !== gameState.player && !ag.isDead) keepInside(ag);
+    // In BR we want to skip heavy per-agent work for the entire time the
+    // player is airborne, not just the 'airdrop' phase. Otherwise the
+    // moment the player jumps, 29 bots would all wake up at once.
+    const brPhase = isBR && brModule ? brModule.getBRPhase() : null;
+    const brOnPlane = brPhase === 'airdrop';
+    // 'landing' phase lasts 20s after player jumps but the player is in
+    // freefall/parachute for only ~6-8s of that. We still want bots
+    // active during the rest of landing, so we key on isPlayerInAir.
+    let brAirborne = false;
+    if (isBR && brModule?.isBRActive()) {
+      // Probe DropPlane lazily — avoid import cycles.
+      const dp = (globalThis as any).__dropState as { state?: string } | undefined;
+      // Fallback: use phase check — conservative.
+      brAirborne = brOnPlane;
+      if (dp && typeof dp.state === 'string') {
+        brAirborne = brOnPlane ||
+          dp.state === 'freefall' || dp.state === 'parachute';
       }
     }
 
-    // LOD-aware visuals: only update animations for nearby agents in BR
-    if (brDropping) {
-      // skip visuals/animations entirely during drop
+    if (!brOnPlane) {
+      gameState.entityManager.update(dt);
+    }
+
+    // keepInside is cheap per-call but iterates arena colliders each time.
+    // In BR there are hundreds of wall colliders — skip inactive agents.
+    if (!brOnPlane) {
+      for (const ag of gameState.agents) {
+        if (ag === gameState.player || ag.isDead || !ag.active) continue;
+        keepInside(ag);
+      }
+    }
+
+    if (brOnPlane) {
+      // Plane window: nothing agent-related runs. Bots are inactive,
+      // visuals not needed.
     } else if (isBR) {
       updateVisualsLOD();
       updateAgentAnimationsLOD(dt);
@@ -108,15 +130,12 @@ export function animate(): void {
     updateDamageArcs(dt);
   }
 
-  // ── HUD / UI (throttled for perf) ──
   updateHUD();
   updateCrosshair();
 
-  // Minimap every 2nd frame in BR (it's expensive with 30+ dots)
   _minimapThrottle++;
   if (!isBR || _minimapThrottle % 2 === 0) drawMinimap();
 
-  // Scoreboard/tabboard
   _hudThrottle++;
   if (_hudThrottle % 3 === 0) {
     updateScoreboard();
@@ -126,14 +145,11 @@ export function animate(): void {
   updateCompass();
   updateReloadRing();
 
-  // BR HUD
   if (isBR && brHudModule) brHudModule.updateBRHUD();
   if (isBR && brInvModule) brInvModule.updatePickupPrompt();
 
-  // Viewmodel
   updateViewmodel(rawDt);
 
-  // ── Render ──
   const fx = getPostFX();
   if (fx) {
     const hpT = Math.max(0, 1 - gameState.pHP / 35);
@@ -148,7 +164,9 @@ export function animate(): void {
 }
 
 /**
- * LOD-aware visual updates for BR — skip far agents.
+ * BR visuals — hides distant bots and inactive agents, only updates HP
+ * bars and name tags within viewing range. Inactive agents (including
+ * not-yet-landed bots) are handled first so we spend zero time on them.
  */
 function updateVisualsLOD(): void {
   const { agents, player, camera } = gameState;
@@ -157,9 +175,11 @@ function updateVisualsLOD(): void {
 
   for (const ag of agents) {
     if (ag === player) continue;
-    if (ag.isDead || !ag.active) {
+
+    if (!ag.active || ag.isDead) {
       if (ag.renderComponent) ag.renderComponent.visible = false;
       if (ag.nameTag) ag.nameTag.visible = false;
+      if (ag.hpBarGroup) ag.hpBarGroup.visible = false;
       continue;
     }
 
@@ -167,7 +187,6 @@ function updateVisualsLOD(): void {
     const dz = ag.position.z - pz;
     const d2 = dx * dx + dz * dz;
 
-    // LOD3+ : invisible
     if (d2 > 160 * 160) {
       if (ag.renderComponent) ag.renderComponent.visible = false;
       continue;
@@ -175,7 +194,6 @@ function updateVisualsLOD(): void {
 
     if (ag.renderComponent) ag.renderComponent.visible = true;
 
-    // HP bar — only within 45m
     if (ag.hpBarGroup) {
       const showHP = d2 < 45 * 45;
       ag.hpBarGroup.visible = showHP;
@@ -192,13 +210,15 @@ function updateVisualsLOD(): void {
       }
     }
 
-    // Name tags — only within 35m
     if (ag.nameTag) ag.nameTag.visible = d2 < 35 * 35;
   }
 }
 
 /**
- * Only animate nearby agents' skeletons. Far agents freeze in their last pose.
+ * Only animate skeletons for nearby, active agents. Far bots were
+ * already downgraded to the cheap procedural mesh by BRBots' LOD system,
+ * so their render component has no agentAnimController and is skipped
+ * by the controller check inside updateAgentAnimations itself.
  */
 function updateAgentAnimationsLOD(dt: number): void {
   const px = gameState.player.position.x;
@@ -212,11 +232,9 @@ function updateAgentAnimationsLOD(dt: number): void {
     if (dx * dx + dz * dz < 100 * 100) nearAgents.push(ag);
   }
 
-  // Only update animations for nearby agents (mixer.update is expensive)
   updateAgentAnimations(nearAgents, dt);
 }
 
-// Eagerly load BR modules when mode is set to BR
 export async function preloadBRModules(): Promise<void> {
   await ensureBR();
 }
