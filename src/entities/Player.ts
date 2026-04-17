@@ -12,7 +12,8 @@ import type { TDMAgent } from './TDMAgent';
 import type { Collider } from '@/core/GameState';
 import { isPlayerInAir } from '@/br/DropPlane';
 import { playerVehicle } from '@/br/Vehicles';
-import { isInventoryOpen } from '@/br/InventoryUI';
+import { isInventoryOpen, getPlayerInventory, syncInventoryFromCombat } from '@/br/InventoryUI';
+import { consumeAmmo } from '@/br/Inventory';
 import { BR_MAP_MARGIN } from '@/br/BRConfig';
 
 function collidesPlayer(x: number, z: number): boolean {
@@ -71,9 +72,33 @@ export function updatePlayer(dt: number): void {
   const { player, keys, pickups } = gameState;
 
   if (gameState.pDead) {
+    if (gameState.mode === 'br') {
+      dom.dsp.textContent = 'Spectating killer — press ENTER for a new match';
+      let target = gameState.spectatorTarget;
+      if (!target || target.isDead || !target.active) {
+        target = gameState.agents.find((ag) => ag !== gameState.player && !ag.isDead && ag.active && (ag as any)._brState) ?? null;
+        gameState.spectatorTarget = target;
+      }
+      if (target) {
+        const followPos = new THREE.Vector3(target.position.x, target.position.y + 2.1, target.position.z);
+        const forwardDir = new THREE.Vector3(0, 0, -1);
+        if (target.renderComponent) forwardDir.applyQuaternion(target.renderComponent.quaternion);
+        forwardDir.y = 0;
+        if (forwardDir.lengthSq() < 0.0001) forwardDir.set(0, 0, -1);
+        forwardDir.normalize();
+        const camPos = followPos.clone().sub(forwardDir.multiplyScalar(3.8)).add(new THREE.Vector3(0, 1.3, 0));
+        gameState.camera.position.lerp(camPos, Math.min(1, dt * 4));
+        gameState.camera.lookAt(followPos);
+      } else {
+        gameState.camera.position.set(player.position.x, FP.height + 6, player.position.z + 8);
+        gameState.camera.lookAt(new THREE.Vector3(player.position.x, 0.8, player.position.z));
+      }
+      return;
+    }
+
     // In elimination mode, no respawning
     if (!allowsRespawn()) {
-      dom.dsp.textContent = 'Eliminert — venter på neste runde…';
+      dom.dsp.textContent = 'Eliminated — waiting for next round…';
       gameState.camera.position.set(player.position.x, FP.height, player.position.z);
       gameState.camera.rotation.y = gameState.cameraYaw;
       gameState.camera.rotation.x = gameState.cameraPitch;
@@ -81,7 +106,7 @@ export function updatePlayer(dt: number): void {
     }
 
     gameState.respTimer -= dt;
-    dom.dsp.textContent = 'Respawner om ' + Math.max(0, gameState.respTimer).toFixed(1) + 's…';
+    dom.dsp.textContent = 'Respawning in ' + Math.max(0, gameState.respTimer).toFixed(1) + 's…';
     if (gameState.respTimer <= 0) {
       gameState.pDead = false;
       player.isDead = false;
@@ -143,7 +168,19 @@ export function updatePlayer(dt: number): void {
     dom.reloadFill.style.width = pct + '%';
     if (gameState.pReloadTimer >= gameState.pReloadDuration) {
       gameState.pReloading = false;
-      gameState.pAmmo = gameState.pMaxAmmo;
+      if (gameState.mode === 'br') {
+        const inv = getPlayerInventory();
+        const activeItem = inv?.weaponSlots[inv.activeSlot];
+        if (inv && activeItem && activeItem.category === 'weapon' && activeItem.weaponId) {
+            const missing = Math.max(0, gameState.pMaxAmmo - gameState.pAmmo);
+          const loaded = consumeAmmo(inv, activeItem.weaponId, missing);
+          gameState.pAmmo += loaded;
+          activeItem.currentAmmo = gameState.pAmmo;
+          syncInventoryFromCombat();
+        }
+      } else {
+        gameState.pAmmo = gameState.pMaxAmmo;
+      }
       updateHUD();
       dom.reloadBar.classList.remove('on');
       dom.reloadText.classList.remove('on');

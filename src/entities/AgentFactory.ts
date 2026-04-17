@@ -159,7 +159,7 @@ export async function buildAgents(): Promise<void> {
   }
 
   // Player
-  const player = new TDMAgent('Spiller', TEAM_BLUE, 'rifleman');
+  const player = new TDMAgent('Player', TEAM_BLUE, 'rifleman');
   player.position.set(BLUE_SPAWNS[0][0], 0, BLUE_SPAWNS[0][2]);
   player.spawnPos.set(BLUE_SPAWNS[0][0], 0, BLUE_SPAWNS[0][2]);
   player.maxSpeed = FP.moveSpeed;
@@ -177,7 +177,7 @@ export async function buildAgents(): Promise<void> {
 
   // Blue team AI
   const blueClasses: BotClass[] = ['rifleman', 'rifleman', 'assault', 'sniper', 'flanker'];
-  const blueNames = ['Fenrik', 'Bjørn', 'Storm', 'Øye', 'Skygge'];
+  const blueNames = ['Falcon', 'Blaze', 'Storm', 'Ghost', 'Hawk'];
   for (let i = 0; i < 5; i++) {
     const sp = BLUE_SPAWNS[i + 1] || BLUE_SPAWNS[i % BLUE_SPAWNS.length];
     const bot = mkAgent(
