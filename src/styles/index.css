@@ -94,7 +94,10 @@ canvas { display: block; cursor: none; }
   transform: translate(-50%, -50%);
   pointer-events: none; z-index: 5;
   width: 0; height: 0;
+  --xh-gap: 14px;
+  --xh-len: 8px;
 }
+#xh.hidden { opacity: 0; }
 .xh-line {
   position: absolute;
   background: rgba(240, 250, 255, 0.9);
@@ -102,10 +105,10 @@ canvas { display: block; cursor: none; }
   transition: all 70ms ease-out;
   box-shadow: 0 0 4px rgba(74, 168, 255, 0.5);
 }
-.xh-top    { width: 2px; height: 8px; left: -1px; top: -14px; }
-.xh-bot    { width: 2px; height: 8px; left: -1px; top: 6px; }
-.xh-left   { width: 8px; height: 2px; left: -14px; top: -1px; }
-.xh-right  { width: 8px; height: 2px; left: 6px; top: -1px; }
+.xh-top    { width: 2px; height: var(--xh-len); left: -1px; top: calc(-1 * (var(--xh-gap) + var(--xh-len))); }
+.xh-bot    { width: 2px; height: var(--xh-len); left: -1px; top: var(--xh-gap); }
+.xh-left   { width: var(--xh-len); height: 2px; left: calc(-1 * (var(--xh-gap) + var(--xh-len))); top: -1px; }
+.xh-right  { width: var(--xh-len); height: 2px; left: var(--xh-gap); top: -1px; }
 .xh-dot {
   position: absolute;
   width: 2px; height: 2px;
@@ -114,11 +117,14 @@ canvas { display: block; cursor: none; }
   border-radius: 50%;
   box-shadow: 0 0 6px rgba(74, 168, 255, 0.6);
 }
-#xh.spread .xh-top    { top: -22px; }
-#xh.spread .xh-bot    { top: 14px; }
-#xh.spread .xh-left   { left: -22px; }
-#xh.spread .xh-right  { left: 14px; }
 #xh.fire .xh-line { background: rgba(74, 168, 255, 0.95); }
+#xh[data-weapon="shotgun"] .xh-line { height: 3px; width: max(var(--xh-len), 9px); }
+#xh[data-weapon="shotgun"] .xh-top,
+#xh[data-weapon="shotgun"] .xh-bot { width: 3px; }
+#xh[data-weapon="sniper_rifle"] .xh-line { opacity: 0.82; }
+#xh[data-weapon="rocket_launcher"] .xh-line,
+#xh[data-weapon="rocket_launcher"] .xh-dot { background: rgba(255, 188, 92, 0.95); box-shadow: 0 0 8px rgba(255, 170, 51, 0.6); }
+#xh[data-weapon="pistol"] .xh-dot { width: 3px; height: 3px; left: -1.5px; top: -1.5px; }
 
 /* Hit marker — white X */
 .xh-hit {
@@ -161,6 +167,27 @@ canvas { display: block; cursor: none; }
   60% { transform: scale(1); opacity: 1; }
   100% { transform: scale(1); opacity: 0; }
 }
+
+
+#scopeOverlay {
+  position: fixed; inset: 0; z-index: 6;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.12s ease-out;
+  background:
+    radial-gradient(circle at center, transparent 0 18%, rgba(0,0,0,0.15) 19%, rgba(0,0,0,0.85) 28%, rgba(0,0,0,0.96) 100%);
+}
+#scopeOverlay::before,
+#scopeOverlay::after {
+  content: '';
+  position: absolute;
+  left: 50%; top: 50%;
+  background: rgba(10, 12, 14, 0.9);
+  box-shadow: 0 0 8px rgba(255,255,255,0.12);
+}
+#scopeOverlay::before { width: 2px; height: 42vh; transform: translate(-50%, -50%); }
+#scopeOverlay::after { width: 42vh; height: 2px; transform: translate(-50%, -50%); }
+#scopeOverlay.on { opacity: 1; }
 
 /* Reload ring around crosshair */
 .xh-reload-ring {
