@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { gameState } from '@/core/GameState';
 
 export interface Vehicle {
@@ -20,19 +21,102 @@ export interface Vehicle {
 export const vehicles: Vehicle[] = [];
 let _nextVehicleId = 1;
 
-export function spawnVehicle(x: number, z: number): Vehicle {
+const BASE_URL = import.meta.env.BASE_URL;
+const CAR_URLS = [
+  `${BASE_URL}models/cars/car1.glb`,
+  `${BASE_URL}models/cars/car2.glb`,
+];
+
+const gltfLoader = new GLTFLoader();
+let _carPrefabsPromise: Promise<THREE.Group[]> | null = null;
+
+function prepRenderable(root: THREE.Object3D): void {
+  root.traverse((obj) => {
+    const mesh = obj as THREE.Mesh;
+    if ((mesh as any).isMesh) {
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+    }
+  });
+}
+
+function fitModelToVehicle(root: THREE.Object3D): void {
+  root.updateMatrixWorld(true);
+
+  const box = new THREE.Box3().setFromObject(root);
+  const size = new THREE.Vector3();
+  const center = new THREE.Vector3();
+  box.getSize(size);
+  box.getCenter(center);
+
+  const maxDim = Math.max(size.x, size.y, size.z, 0.0001);
+  const targetMaxDim = 4.4; // roughly matches old procedural car size
+  const s = targetMaxDim / maxDim;
+  root.scale.multiplyScalar(s);
+
+  root.updateMatrixWorld(true);
+
+  const box2 = new THREE.Box3().setFromObject(root);
+  const center2 = new THREE.Vector3();
+  box2.getCenter(center2);
+
+  root.position.x -= center2.x;
+  root.position.z -= center2.z;
+  root.position.y -= box2.min.y;
+}
+
+async function loadCarPrefabs(): Promise<THREE.Group[]> {
+  if (_carPrefabsPromise) return _carPrefabsPromise;
+
+  _carPrefabsPromise = Promise.all(
+    CAR_URLS.map((url) =>
+      new Promise<THREE.Group>((resolve, reject) => {
+        gltfLoader.load(
+          url,
+          (gltf) => {
+            const root = gltf.scene || gltf.scenes?.[0];
+            if (!root) {
+              reject(new Error(`No scene in ${url}`));
+              return;
+            }
+            prepRenderable(root);
+            fitModelToVehicle(root);
+            resolve(root as THREE.Group);
+          },
+          undefined,
+          reject,
+        );
+      }),
+    ),
+  ).catch((err) => {
+    console.warn('[Vehicles] Failed to load car models. Falling back to box cars.', err);
+    return [];
+  });
+
+  return _carPrefabsPromise;
+}
+
+function buildFallbackVehicleMesh(): THREE.Group {
   const g = new THREE.Group();
 
   const bodyMat = new THREE.MeshStandardMaterial({
     color: 0x2c3a4a + Math.floor(Math.random() * 0x202020),
-    roughness: 0.4, metalness: 0.7,
+    roughness: 0.4,
+    metalness: 0.7,
   });
   const glassMat = new THREE.MeshStandardMaterial({
-    color: 0x223040, roughness: 0.05, metalness: 0.95,
-    emissive: 0x446688, emissiveIntensity: 0.15,
+    color: 0x223040,
+    roughness: 0.05,
+    metalness: 0.95,
+    emissive: 0x446688,
+    emissiveIntensity: 0.15,
   });
   const accentMat = new THREE.MeshStandardMaterial({
-    color: 0xffaa33, emissive: 0xff8800, emissiveIntensity: 0.6, metalness: 0.8, roughness: 0.2,
+    color: 0xffaa33,
+    emissive: 0xff8800,
+    emissiveIntensity: 0.6,
+    metalness: 0.8,
+    roughness: 0.2,
   });
 
   const body = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.6, 4.2), bodyMat);
@@ -65,6 +149,7 @@ export function spawnVehicle(x: number, z: number): Vehicle {
     const h = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.2, 0.08), accentMat);
     h.position.set(side * 0.7, 0.75, 2.1);
     g.add(h);
+
     const light = new THREE.SpotLight(0xffeecc, 3, 25, Math.PI * 0.2, 0.5);
     light.position.set(side * 0.7, 0.8, 2.1);
     light.target.position.set(side * 0.7, 0.4, 12);
@@ -82,8 +167,26 @@ export function spawnVehicle(x: number, z: number): Vehicle {
     }
   }
 
+  return g;
+}
+
+async function attachVehicleModel(root: THREE.Group): Promise<void> {
+  const prefabs = await loadCarPrefabs();
+  if (!prefabs.length) return;
+
+  const prefab = prefabs[(Math.random() * prefabs.length) | 0];
+  const model = prefab.clone(true);
+
+  while (root.children.length) root.remove(root.children[0]);
+  root.add(model);
+}
+
+export function spawnVehicle(x: number, z: number): Vehicle {
+  const g = buildFallbackVehicleMesh();
   g.position.set(x, 0, z);
   gameState.scene.add(g);
+
+  void attachVehicleModel(g);
 
   const v: Vehicle = {
     id: _nextVehicleId++,
@@ -94,11 +197,13 @@ export function spawnVehicle(x: number, z: number): Vehicle {
     steerAngle: 0,
     speed: 0,
     maxSpeed: 26,
-    health: 400, maxHealth: 400,
+    health: 400,
+    maxHealth: 400,
     driver: null,
     seatsOccupied: 0,
     seatCount: 4,
   };
+
   vehicles.push(v);
   return v;
 }
@@ -109,6 +214,7 @@ export function populateVehicles(): void {
     [-150, 40], [40, -150], [160, 160], [-180, -180],
     [50, 50], [-50, -50], [180, -100], [-100, 180],
   ];
+
   for (const [x, z] of spawnPoints) {
     const jitterX = (Math.random() - 0.5) * 8;
     const jitterZ = (Math.random() - 0.5) * 8;
@@ -146,7 +252,12 @@ export function exitVehicle(): void {
   playerVehicle.driver = null;
   playerVehicle.seatsOccupied = Math.max(0, playerVehicle.seatsOccupied - 1);
 
-  const sideOffset = new THREE.Vector3(Math.cos(playerVehicle.yaw + Math.PI / 2) * 2.5, 0, Math.sin(playerVehicle.yaw + Math.PI / 2) * 2.5);
+  const sideOffset = new THREE.Vector3(
+    Math.cos(playerVehicle.yaw + Math.PI / 2) * 2.5,
+    0,
+    Math.sin(playerVehicle.yaw + Math.PI / 2) * 2.5,
+  );
+
   gameState.player.position.x = playerVehicle.position.x + sideOffset.x;
   gameState.player.position.z = playerVehicle.position.z + sideOffset.z;
 
@@ -170,6 +281,7 @@ export function updateVehicles(dt: number): void {
       } else {
         v.speed *= Math.max(0, 1 - dt * 0.8);
       }
+
       v.speed = Math.max(-v.maxSpeed * 0.5, Math.min(v.maxSpeed, v.speed));
 
       const turnRate = v.steerAngle * (v.speed / v.maxSpeed) * 2.2;
