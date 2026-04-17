@@ -14,15 +14,12 @@ let vmMuzzleSprite: THREE.Sprite;
 let currentWeaponMesh: THREE.Group | null = null;
 let currentWeaponId: WeaponId = 'assault_rifle';
 let vmHidden = false;
-let muzzleDebugOverlay: HTMLDivElement | null = null;
-
-const PLAYER_BASE_FOV = 78;
-const VM_BASE_FOV = 70;
 
 let currentViewmodelMixer: THREE.AnimationMixer | null = null;
 let currentViewmodelActions: THREE.AnimationAction[] = [];
-let currentM16Action: THREE.AnimationAction | null = null;
-let activeM16Range: M16RangeName | null = null;
+let currentAnimatedAction: THREE.AnimationAction | null = null;
+let activeAnimatedRange: AnimatedRangeName | null = null;
+let currentAnimatedWeaponId: AnimatedWeaponId | null = null;
 let wasReloading = false;
 
 let currentM16Wrapper: THREE.Group | null = null;
@@ -49,34 +46,6 @@ const VM_LAYOUTS: Record<WeaponId, VMLayout> = {
   rocket_launcher: { pos: [0.14, -0.13, -0.20], rot: [0, 0, 0], scale: 1.2, muzzleOffset: [0, 0.000, -0.18], recoilZ: 0.050, recoilUp: 0.030, recoilRot: 0.12 },
 };
 
-interface ADSSettings {
-  pos: [number, number, number];
-  rot: [number, number, number];
-  playerFov: number;
-  vmFov: number;
-  swayMul: number;
-  bobMul: number;
-}
-
-const ADS_SETTINGS: Partial<Record<WeaponId, ADSSettings>> = {
-  pistol:          { pos: [0.012, -0.098, -0.155], rot: [0.01, -0.01, 0.0], playerFov: 68, vmFov: 60, swayMul: 0.45, bobMul: 0.30 },
-  smg:             { pos: [0.000, -0.098, -0.205], rot: [0.00, -0.01, 0.0], playerFov: 66, vmFov: 58, swayMul: 0.40, bobMul: 0.24 },
-  assault_rifle:   { pos: [0.000, -0.093, -0.205], rot: [0.00,  0.00, 0.0], playerFov: 63, vmFov: 54, swayMul: 0.32, bobMul: 0.18 },
-  shotgun:         { pos: [0.010, -0.102, -0.175], rot: [0.00, -0.01, 0.0], playerFov: 68, vmFov: 60, swayMul: 0.45, bobMul: 0.28 },
-  sniper_rifle:    { pos: [0.000, -0.090, -0.140], rot: [0.00,  0.00, 0.0], playerFov: 26, vmFov: 34, swayMul: 0.10, bobMul: 0.05 },
-  rocket_launcher: { pos: [0.020, -0.110, -0.168], rot: [0.00, -0.01, 0.0], playerFov: 70, vmFov: 62, swayMul: 0.55, bobMul: 0.34 },
-};
-
-const MUZZLE_DEBUG_TUNER = {
-  enabled: false,
-  weaponId: 'assault_rifle' as WeaponId,
-  offset: new THREE.Vector3(
-    VM_LAYOUTS.assault_rifle.muzzleOffset[0],
-    VM_LAYOUTS.assault_rifle.muzzleOffset[1],
-    VM_LAYOUTS.assault_rifle.muzzleOffset[2],
-  ),
-};
-
 let recoilZ = 0;
 let recoilUp = 0;
 let recoilRot = 0;
@@ -91,6 +60,10 @@ let reloadLerp = 0;
 
 const BASE_URL = import.meta.env.BASE_URL;
 const M16_GLB_URL = `${BASE_URL}models/weapons/m16a2.glb`;
+const PISTOL_GLB_URL = `${BASE_URL}models/weapons/pistol.glb`;
+const SHOTGUN_GLB_URL = `${BASE_URL}models/weapons/shotgun.glb`;
+const SNIPER_GLB_URL = `${BASE_URL}models/weapons/sniper_rifle.glb`;
+const GRENADE_LAUNCHER_GLB_URL = `${BASE_URL}models/weapons/grenadelauncher.glb`;
 const KNIFE_GLB_URL = `${BASE_URL}models/weapons/knife.glb`;
 
 type CachedGLB = {
@@ -98,15 +71,90 @@ type CachedGLB = {
   animations: THREE.AnimationClip[];
 };
 
-type M16RangeName = 'shoot' | 'reload' | 'hit';
+type AnimatedWeaponId = 'assault_rifle' | 'pistol' | 'shotgun' | 'sniper_rifle' | 'rocket_launcher';
+type AnimatedRangeName = 'equip' | 'shoot' | 'reload' | 'hit';
 type KnifeRangeName = 'equip' | 'idle' | 'slice1' | 'slice2' | 'slice3';
 
-const M16_VIEWMODEL_TUNE = {
-  desiredMaxDimension: 0.930,
-  position: new THREE.Vector3(0.070, -0.055, -0.180),
-  rotation: new THREE.Euler(0.020, -0.220, 0.100),
-  idleTime: 0.05,
+interface AnimatedWeaponViewmodelConfig {
+  url: string;
+  desiredMaxDimension: number;
+  position: THREE.Vector3;
+  rotation: THREE.Euler;
+  holdTime: number;
+  ranges: Partial<Record<AnimatedRangeName, [number, number]>>;
+  logLabel: string;
+}
+
+const ANIMATED_VIEWMODEL_CONFIGS: Record<AnimatedWeaponId, AnimatedWeaponViewmodelConfig> = {
+  assault_rifle: {
+    url: M16_GLB_URL,
+    desiredMaxDimension: 0.930,
+    position: new THREE.Vector3(0.070, -0.055, -0.180),
+    rotation: new THREE.Euler(0.020, -0.220, 0.100),
+    holdTime: 0.05,
+    ranges: {
+      shoot: [0.00, 0.20],
+      reload: [2.30, 4.48],
+      equip: [4.80, 6.00],
+      hit: [6.80, 7.40],
+    },
+    logLabel: 'm16a2.glb',
+  },
+  pistol: {
+    url: PISTOL_GLB_URL,
+    desiredMaxDimension: 0.70,
+    position: new THREE.Vector3(0.040, -0.040, -0.110),
+    rotation: new THREE.Euler(0.010, -0.120, 0.080),
+    holdTime: 0.76,
+    ranges: {
+      shoot: [0.00, 0.30],
+      reload: [0.30, 2.75],
+      equip: [6.22, 7.70],
+    },
+    logLabel: 'pistol.glb',
+  },
+  shotgun: {
+    url: SHOTGUN_GLB_URL,
+    desiredMaxDimension: 1.02,
+    position: new THREE.Vector3(0.055, -0.050, -0.135),
+    rotation: new THREE.Euler(0.010, -0.120, 0.060),
+    holdTime: 3.32,
+    ranges: {
+      shoot: [0.00, 0.40],
+      reload: [0.40, 2.40],
+      equip: [2.70, 3.40],
+    },
+    logLabel: 'shotgun.glb',
+  },
+  sniper_rifle: {
+    url: SNIPER_GLB_URL,
+    desiredMaxDimension: 1.10,
+    position: new THREE.Vector3(0.060, -0.045, -0.150),
+    rotation: new THREE.Euler(0.010, -0.100, 0.050),
+    holdTime: 4.72,
+    ranges: {
+      shoot: [0.00, 0.40],
+      reload: [0.40, 3.85],
+      equip: [4.23, 4.75],
+    },
+    logLabel: 'sniper_rifle.glb',
+  },
+  rocket_launcher: {
+    url: GRENADE_LAUNCHER_GLB_URL,
+    desiredMaxDimension: 1.18,
+    position: new THREE.Vector3(0.075, -0.055, -0.155),
+    rotation: new THREE.Euler(0.015, -0.145, 0.055),
+    holdTime: 8.84,
+    ranges: {
+      shoot: [0.00, 0.37],
+      reload: [0.38, 7.11],
+      equip: [7.60, 8.90],
+    },
+    logLabel: 'grenadelauncher.glb',
+  },
 };
+
+const M16_VIEWMODEL_TUNE = ANIMATED_VIEWMODEL_CONFIGS.assault_rifle;
 
 const M16_DEBUG_TUNER = {
   enabled: false, // set true to enable tuning overlay
@@ -121,12 +169,6 @@ const M16_DEBUG_TUNER = {
     M16_VIEWMODEL_TUNE.rotation.z,
   ),
   desiredMaxDimension: M16_VIEWMODEL_TUNE.desiredMaxDimension,
-};
-
-const M16_RANGES: Record<M16RangeName, [number, number]> = {
-  shoot: [0.0, 0.20],
-  reload: [2.30, 4.48],
-  hit: [6.80, 7.40],
 };
 
 const KNIFE_VIEWMODEL_TUNE = {
@@ -161,9 +203,9 @@ const KNIFE_RANGES: Record<KnifeRangeName, [number, number]> = {
 
 const gltfLoader = new GLTFLoader();
 
-let cachedM16: CachedGLB | null = null;
-let cachedM16Promise: Promise<CachedGLB | null> | null = null;
-let loggedM16Clips = false;
+const cachedAnimated = new Map<AnimatedWeaponId, CachedGLB | null>();
+const cachedAnimatedPromises = new Map<AnimatedWeaponId, Promise<CachedGLB | null>>();
+const loggedAnimatedClips = new Set<AnimatedWeaponId>();
 
 let cachedKnife: CachedGLB | null = null;
 let cachedKnifePromise: Promise<CachedGLB | null> | null = null;
@@ -195,28 +237,42 @@ function prepRenderable(root: THREE.Object3D): void {
   });
 }
 
-async function loadM16Viewmodel(): Promise<CachedGLB | null> {
-  if (cachedM16) return cachedM16;
-  if (cachedM16Promise) return cachedM16Promise;
+function isAnimatedWeapon(weaponId: WeaponId): weaponId is AnimatedWeaponId {
+  return weaponId === 'assault_rifle'
+    || weaponId === 'pistol'
+    || weaponId === 'shotgun'
+    || weaponId === 'sniper_rifle'
+    || weaponId === 'rocket_launcher';
+}
 
-  cachedM16Promise = new Promise((resolve) => {
+async function loadAnimatedViewmodel(weaponId: AnimatedWeaponId): Promise<CachedGLB | null> {
+  if (cachedAnimated.has(weaponId)) return cachedAnimated.get(weaponId) ?? null;
+
+  const cachedPromise = cachedAnimatedPromises.get(weaponId);
+  if (cachedPromise) return cachedPromise;
+
+  const cfg = ANIMATED_VIEWMODEL_CONFIGS[weaponId];
+
+  const promise = new Promise<CachedGLB | null>((resolve) => {
     gltfLoader.load(
-      M16_GLB_URL,
+      cfg.url,
       (gltf) => {
         const scene = gltf.scene as THREE.Group;
         prepRenderable(scene);
 
-        cachedM16 = {
+        const loaded = {
           scene,
           animations: gltf.animations ?? [],
         };
 
-        if (!loggedM16Clips) {
-          loggedM16Clips = true;
-          console.info('[WeaponViewmodel] Loaded m16a2.glb');
+        cachedAnimated.set(weaponId, loaded);
+
+        if (!loggedAnimatedClips.has(weaponId)) {
+          loggedAnimatedClips.add(weaponId);
+          console.info(`[WeaponViewmodel] Loaded ${cfg.logLabel}`);
           console.info(
-            '[WeaponViewmodel] M16 animation clips:',
-            cachedM16.animations.map((clip) => ({
+            `[WeaponViewmodel] ${weaponId} animation clips:`,
+            loaded.animations.map((clip) => ({
               name: clip.name,
               duration: clip.duration,
               tracks: clip.tracks.length,
@@ -224,17 +280,19 @@ async function loadM16Viewmodel(): Promise<CachedGLB | null> {
           );
         }
 
-        resolve(cachedM16);
+        resolve(loaded);
       },
       undefined,
       (err) => {
-        console.error('[WeaponViewmodel] Failed to load M16 GLB. Falling back to procedural rifle.', err);
+        console.error(`[WeaponViewmodel] Failed to load ${cfg.logLabel}. Falling back to procedural weapon.`, err);
+        cachedAnimated.set(weaponId, null);
         resolve(null);
       },
     );
   });
 
-  return cachedM16Promise;
+  cachedAnimatedPromises.set(weaponId, promise);
+  return promise;
 }
 
 async function loadKnifeViewmodel(): Promise<CachedGLB | null> {
@@ -723,32 +781,39 @@ function onM16DebugKeyDown(ev: KeyboardEvent): void {
   refreshM16DebugOverlay();
 }
 
-function holdM16IdlePose(): void {
+function holdAnimatedPose(weaponId: AnimatedWeaponId): void {
+  if (currentAnimatedWeaponId !== weaponId) return;
   if (!currentViewmodelMixer || currentViewmodelActions.length === 0) return;
 
+  const cfg = ANIMATED_VIEWMODEL_CONFIGS[weaponId];
   const action = currentViewmodelActions[0];
-  currentM16Action = action;
-  activeM16Range = null;
+
+  currentAnimatedAction = action;
+  activeAnimatedRange = null;
 
   action.enabled = true;
   action.clampWhenFinished = true;
   action.setLoop(THREE.LoopOnce, 1);
   action.play();
   action.paused = true;
-  action.time = M16_VIEWMODEL_TUNE.idleTime;
+  action.time = cfg.holdTime;
 
   currentViewmodelMixer.update(0);
 }
 
-function playM16Range(name: M16RangeName, timeScale = 1): void {
-  if (currentWeaponId !== 'assault_rifle') return;
+function playAnimatedRange(weaponId: AnimatedWeaponId, name: AnimatedRangeName, timeScale = 1): void {
+  if (currentAnimatedWeaponId !== weaponId) return;
   if (!currentViewmodelMixer || currentViewmodelActions.length === 0) return;
 
-  const action = currentViewmodelActions[0];
-  const [start] = M16_RANGES[name];
+  const cfg = ANIMATED_VIEWMODEL_CONFIGS[weaponId];
+  const range = cfg.ranges[name];
+  if (!range) return;
 
-  currentM16Action = action;
-  activeM16Range = name;
+  const action = currentViewmodelActions[0];
+  const [start] = range;
+
+  currentAnimatedAction = action;
+  activeAnimatedRange = name;
 
   action.reset();
   action.enabled = true;
@@ -762,6 +827,7 @@ function playM16Range(name: M16RangeName, timeScale = 1): void {
   currentViewmodelMixer.update(0);
 }
 
+
 function clearCurrentWeaponMesh(): void {
   if (currentWeaponMesh) {
     vmGroup.remove(currentWeaponMesh);
@@ -769,8 +835,9 @@ function clearCurrentWeaponMesh(): void {
   }
 
   currentM16Wrapper = null;
-  activeM16Range = null;
-  currentM16Action = null;
+  currentAnimatedWeaponId = null;
+  activeAnimatedRange = null;
+  currentAnimatedAction = null;
   wasReloading = false;
 
   currentKnifeWrapper = null;
@@ -790,16 +857,18 @@ function clearCurrentWeaponMesh(): void {
   }
 }
 
-function attachLoadedM16(): void {
-  if (!cachedM16) {
-    applyProceduralWeapon('assault_rifle');
+function attachLoadedAnimatedWeapon(weaponId: AnimatedWeaponId): void {
+  const cached = cachedAnimated.get(weaponId);
+  if (!cached) {
+    applyProceduralWeapon(weaponId);
     return;
   }
 
+  const cfg = ANIMATED_VIEWMODEL_CONFIGS[weaponId];
   const wrapper = new THREE.Group();
-  wrapper.name = 'M16ViewmodelWrapper';
+  wrapper.name = `${weaponId}ViewmodelWrapper`;
 
-  const cloneRoot = skeletonClone(cachedM16.scene) as THREE.Group;
+  const cloneRoot = skeletonClone(cached.scene) as THREE.Group;
   prepRenderable(cloneRoot);
 
   const rawBox = new THREE.Box3().setFromObject(cloneRoot);
@@ -808,50 +877,68 @@ function attachLoadedM16(): void {
   rawBox.getSize(rawSize);
   rawBox.getCenter(rawCenter);
 
-  console.info('[WeaponViewmodel] M16 raw bounds size:', rawSize.toArray());
-  console.info('[WeaponViewmodel] M16 raw bounds center:', rawCenter.toArray());
+  if (weaponId === 'assault_rifle') {
+    console.info('[WeaponViewmodel] M16 raw bounds size:', rawSize.toArray());
+    console.info('[WeaponViewmodel] M16 raw bounds center:', rawCenter.toArray());
+  }
 
   cloneRoot.position.sub(rawCenter);
   wrapper.add(cloneRoot);
 
   const maxDim = Math.max(rawSize.x, rawSize.y, rawSize.z);
-  const desiredDim = M16_DEBUG_TUNER.enabled
+  const desiredDim = weaponId === 'assault_rifle' && M16_DEBUG_TUNER.enabled
     ? M16_DEBUG_TUNER.desiredMaxDimension
-    : M16_VIEWMODEL_TUNE.desiredMaxDimension;
+    : cfg.desiredMaxDimension;
   const scale = desiredDim / Math.max(maxDim, 0.0001);
 
   wrapper.scale.setScalar(scale);
-  wrapper.position.copy(M16_DEBUG_TUNER.enabled ? M16_DEBUG_TUNER.position : M16_VIEWMODEL_TUNE.position);
-  wrapper.rotation.copy(M16_DEBUG_TUNER.enabled ? M16_DEBUG_TUNER.rotation : M16_VIEWMODEL_TUNE.rotation);
+
+  if (weaponId === 'assault_rifle') {
+    wrapper.position.copy(M16_DEBUG_TUNER.enabled ? M16_DEBUG_TUNER.position : cfg.position);
+    wrapper.rotation.copy(M16_DEBUG_TUNER.enabled ? M16_DEBUG_TUNER.rotation : cfg.rotation);
+    currentM16Wrapper = wrapper;
+  } else {
+    wrapper.position.copy(cfg.position);
+    wrapper.rotation.copy(cfg.rotation);
+    currentM16Wrapper = null;
+  }
+
   wrapper.visible = true;
 
-  currentM16Wrapper = wrapper;
+  currentAnimatedWeaponId = weaponId;
   currentWeaponMesh = wrapper;
   vmGroup.add(currentWeaponMesh);
 
   currentViewmodelMixer = null;
   currentViewmodelActions = [];
-  currentM16Action = null;
-  activeM16Range = null;
+  currentAnimatedAction = null;
+  activeAnimatedRange = null;
 
-  if (cachedM16.animations.length > 0) {
+  if (cached.animations.length > 0) {
     currentViewmodelMixer = new THREE.AnimationMixer(cloneRoot);
-    currentViewmodelActions = cachedM16.animations.map((clip) =>
+    currentViewmodelActions = cached.animations.map((clip) =>
       currentViewmodelMixer!.clipAction(clip),
     );
-    holdM16IdlePose();
+
+    if (cfg.ranges.equip) {
+      playAnimatedRange(weaponId, 'equip', 1.0);
+    } else {
+      holdAnimatedPose(weaponId);
+    }
   }
 
-  const finalBox = new THREE.Box3().setFromObject(wrapper);
-  const finalSize = new THREE.Vector3();
-  const finalCenter = new THREE.Vector3();
-  finalBox.getSize(finalSize);
-  finalBox.getCenter(finalCenter);
+  if (weaponId === 'assault_rifle') {
+    const finalBox = new THREE.Box3().setFromObject(wrapper);
+    const finalSize = new THREE.Vector3();
+    const finalCenter = new THREE.Vector3();
+    finalBox.getSize(finalSize);
+    finalBox.getCenter(finalCenter);
 
-  console.info('[WeaponViewmodel] M16 final bounds size:', finalSize.toArray());
-  console.info('[WeaponViewmodel] M16 final bounds center:', finalCenter.toArray());
+    console.info('[WeaponViewmodel] M16 final bounds size:', finalSize.toArray());
+    console.info('[WeaponViewmodel] M16 final bounds center:', finalCenter.toArray());
 
-  refreshM16DebugOverlay();
+    refreshM16DebugOverlay();
+  }
 }
 
 function ensureKnifeDebugOverlay(): void {
@@ -1149,8 +1236,8 @@ function applyWeaponSwap(weaponId: WeaponId): void {
   vmMuzzleMesh.visible = hasMuzzle;
   vmMuzzleSprite.visible = hasMuzzle;
 
-  if (weaponId === 'assault_rifle' && cachedM16) {
-    attachLoadedM16();
+  if (isAnimatedWeapon(weaponId) && cachedAnimated.get(weaponId)) {
+    attachLoadedAnimatedWeapon(weaponId);
   } else if (weaponId === 'knife' && cachedKnife) {
     attachLoadedKnife();
   } else {
@@ -1164,18 +1251,14 @@ function applyWeaponSwap(weaponId: WeaponId): void {
   recoilZ = 0;
   recoilUp = 0;
   recoilRot = 0;
-
-  if (MUZZLE_DEBUG_TUNER.enabled) {
-    applyMuzzleTunerForWeapon(weaponId);
-  }
 }
 
 async function tryLoadSpecialViewmodel(weaponId: WeaponId): Promise<void> {
-  if (weaponId === 'assault_rifle') {
-    const loaded = await loadM16Viewmodel();
+  if (isAnimatedWeapon(weaponId)) {
+    const loaded = await loadAnimatedViewmodel(weaponId);
     if (!loaded) return;
-    if (currentWeaponId === 'assault_rifle' || pendingWeaponId === 'assault_rifle') {
-      applyWeaponSwap('assault_rifle');
+    if (currentWeaponId === weaponId || pendingWeaponId === weaponId) {
+      applyWeaponSwap(weaponId);
       pendingWeaponId = null;
       switchDir = 'up';
       switchProgress = 1;
@@ -1223,7 +1306,7 @@ export function initViewmodel(): void {
   rim.position.set(-2, 1, -1);
   vmScene.add(rim);
 
-  vmCamera = new THREE.PerspectiveCamera(VM_BASE_FOV, innerWidth / innerHeight, 0.01, 10);
+  vmCamera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.01, 10);
 
   vmGroup = new THREE.Group();
   vmScene.add(vmGroup);
@@ -1261,11 +1344,6 @@ export function initViewmodel(): void {
     window.addEventListener('keydown', onKnifeDebugKeyDown);
   }
 
-  if (MUZZLE_DEBUG_TUNER.enabled) {
-    ensureMuzzleDebugOverlay();
-    window.addEventListener('keydown', onMuzzleDebugKeyDown);
-  }
-
   setViewmodelWeapon(gameState.pWeaponId);
 }
 
@@ -1300,14 +1378,14 @@ export function fireViewmodel(): void {
   gameState.recoilRecoveryPitch += kickUp;
   gameState.recoilRecoveryYaw += kickSide;
 
-  if (currentWeaponId === 'assault_rifle' && currentViewmodelMixer) {
-    playM16Range('shoot', 1.0);
+  if (isAnimatedWeapon(currentWeaponId) && currentViewmodelMixer) {
+    playAnimatedRange(currentWeaponId, 'shoot', 1.0);
   }
 }
 
 export function playViewmodelHit(): void {
-  if (currentWeaponId === 'assault_rifle' && currentViewmodelMixer) {
-    playM16Range('hit', 1.0);
+  if (isAnimatedWeapon(currentWeaponId) && currentViewmodelMixer) {
+    playAnimatedRange(currentWeaponId, 'hit', 1.0);
   }
 }
 
@@ -1318,9 +1396,9 @@ export function updateViewmodel(dt: number): void {
   const isMoving = keys.w || keys.a || keys.s || keys.d;
   const isSprinting = keys.shift && isMoving;
 
-  if (currentWeaponId === 'assault_rifle') {
+  if (isAnimatedWeapon(currentWeaponId)) {
     if (pReloading && !wasReloading && currentViewmodelMixer) {
-      playM16Range('reload', 1.0);
+      playAnimatedRange(currentWeaponId, 'reload', 1.0);
     }
     wasReloading = pReloading;
   } else {
@@ -1330,10 +1408,10 @@ export function updateViewmodel(dt: number): void {
   if (currentViewmodelMixer) {
     currentViewmodelMixer.update(dt);
 
-    if (activeM16Range && currentM16Action) {
-      const [, end] = M16_RANGES[activeM16Range];
-      if (currentM16Action.time >= end) {
-        holdM16IdlePose();
+    if (isAnimatedWeapon(currentWeaponId) && activeAnimatedRange && currentAnimatedAction) {
+      const range = ANIMATED_VIEWMODEL_CONFIGS[currentWeaponId].ranges[activeAnimatedRange];
+      if (range && currentAnimatedAction.time >= range[1]) {
+        holdAnimatedPose(currentWeaponId);
       }
     }
 
@@ -1377,17 +1455,12 @@ export function updateViewmodel(dt: number): void {
     bobPhase += dt * 1.8;
   }
 
-  const adsSettings = ADS_SETTINGS[currentWeaponId] ?? null;
-  const adsAmount = getADSAmount(dt, isSprinting);
-  const bobMul = adsSettings ? (1 - adsAmount) + adsSettings.bobMul * adsAmount : 1;
-  const swayMul = adsSettings ? (1 - adsAmount) + adsSettings.swayMul * adsAmount : 1;
-
-  const bobAmt = (isMoving ? (isSprinting ? 0.008 : 0.004) : 0.0012) * bobMul;
+  const bobAmt = isMoving ? (isSprinting ? 0.008 : 0.004) : 0.0012;
   const bobX = Math.sin(bobPhase) * bobAmt;
   const bobY = Math.abs(Math.cos(bobPhase * 2)) * bobAmt * 0.7;
 
-  const targetSwayX = -mouseDeltaX * 0.0008 * swayMul;
-  const targetSwayY = -mouseDeltaY * 0.0008 * swayMul;
+  const targetSwayX = -mouseDeltaX * 0.0008;
+  const targetSwayY = -mouseDeltaY * 0.0008;
   swayX += (targetSwayX - swayX) * Math.min(1, dt * 12);
   swayY += (targetSwayY - swayY) * Math.min(1, dt * 12);
   swayX *= Math.max(0, 1 - dt * 5);
@@ -1397,22 +1470,6 @@ export function updateViewmodel(dt: number): void {
   sprintLerp += (sprintTarget - sprintLerp) * Math.min(1, dt * 8);
 
   const reloadTarget = pReloading ? 1 : 0;
-
-  const playerTargetFov = adsSettings
-    ? THREE.MathUtils.lerp(PLAYER_BASE_FOV, adsSettings.playerFov, adsAmount)
-    : PLAYER_BASE_FOV;
-  if (Math.abs(gameState.camera.fov - playerTargetFov) > 0.02) {
-    gameState.camera.fov += (playerTargetFov - gameState.camera.fov) * Math.min(1, dt * 10);
-    gameState.camera.updateProjectionMatrix();
-  }
-
-  const vmTargetFov = adsSettings
-    ? THREE.MathUtils.lerp(VM_BASE_FOV, adsSettings.vmFov, adsAmount)
-    : VM_BASE_FOV;
-  if (Math.abs(vmCamera.fov - vmTargetFov) > 0.02) {
-    vmCamera.fov += (vmTargetFov - vmCamera.fov) * Math.min(1, dt * 10);
-    vmCamera.updateProjectionMatrix();
-  }
   reloadLerp += (reloadTarget - reloadLerp) * Math.min(1, dt * 6);
 
   recoilZ *= Math.max(0, 1 - dt * 15);
@@ -1442,31 +1499,22 @@ export function updateViewmodel(dt: number): void {
   const reloadDrop = reloadLerp * 0.08;
   const reloadTilt = reloadLerp * 0.6;
 
-  const adsPos = adsSettings?.pos ?? layout.pos;
-  const adsRot = adsSettings?.rot ?? layout.rot;
-
   vmGroup.position.set(
-    THREE.MathUtils.lerp(layout.pos[0] + bobX + swayX + sprintLerp * 0.04, adsPos[0], adsAmount),
-    THREE.MathUtils.lerp(layout.pos[1] + bobY + swayY + recoilUp - switchDrop - reloadDrop, adsPos[1], adsAmount),
-    THREE.MathUtils.lerp(layout.pos[2] + recoilZ + switchDrop * 0.5, adsPos[2], adsAmount),
+    layout.pos[0] + bobX + swayX + sprintLerp * 0.04,
+    layout.pos[1] + bobY + swayY + recoilUp - switchDrop - reloadDrop,
+    layout.pos[2] + recoilZ + switchDrop * 0.5,
   );
 
   vmGroup.rotation.set(
-    THREE.MathUtils.lerp(layout.rot[0] - recoilRot + reloadTilt, adsRot[0], adsAmount),
-    THREE.MathUtils.lerp(layout.rot[1] + sprintLerp * 0.35, adsRot[1], adsAmount),
-    THREE.MathUtils.lerp(layout.rot[2] - sprintLerp * 0.25 + reloadLerp * 0.3, adsRot[2], adsAmount),
+    layout.rot[0] - recoilRot + reloadTilt,
+    layout.rot[1] + sprintLerp * 0.35,
+    layout.rot[2] - sprintLerp * 0.25 + reloadLerp * 0.3,
   );
 
-  const mOff = MUZZLE_DEBUG_TUNER.enabled && MUZZLE_DEBUG_TUNER.weaponId === currentWeaponId
-    ? [MUZZLE_DEBUG_TUNER.offset.x, MUZZLE_DEBUG_TUNER.offset.y, MUZZLE_DEBUG_TUNER.offset.z] as const
-    : layout.muzzleOffset;
+  const mOff = layout.muzzleOffset;
   vmMuzzleFlash.position.set(mOff[0], mOff[1], mOff[2]);
   vmMuzzleMesh.position.set(mOff[0], mOff[1], mOff[2]);
   vmMuzzleSprite.position.set(mOff[0], mOff[1], mOff[2]);
-
-  if (currentWeaponMesh) {
-    currentWeaponMesh.visible = !(currentWeaponId === 'sniper_rifle' && adsAmount > 0.7);
-  }
 
   if (Math.abs(gameState.recoilPitch) > 0.0001) {
     const apply = gameState.recoilPitch * Math.min(1, dt * 20);
@@ -1478,85 +1526,6 @@ export function updateViewmodel(dt: number): void {
     gameState.cameraYaw += apply;
     gameState.recoilYaw -= apply;
   }
-}
-
-function ensureMuzzleDebugOverlay(): void {
-  if (!MUZZLE_DEBUG_TUNER.enabled) return;
-  if (muzzleDebugOverlay) return;
-
-  const el = document.createElement('div');
-  el.style.position = 'fixed';
-  el.style.right = '16px';
-  el.style.bottom = '16px';
-  el.style.zIndex = '120';
-  el.style.padding = '10px 12px';
-  el.style.whiteSpace = 'pre';
-  el.style.font = '12px/1.45 monospace';
-  el.style.color = '#eaf3ff';
-  el.style.background = 'rgba(5,10,18,0.92)';
-  el.style.border = '1px solid rgba(120,180,255,0.35)';
-  el.style.borderRadius = '4px';
-  el.style.boxShadow = '0 0 24px rgba(0,0,0,0.35)';
-  document.body.appendChild(el);
-  muzzleDebugOverlay = el;
-  refreshMuzzleDebugOverlay();
-}
-
-function refreshMuzzleDebugOverlay(): void {
-  if (!muzzleDebugOverlay || !MUZZLE_DEBUG_TUNER.enabled) return;
-  const o = MUZZLE_DEBUG_TUNER.offset;
-  muzzleDebugOverlay.textContent =
-`MUZZLE TUNER — ${MUZZLE_DEBUG_TUNER.weaponId}
-Arrows = X/Y, PageUp/PageDown = Z
-Shift = bigger step, Enter = print to console
-
-offset: [${o.x.toFixed(3)}, ${o.y.toFixed(3)}, ${o.z.toFixed(3)}]`;
-}
-
-function applyMuzzleTunerForWeapon(weaponId: WeaponId): void {
-  MUZZLE_DEBUG_TUNER.weaponId = weaponId;
-  const off = VM_LAYOUTS[weaponId].muzzleOffset;
-  MUZZLE_DEBUG_TUNER.offset.set(off[0], off[1], off[2]);
-  refreshMuzzleDebugOverlay();
-}
-
-function commitMuzzleOffset(): void {
-  const layout = VM_LAYOUTS[MUZZLE_DEBUG_TUNER.weaponId];
-  layout.muzzleOffset = [MUZZLE_DEBUG_TUNER.offset.x, MUZZLE_DEBUG_TUNER.offset.y, MUZZLE_DEBUG_TUNER.offset.z];
-}
-
-function onMuzzleDebugKeyDown(ev: KeyboardEvent): void {
-  if (!MUZZLE_DEBUG_TUNER.enabled) return;
-  const step = ev.shiftKey ? 0.01 : 0.0025;
-  let changed = false;
-  switch (ev.key) {
-    case 'ArrowLeft': MUZZLE_DEBUG_TUNER.offset.x -= step; changed = true; break;
-    case 'ArrowRight': MUZZLE_DEBUG_TUNER.offset.x += step; changed = true; break;
-    case 'ArrowUp': MUZZLE_DEBUG_TUNER.offset.y += step; changed = true; break;
-    case 'ArrowDown': MUZZLE_DEBUG_TUNER.offset.y -= step; changed = true; break;
-    case 'PageUp': MUZZLE_DEBUG_TUNER.offset.z -= step; changed = true; break;
-    case 'PageDown': MUZZLE_DEBUG_TUNER.offset.z += step; changed = true; break;
-    case 'Enter':
-      commitMuzzleOffset();
-      console.log('[WeaponViewmodel] muzzleOffset', MUZZLE_DEBUG_TUNER.weaponId, [...VM_LAYOUTS[MUZZLE_DEBUG_TUNER.weaponId].muzzleOffset]);
-      break;
-    default:
-      return;
-  }
-
-  if (changed) {
-    ev.preventDefault();
-    commitMuzzleOffset();
-    refreshMuzzleDebugOverlay();
-  }
-}
-
-function getADSAmount(dt: number, isSprinting: boolean): number {
-  const canADS = !isSprinting && !gameState.pReloading && !gameState.pDead && !!ADS_SETTINGS[currentWeaponId] && gameState.isADS;
-  const target = canADS ? 1 : 0;
-  gameState.adsAmount += (target - gameState.adsAmount) * Math.min(1, dt * 12);
-  if (Math.abs(target - gameState.adsAmount) < 0.001) gameState.adsAmount = target;
-  return gameState.adsAmount;
 }
 
 function easeOutCubic(t: number): number {
