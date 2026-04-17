@@ -210,7 +210,21 @@ function updateVisualsLOD(): void {
       }
     }
 
-    if (ag.nameTag) ag.nameTag.visible = d2 < 35 * 35;
+    if (ag.nameTag) ag.nameTag.visible = d2 < 35 * 35;if (ag.nameTag) {
+  const dist = Math.sqrt(d2);
+
+  // Hide if too close (huge on screen) or too far (visual clutter)
+  const showTag = dist > 5 && dist < 22;
+
+  ag.nameTag.visible = showTag;
+
+  if (showTag) {
+    // Keep apparent screen size much more stable.
+    // Perspective makes nearby sprites huge; scaling by distance counters that.
+    const s = THREE.MathUtils.clamp(dist * 0.055, 0.42, 0.95);
+    ag.nameTag.scale.set(0.9 * s, 0.22 * s, 1);
+  }
+}
   }
 }
 
