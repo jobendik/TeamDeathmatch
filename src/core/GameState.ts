@@ -192,6 +192,8 @@ export const gameState = {
   mouseHeld: false,
   mouseDeltaX: 0,
   mouseDeltaY: 0,
+  isADS: false,
+  adsAmount: 0,
   keys: {
     w: false, a: false, s: false, d: false,
     r: false, shift: false, tab: false, g: false,
@@ -214,6 +216,9 @@ export const gameState = {
   roundOver: false,
   killfeedEntries: [] as KillfeedEntry[],
   winnerText: '',
+
+  // BR spectator
+  spectatorTarget: null as TDMAgent | null,
 
   // Floor shader ref
   floorMat: null as THREE.ShaderMaterial | null,

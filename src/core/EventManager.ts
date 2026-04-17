@@ -8,9 +8,57 @@ import { updateHUD, flashCrosshairFire } from '@/ui/HUD';
 import { fireViewmodel, setViewmodelWeapon, resizeViewmodel } from '@/rendering/WeaponViewmodel';
 import { togglePause } from '@/ui/Menus';
 import { isPlayerInAir } from '@/br/DropPlane';
+import { getPlayerInventory, setBRActiveSlotByOrder, syncInventoryFromCombat } from '@/br/InventoryUI';
+import { getAmmoPool } from '@/br/Inventory';
+
+
+function getCameraForward(): THREE.Vector3 {
+  const { cameraYaw, cameraPitch } = gameState;
+  return new THREE.Vector3(
+    -Math.sin(cameraYaw) * Math.cos(cameraPitch),
+    Math.sin(cameraPitch),
+    -Math.cos(cameraYaw) * Math.cos(cameraPitch),
+  ).normalize();
+}
+
+function getAimPoint(fwd: THREE.Vector3, maxDist = 160): THREE.Vector3 {
+  const origin = gameState.camera.position.clone();
+  const rc = gameState.raycaster;
+  rc.set(origin, fwd);
+  rc.near = 0;
+  rc.far = maxDist;
+  const wallHits = rc.intersectObjects(gameState.wallMeshes, false);
+  return wallHits.length > 0
+    ? wallHits[0].point.clone()
+    : origin.add(fwd.clone().multiplyScalar(maxDist));
+}
+
+function getShotOrigin(kind: 'hitscan' | 'projectile' | 'grenade'): THREE.Vector3 {
+  const fwd = getCameraForward();
+  const origin = gameState.camera.position.clone();
+  if (kind === 'projectile') return origin.add(fwd.multiplyScalar(0.9)).add(new THREE.Vector3(0, -0.05, 0));
+  if (kind === 'grenade') return origin.add(fwd.multiplyScalar(0.45)).add(new THREE.Vector3(0, -0.08, 0));
+  return origin.add(fwd.multiplyScalar(0.15));
+}
+
+function updateBRAmmoAfterShot(): void {
+  if (gameState.mode !== 'br') return;
+  syncInventoryFromCombat();
+}
+
+function finishReloadForBR(): boolean {
+  if (gameState.mode !== 'br') return false;
+  const inv = getPlayerInventory();
+  if (!inv) return false;
+  const activeItem = inv.weaponSlots[inv.activeSlot];
+  if (!activeItem || activeItem.category !== 'weapon' || !activeItem.weaponId) return false;
+
+  return gameState.pAmmo < gameState.pMaxAmmo && getAmmoPool(inv, activeItem.weaponId) > 0;
+}
 
 function startReload(): void {
-  if (gameState.pWeaponId === 'unarmed') return; // can't reload unarmed
+  if (gameState.pWeaponId === 'unarmed' || gameState.pWeaponId === 'knife') return;
+  if (gameState.mode === 'br' && !finishReloadForBR()) return;
   const wep = WEAPONS[gameState.pWeaponId];
   gameState.pReloading = true;
   gameState.pReloadTimer = 0;
@@ -26,6 +74,13 @@ function switchWeapon(slot: number): void {
     gameState.pReloading = false;
     dom.reloadBar.classList.remove('on');
     dom.reloadText.classList.remove('on');
+  }
+
+  if (gameState.mode === 'br') {
+    if (!setBRActiveSlotByOrder(slot)) return;
+    gameState.pShootTimer = 0;
+    gameState.pBurstCount = 0;
+    return;
   }
 
   gameState.pActiveSlot = slot;
@@ -47,18 +102,14 @@ export function onShoot(): void {
   if (gameState.pShootTimer > 0) return;
   if (isPlayerInAir()) return; // no shooting during BR drop
 
-  const { player, cameraYaw, cameraPitch, pWeaponId } = gameState;
+  const { player, pWeaponId } = gameState;
   const wep = WEAPONS[pWeaponId];
+  const fwd = getCameraForward();
 
   // Knife melee attack — no ammo needed
   if (pWeaponId === 'knife') {
     const o = new THREE.Vector3(player.position.x, player.position.y + FP.height - 0.2, player.position.z);
-    const dir = new THREE.Vector3(
-      -Math.sin(cameraYaw) * Math.cos(cameraPitch),
-      Math.sin(cameraPitch),
-      -Math.cos(cameraYaw) * Math.cos(cameraPitch),
-    ).normalize();
-    hitscanShot(o, dir, 'player', player.team, pWeaponId, 0x60a5fa, player);
+    hitscanShot(o, fwd, 'player', player.team, pWeaponId, 0x60a5fa, player);
     fireViewmodel();
     gameState.pShootTimer = wep.fireRate;
     updateHUD();
@@ -67,24 +118,23 @@ export function onShoot(): void {
 
   if (gameState.pAmmo <= 0) { startReload(); return; }
 
-  const o = new THREE.Vector3(player.position.x, player.position.y + FP.height - 0.2, player.position.z);
-  const fwd = new THREE.Vector3(
-    -Math.sin(cameraYaw) * Math.cos(cameraPitch),
-    Math.sin(cameraPitch),
-    -Math.cos(cameraYaw) * Math.cos(cameraPitch),
-  ).normalize();
-
-  const dir = fwd.clone();
-  const err = wep.aimError * (gameState.keys.shift ? 0.6 : 1.0);
-  dir.x += (Math.random() - 0.5) * err;
-  dir.y += (Math.random() - 0.5) * err * 0.5;
-  dir.z += (Math.random() - 0.5) * err;
-  dir.normalize();
+  const aimPoint = getAimPoint(fwd, Math.max(wep.range, 120));
+  const originKind = pWeaponId === 'rocket_launcher' ? 'projectile' : 'hitscan';
+  const o = getShotOrigin(originKind);
+  const dir = aimPoint.clone().sub(o).normalize();
+  const errMul = gameState.isADS ? 0.35 : gameState.keys.shift ? 1.35 : 1.0;
+  const err = wep.aimError * errMul;
+  if (err > 0) {
+    dir.x += (Math.random() - 0.5) * err;
+    dir.y += (Math.random() - 0.5) * err * 0.5;
+    dir.z += (Math.random() - 0.5) * err;
+    dir.normalize();
+  }
 
   if (pWeaponId === 'rocket_launcher') {
     spawnRocket(o, dir, 'player', player.team, 0x60a5fa, player);
   } else if (pWeaponId === 'shotgun') {
-    shotgunBlast(o, fwd, 'player', player.team, 0x60a5fa, player);
+    shotgunBlast(o, dir, 'player', player.team, 0x60a5fa, player);
   } else {
     hitscanShot(o, dir, 'player', player.team, pWeaponId, 0x60a5fa, player);
   }
@@ -92,6 +142,7 @@ export function onShoot(): void {
   fireViewmodel();
   flashCrosshairFire();
   gameState.pAmmo--;
+  updateBRAmmoAfterShot();
   gameState.pShootTimer = wep.fireRate;
   updateHUD();
 
@@ -104,16 +155,13 @@ function throwGrenade(): void {
   if (gameState.pGrenadeCooldown > 0) return;
   if (isPlayerInAir()) return; // no grenades during BR drop
 
-  const { player, cameraYaw, cameraPitch } = gameState;
-  const o = new THREE.Vector3(player.position.x, player.position.y + FP.height, player.position.z);
-  const dir = new THREE.Vector3(
-    -Math.sin(cameraYaw) * Math.cos(cameraPitch),
-    Math.sin(cameraPitch),
-    -Math.cos(cameraYaw) * Math.cos(cameraPitch),
-  ).normalize();
+  const { player } = gameState;
+  const dir = getCameraForward();
+  const o = getShotOrigin('grenade');
 
   spawnGrenade(o, dir, 'player', player.team, player);
   gameState.pGrenades--;
+  syncInventoryFromCombat();
   gameState.pGrenadeCooldown = 1.0;
   updateHUD();
 }
@@ -124,6 +172,7 @@ function requestMouseLock(): void {
 
 function onPointerLockChange(): void {
   gameState.mouseLocked = document.pointerLockElement === gameState.renderer.domElement;
+  if (!gameState.mouseLocked) gameState.isADS = false;
   dom.lockHint.classList.toggle('on', !gameState.mouseLocked && !gameState.mainMenuOpen && !gameState.paused && !gameState.roundOver);
 }
 
@@ -149,6 +198,12 @@ export function bindEvents(): void {
     }
 
     if (k === 'g') throwGrenade();
+
+    if (k === 'enter' && gameState.mode === 'br' && gameState.pDead) {
+      const br = await import('@/br/BRController');
+      await br.startBRMatch();
+      return;
+    }
 
     if (k === '1') switchWeapon(0);
     if (k === '2') switchWeapon(1);
@@ -224,14 +279,22 @@ export function bindEvents(): void {
   gameState.renderer.domElement.addEventListener('contextmenu', (e) => e.preventDefault());
   gameState.renderer.domElement.addEventListener('mousedown', (e) => {
     if (gameState.paused || gameState.mainMenuOpen) return;
+    if (!gameState.mouseLocked) {
+      if (e.button === 0) requestMouseLock();
+      return;
+    }
+    if (e.button === 2) {
+      if (gameState.pWeaponId !== 'knife' && gameState.pWeaponId !== 'unarmed') gameState.isADS = true;
+      return;
+    }
     if (e.button !== 0) return;
-    if (!gameState.mouseLocked) { requestMouseLock(); return; }
     gameState.mouseHeld = true;
     onShoot();
   });
 
   gameState.renderer.domElement.addEventListener('mouseup', (e) => {
     if (e.button === 0) gameState.mouseHeld = false;
+    if (e.button === 2) gameState.isADS = false;
   });
 
   dom.lockHint.addEventListener('click', () => requestMouseLock());
