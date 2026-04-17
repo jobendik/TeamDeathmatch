@@ -25,20 +25,20 @@ export function isOccluded(from: YUKA.Vector3, to: YUKA.Vector3): boolean {
 }
 
 export function canSee(ag: TDMAgent, target: TDMAgent): boolean {
-  if (ag.isDead || target.isDead) return false;
-  if (!isEnemy(ag, target)) return false;
-  const dist = ag.position.distanceTo(target.position);
-  if (dist > ag.visionRange) return false;
-
-  _toTarget.subVectors(target.position, ag.position).normalize();
-  _heading.set(0, 0, 1).applyRotation(ag.rotation);
-  const dot = _heading.dot(_toTarget);
-  // Personality-modulated FOV (tunnel-visioned bots have narrower effective FOV)
-  const tunnelPenalty = ag.personality ? ag.personality.tunnelVision * 0.15 : 0;
-  const effectiveFOV = ag.visionFOV * (1 - tunnelPenalty);
-  if (dot < Math.cos(effectiveFOV * 0.5)) return false;
-
-  return !isOccluded(ag.position, target.position);
+if (ag.isDead || target.isDead) return false;
+if (!isEnemy(ag, target)) return false;
+// BR: bots see much farther. TDM values (28-55m) are useless on a 320m map.
+const rangeMul = gameState.mode === 'br' ? 3.2 : 1.0;
+const fovMul   = gameState.mode === 'br' ? 1.15 : 1.0;
+const dist = ag.position.distanceTo(target.position);
+if (dist > ag.visionRange * rangeMul) return false;
+_toTarget.subVectors(target.position, ag.position).normalize();
+_heading.set(0, 0, 1).applyRotation(ag.rotation);
+const dot = _heading.dot(_toTarget);
+const tunnelPenalty = ag.personality ? ag.personality.tunnelVision * 0.15 : 0;
+const effectiveFOV = Math.min(Math.PI, ag.visionFOV * (1 - tunnelPenalty) * fovMul);
+if (dot < Math.cos(effectiveFOV * 0.5)) return false;
+return !isOccluded(ag.position, target.position);
 }
 
 export function shouldRunPerception(ag: TDMAgent): boolean {
