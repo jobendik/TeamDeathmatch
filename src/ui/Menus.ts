@@ -62,11 +62,11 @@ export function initMenus(): void {
 }
 
 const MODE_DESCRIPTIONS: Record<GameMode, string> = {
-  tdm: 'Lagkamp — først til 20 kills. Du starter med våpen.',
-  ffa: 'Alle mot alle — start uten våpen, plukk opp fra kartet.',
-  ctf: 'Capture The Flag — ta fiendens flagg og bring det hjem.',
-  elimination: 'Eliminering — ingen respawn. Siste lag som lever vinner runden. Først til 3.',
-  br: 'Battle Royale — stort kart, loot våpen, sist mann stående vinner.',
+  tdm: 'Team Deathmatch — first to 20 kills. You start armed.',
+  ffa: 'Free For All — start with a knife and loot the map.',
+  ctf: 'Capture The Flag — steal the enemy flag and bring it home.',
+  elimination: 'Elimination — no respawns. Last team alive wins the round. First to 3.',
+  br: 'Battle Royale — large map, loot weapons, last one standing wins.',
 };
 
 function updateMenuCopy(): void {

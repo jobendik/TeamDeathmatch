@@ -2,6 +2,7 @@ import { gameState } from '@/core/GameState';
 import { WEAPONS, type WeaponId } from '@/config/weapons';
 import { dom } from './DOMElements';
 import { getWeaponIconSVG, getWeaponModeLabel } from './WeaponIcons';
+import { getPlayerInventory } from '@/br/InventoryUI';
 
 let dmgTO: ReturnType<typeof setTimeout>;
 let hlfTO: ReturnType<typeof setTimeout>;
@@ -22,9 +23,16 @@ export function updateHUD(): void {
   // Low-HP pulse class on whole bar
   dom.hpFill.parentElement?.classList.toggle('low', hpPct < 35);
 
-  // ── Armor (placeholder 0 for now) ──
-  if (dom.armorFill) dom.armorFill.style.width = '0%';
-  if (dom.armorTxt) dom.armorTxt.textContent = '0';
+  // ── Armor ──
+  if (gameState.mode === 'br') {
+    const inv = getPlayerInventory();
+    const armorPct = inv && inv.maxArmorHP > 0 ? Math.max(0, Math.min(100, (inv.armorHP / inv.maxArmorHP) * 100)) : 0;
+    if (dom.armorFill) dom.armorFill.style.width = armorPct + '%';
+    if (dom.armorTxt) dom.armorTxt.textContent = String(Math.round(inv?.armorHP ?? 0));
+  } else {
+    if (dom.armorFill) dom.armorFill.style.width = '0%';
+    if (dom.armorTxt) dom.armorTxt.textContent = '0';
+  }
 
   // ── Weapon card ──
   const wep = WEAPONS[gameState.pWeaponId];
@@ -91,10 +99,41 @@ export function updateHUD(): void {
 export function updateCrosshair(): void {
   const el = xhEl();
   if (!el) return;
-  const { keys } = gameState;
+  const { keys, pWeaponId } = gameState;
   const isMoving = keys.w || keys.a || keys.s || keys.d;
+  const isRunning = isMoving && keys.shift;
+  const airborne = gameState.pPosY > 0.05;
+  const wep = WEAPONS[pWeaponId];
 
-  el.classList.toggle('spread', isMoving);
+  const baseGap = ({
+    unarmed: 10, knife: 10, pistol: 12, smg: 14, assault_rifle: 13,
+    shotgun: 18, sniper_rifle: 16, rocket_launcher: 15,
+  } as const)[pWeaponId] ?? 12;
+
+  const lineLen = ({
+    unarmed: 7, knife: 7, pistol: 8, smg: 9, assault_rifle: 10,
+    shotgun: 11, sniper_rifle: 12, rocket_launcher: 11,
+  } as const)[pWeaponId] ?? 8;
+
+  const moveKick = isRunning ? 10 : isMoving ? 5 : 0;
+  const airKick = airborne ? 7 : 0;
+  const fireKick = Math.min(10, gameState.pShootTimer * 55);
+  const adsMul = gameState.isADS ? (pWeaponId === 'sniper_rifle' ? 0.2 : 0.55) : 1;
+  const gap = (baseGap + moveKick + airKick + fireKick) * adsMul;
+
+  el.style.setProperty('--xh-gap', `${gap.toFixed(1)}px`);
+  el.style.setProperty('--xh-len', `${lineLen}px`);
+  el.dataset.weapon = pWeaponId;
+  el.classList.toggle('spread', gap > baseGap + 1);
+
+  const hideCrosshair = gameState.isADS && pWeaponId === 'sniper_rifle';
+  el.classList.toggle('hidden', hideCrosshair);
+
+  const scope = document.getElementById('scopeOverlay');
+  if (scope) scope.classList.toggle('on', hideCrosshair);
+
+  const dot = el.querySelector('.xh-dot') as HTMLElement | null;
+  if (dot) dot.style.opacity = gameState.isADS && pWeaponId !== 'shotgun' ? '0.25' : '1';
 }
 
 export function flashCrosshairFire(): void {
