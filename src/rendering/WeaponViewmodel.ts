@@ -71,7 +71,7 @@ type CachedGLB = {
   animations: THREE.AnimationClip[];
 };
 
-type AnimatedWeaponId = 'assault_rifle' | 'pistol' | 'shotgun' | 'sniper_rifle' | 'rocket_launcher' | 'knife';
+type AnimatedWeaponId = 'assault_rifle' | 'pistol' | 'shotgun' | 'sniper_rifle' | 'rocket_launcher';
 type AnimatedRangeName = 'equip' | 'shoot' | 'reload' | 'hit';
 type KnifeRangeName = 'equip' | 'idle' | 'slice1' | 'slice2' | 'slice3';
 
