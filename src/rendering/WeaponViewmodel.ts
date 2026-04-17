@@ -1275,13 +1275,13 @@ async function tryLoadSpecialViewmodel(weaponId: WeaponId): Promise<void> {
   }
 }
 
-export function setViewmodelWeapon(weaponId: WeaponId): void {
+export function setViewmodelWeapon(weaponId: WeaponId, forceSwap = false): void {
   if (!vmGroup) {
     currentWeaponId = weaponId;
     return;
   }
 
-  if (weaponId === currentWeaponId && currentWeaponMesh && switchProgress >= 1) return;
+  if (!forceSwap && weaponId === currentWeaponId && currentWeaponMesh && switchProgress >= 1) return;
 
   pendingWeaponId = weaponId;
   switchDir = 'down';
