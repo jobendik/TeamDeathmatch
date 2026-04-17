@@ -214,7 +214,6 @@ let loggedKnifeClips = false;
 let currentKnifeWrapper: THREE.Group | null = null;
 let currentKnifeAction: THREE.AnimationAction | null = null;
 let activeKnifeRange: KnifeRangeName | null = null;
-let knifeEquipPlayed = false;
 let knifeDebugOverlay: HTMLDivElement | null = null;
 
 function prepRenderable(root: THREE.Object3D): void {
@@ -242,7 +241,8 @@ function isAnimatedWeapon(weaponId: WeaponId): weaponId is AnimatedWeaponId {
     || weaponId === 'pistol'
     || weaponId === 'shotgun'
     || weaponId === 'sniper_rifle'
-    || weaponId === 'rocket_launcher';
+    || weaponId === 'rocket_launcher'
+    || weaponId === 'knife';
 }
 
 async function loadAnimatedViewmodel(weaponId: AnimatedWeaponId): Promise<CachedGLB | null> {
@@ -1206,12 +1206,7 @@ function attachLoadedKnife(): void {
       currentViewmodelMixer!.clipAction(clip),
     );
 
-    if (!knifeEquipPlayed) {
-      knifeEquipPlayed = true;
-      playKnifeRange('equip', 1.0);
-    } else {
-      holdKnifeIdlePose();
-    }
+    playKnifeRange('equip', 1.0);
   }
 
   refreshKnifeDebugOverlay();
