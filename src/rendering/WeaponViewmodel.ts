@@ -71,7 +71,7 @@ type CachedGLB = {
   animations: THREE.AnimationClip[];
 };
 
-type AnimatedWeaponId = 'assault_rifle' | 'pistol' | 'shotgun' | 'sniper_rifle' | 'rocket_launcher';
+type AnimatedWeaponId = 'assault_rifle' | 'pistol' | 'shotgun' | 'sniper_rifle' | 'rocket_launcher' | 'knife';
 type AnimatedRangeName = 'equip' | 'shoot' | 'reload' | 'hit';
 type KnifeRangeName = 'equip' | 'idle' | 'slice1' | 'slice2' | 'slice3';
 
@@ -100,19 +100,19 @@ const ANIMATED_VIEWMODEL_CONFIGS: Record<AnimatedWeaponId, AnimatedWeaponViewmod
     },
     logLabel: 'm16a2.glb',
   },
-  pistol: {
-    url: PISTOL_GLB_URL,
-    desiredMaxDimension: 0.70,
-    position: new THREE.Vector3(0.040, -0.040, -0.110),
-    rotation: new THREE.Euler(0.010, -0.120, 0.080),
-    holdTime: 0.76,
-    ranges: {
-      shoot: [0.00, 0.30],
-      reload: [0.30, 2.75],
-      equip: [6.22, 7.70],
-    },
-    logLabel: 'pistol.glb',
+pistol: {
+  url: PISTOL_GLB_URL,
+  desiredMaxDimension: 0.70,
+  position: new THREE.Vector3(0.040, -0.040, -0.110),
+  rotation: new THREE.Euler(0.010, -0.120, 0.080),
+  holdTime: 7.78,
+  ranges: {
+    shoot: [0.00, 0.30],
+    reload: [0.30, 2.75],
+    equip: [6.22, 7.70],
   },
+  logLabel: 'pistol.glb',
+},
   shotgun: {
     url: SHOTGUN_GLB_URL,
     desiredMaxDimension: 1.02,
