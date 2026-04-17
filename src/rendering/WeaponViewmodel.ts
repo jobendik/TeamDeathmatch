@@ -242,7 +242,6 @@ function isAnimatedWeapon(weaponId: WeaponId): weaponId is AnimatedWeaponId {
     || weaponId === 'shotgun'
     || weaponId === 'sniper_rifle'
     || weaponId === 'rocket_launcher'
-    || weaponId === 'knife';
 }
 
 async function loadAnimatedViewmodel(weaponId: AnimatedWeaponId): Promise<CachedGLB | null> {
