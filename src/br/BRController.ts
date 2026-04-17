@@ -13,7 +13,7 @@
 
 import { gameState } from '@/core/GameState';
 import { buildBRMap, disposeBRMap } from './BRMap';
-import { populateMapLoot, spawnGroundLoot, clearAllLoot, updateGroundLoot } from './LootSystem';
+import { populateMapLoot, spawnGroundLoot, clearAllLoot, updateGroundLoot, preloadLootVisuals } from './LootSystem';
 import { startZone, updateZone, disposeZone } from './ZoneSystem';
 import { buildBRBots, clearBRBots, updateBRBot, shouldUpdateBot, landBRBots } from './BRBots';
 import { startDropSequence, updateDropSequence, resetDrop, isPlayerInAir, isPlayerOnPlane } from './DropPlane';
@@ -96,6 +96,13 @@ export async function startBRMatch(): Promise<void> {
   brState.frameCount = 0;
 
   buildBRMap();
+
+  showLoading('Preparing loot visuals...');
+  await preloadLootVisuals((done, total) => {
+    const pct = (done / total) * 100;
+    showLoading(`Preparing loot visuals... (${done}/${total})`, pct);
+  });
+  await nextFrame();
 
   showLoading('Spawning loot...');
   await nextFrame();
