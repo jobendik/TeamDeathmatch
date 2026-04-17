@@ -3,17 +3,52 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { gameState } from '@/core/GameState';
 import { WEAPONS, type WeaponId } from '@/config/weapons';
 
-const BASE_URL = import.meta.env.BASE_URL;
+type PickupType = 'health' | 'ammo' | 'weapon' | 'grenade';
+type PickupVisualKey =
+  | 'healthkit'
+  | 'ammo_crate'
+  | 'grenade'
+  | 'weapon_crate'
+  | 'weapon_smg'
+  | 'weapon_ar'
+  | 'weapon_shotgun'
+  | 'weapon_sniper'
+  | 'weapon_launcher';
 
-const PICKUP_MODEL_URLS = {
-  health: `${BASE_URL}models/pickups/healthkit.glb`,
-  ammo: `${BASE_URL}models/pickups/ammo_crate.glb`,
-  grenade: `${BASE_URL}models/pickups/grenade.glb`,
-  weapon: `${BASE_URL}models/pickups/weapon_crate.glb`,
-} as const;
+const MODEL_URLS: Record<PickupVisualKey, string> = {
+  healthkit: new URL('../../models/pickups/healthkit.glb', import.meta.url).href,
+  ammo_crate: new URL('../../models/pickups/ammo_crate.glb', import.meta.url).href,
+  grenade: new URL('../../models/pickups/grenade.glb', import.meta.url).href,
+  weapon_crate: new URL('../../models/pickups/weapon_crate.glb', import.meta.url).href,
+  weapon_smg: new URL('../../models/pickups/weapon_smg.glb', import.meta.url).href,
+  weapon_ar: new URL('../../models/pickups/weapon_ar.glb', import.meta.url).href,
+  weapon_shotgun: new URL('../../models/pickups/weapon_shotgun.glb', import.meta.url).href,
+  weapon_sniper: new URL('../../models/pickups/weapon_sniper.glb', import.meta.url).href,
+  weapon_launcher: new URL('../../models/pickups/weapon_launcher.glb', import.meta.url).href,
+};
 
-const gltfLoader = new GLTFLoader();
-const pickupPrefabCache = new Map<string, Promise<THREE.Group | null>>();
+const TARGET_MAX_DIM: Record<PickupVisualKey, number> = {
+  healthkit: 0.62,
+  ammo_crate: 0.68,
+  grenade: 0.32,
+  weapon_crate: 0.72,
+  weapon_smg: 0.95,
+  weapon_ar: 1.05,
+  weapon_shotgun: 1.05,
+  weapon_sniper: 1.15,
+  weapon_launcher: 1.2,
+};
+
+const EXTRA_ROTATION_X: Partial<Record<PickupVisualKey, number>> = {
+  weapon_smg: -0.18,
+  weapon_ar: -0.16,
+  weapon_shotgun: -0.08,
+  weapon_sniper: -0.12,
+  weapon_launcher: -0.1,
+};
+
+const loader = new GLTFLoader();
+const prefabCache = new Map<PickupVisualKey, Promise<THREE.Object3D | null>>();
 
 function prepRenderable(root: THREE.Object3D): void {
   root.traverse((obj) => {
@@ -21,11 +56,16 @@ function prepRenderable(root: THREE.Object3D): void {
     if ((mesh as any).isMesh) {
       mesh.castShadow = true;
       mesh.receiveShadow = true;
+      if (Array.isArray(mesh.material)) {
+        mesh.material = mesh.material.map((m) => m.clone());
+      } else if (mesh.material) {
+        mesh.material = mesh.material.clone();
+      }
     }
   });
 }
 
-function fitPickupModel(root: THREE.Object3D, targetMaxDim = 0.7): void {
+function fitModelToOrigin(root: THREE.Object3D, targetMaxDim: number): void {
   root.updateMatrixWorld(true);
 
   const box = new THREE.Box3().setFromObject(root);
@@ -35,8 +75,8 @@ function fitPickupModel(root: THREE.Object3D, targetMaxDim = 0.7): void {
   box.getCenter(center);
 
   const maxDim = Math.max(size.x, size.y, size.z, 0.0001);
-  const s = targetMaxDim / maxDim;
-  root.scale.multiplyScalar(s);
+  const scale = targetMaxDim / maxDim;
+  root.scale.multiplyScalar(scale);
 
   root.updateMatrixWorld(true);
 
@@ -49,69 +89,70 @@ function fitPickupModel(root: THREE.Object3D, targetMaxDim = 0.7): void {
   root.position.y -= box2.min.y;
 }
 
-function loadPickupPrefab(url: string, targetMaxDim: number): Promise<THREE.Group | null> {
-  const cached = pickupPrefabCache.get(url);
+function resolveVisualKey(type: PickupType, weaponId?: WeaponId): PickupVisualKey {
+  if (type === 'health') return 'healthkit';
+  if (type === 'ammo') return 'ammo_crate';
+  if (type === 'grenade') return 'grenade';
+
+  switch (weaponId) {
+    case 'smg': return 'weapon_smg';
+    case 'assault_rifle': return 'weapon_ar';
+    case 'shotgun': return 'weapon_shotgun';
+    case 'sniper_rifle': return 'weapon_sniper';
+    case 'rocket_launcher': return 'weapon_launcher';
+    default: return 'weapon_crate';
+  }
+}
+
+function loadPrefab(key: PickupVisualKey): Promise<THREE.Object3D | null> {
+  const cached = prefabCache.get(key);
   if (cached) return cached;
 
-  const p = new Promise<THREE.Group | null>((resolve) => {
-    gltfLoader.load(
-      url,
+  const promise = new Promise<THREE.Object3D | null>((resolve) => {
+    loader.load(
+      MODEL_URLS[key],
       (gltf) => {
-        const root = gltf.scene || gltf.scenes?.[0];
+        const root = (gltf.scene || gltf.scenes?.[0] || null) as THREE.Object3D | null;
         if (!root) {
           resolve(null);
           return;
         }
         prepRenderable(root);
-        fitPickupModel(root, targetMaxDim);
-        resolve(root as THREE.Group);
+        fitModelToOrigin(root, TARGET_MAX_DIM[key]);
+        if (EXTRA_ROTATION_X[key]) root.rotation.x = EXTRA_ROTATION_X[key]!;
+        resolve(root);
       },
       undefined,
       () => resolve(null),
     );
   });
 
-  pickupPrefabCache.set(url, p);
-  return p;
+  prefabCache.set(key, promise);
+  return promise;
 }
 
-function buildFallbackMesh(type: 'health' | 'ammo' | 'weapon' | 'grenade', color: number): THREE.Mesh {
-  const geo =
-    type === 'health'
-      ? new THREE.BoxGeometry(0.5, 0.5, 0.5)
-      : type === 'grenade'
-        ? new THREE.SphereGeometry(0.24, 10, 10)
-        : new THREE.BoxGeometry(0.55, 0.3, 0.65);
-
-  return new THREE.Mesh(
-    geo,
-    new THREE.MeshStandardMaterial({
-      color,
-      emissive: color,
-      emissiveIntensity: 0.6,
-      roughness: 0.2,
-      metalness: 0.4,
-    }),
+function createPickupAnchor(x: number, z: number): THREE.Mesh {
+  const anchor = new THREE.Mesh(
+    new THREE.SphereGeometry(0.001, 3, 2),
+    new THREE.MeshBasicMaterial({ transparent: true, opacity: 0 }),
   );
+  anchor.position.set(x, 0.5, z);
+  anchor.visible = true;
+  return anchor;
 }
 
-async function attachPickupModel(
-  root: THREE.Mesh,
-  type: 'health' | 'ammo' | 'weapon' | 'grenade',
-): Promise<void> {
-  const url = PICKUP_MODEL_URLS[type];
-  const prefab = await loadPickupPrefab(url, type === 'grenade' ? 0.42 : 0.72);
+async function attachVisual(anchor: THREE.Mesh, key: PickupVisualKey): Promise<void> {
+  const prefab = await loadPrefab(key);
   if (!prefab) return;
 
-  while (root.children.length) root.remove(root.children[0]);
+  while (anchor.children.length) anchor.remove(anchor.children[0]);
 
-  const model = prefab.clone(true);
-  root.add(model);
-  root.visible = true;
+  const obj = prefab.clone(true);
+  anchor.add(obj);
 }
 
 export function buildPickups(): void {
-  const defs: { t: 'health' | 'ammo' | 'weapon' | 'grenade'; col: number; x: number; z: number; weaponId?: WeaponId }[] = [
+  const defs: { t: PickupType; col: number; x: number; z: number; weaponId?: WeaponId }[] = [
     { t: 'health', col: 0x22c55e, x: -25, z: 25 },
     { t: 'health', col: 0x22c55e, x: 25, z: -25 },
     { t: 'health', col: 0x22c55e, x: 0, z: 0 },
@@ -128,12 +169,10 @@ export function buildPickups(): void {
   ];
 
   for (const d of defs) {
-    const mesh = buildFallbackMesh(d.t, d.col);
-    mesh.position.set(d.x, 0.5, d.z);
-    mesh.castShadow = true;
+    const mesh = createPickupAnchor(d.x, d.z);
     gameState.scene.add(mesh);
 
-    void attachPickupModel(mesh, d.t);
+    void attachVisual(mesh, resolveVisualKey(d.t, d.weaponId));
 
     const ring = new THREE.Mesh(
       new THREE.RingGeometry(0.55, 0.7, 20),
@@ -142,22 +181,14 @@ export function buildPickups(): void {
         transparent: true,
         opacity: 0.3,
         side: THREE.DoubleSide,
+        depthWrite: false,
       }),
     );
     ring.rotation.x = -Math.PI / 2;
     ring.position.set(d.x, 0.04, d.z);
     gameState.scene.add(ring);
 
-    gameState.pickups.push({
-      mesh,
-      ring,
-      active: true,
-      respawnAt: 0,
-      t: d.t,
-      x: d.x,
-      z: d.z,
-      weaponId: d.weaponId,
-    });
+    gameState.pickups.push({ mesh, ring, active: true, respawnAt: 0, t: d.t, x: d.x, z: d.z, weaponId: d.weaponId });
   }
 }
 
@@ -173,8 +204,7 @@ export function updatePickups(): void {
     if (p.active) {
       p.mesh.position.y = 0.5 + Math.sin(worldElapsed * 2 + p.x) * 0.1;
       p.mesh.rotation.y += 0.02;
-      (p.ring.material as THREE.MeshBasicMaterial).opacity =
-        0.25 + Math.sin(worldElapsed * 2.5 + p.z) * 0.1;
+      (p.ring.material as THREE.MeshBasicMaterial).opacity = 0.25 + Math.sin(worldElapsed * 2.5 + p.z) * 0.1;
     }
 
     for (const ag of agents) {
@@ -200,10 +230,7 @@ export function updatePickups(): void {
         } else if (p.t === 'weapon' && p.weaponId) {
           const newWep = WEAPONS[p.weaponId];
           const curWep = WEAPONS[ag.weaponId];
-          const shouldPickup =
-            ag.weaponId === 'unarmed' ||
-            newWep.desirability > curWep.desirability ||
-            ag.ammo <= 0;
+          const shouldPickup = ag.weaponId === 'unarmed' || newWep.desirability > curWep.desirability || ag.ammo <= 0;
 
           if (shouldPickup) {
             p.active = false;
