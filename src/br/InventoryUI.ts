@@ -6,6 +6,10 @@ import {
 } from './Inventory';
 import { groundLoot, removeGroundLoot, type GroundLoot } from './LootSystem';
 import { getWeaponIconSVG } from '@/ui/WeaponIcons';
+import { WEAPONS, type WeaponId } from '@/config/weapons';
+import { setViewmodelWeapon } from '@/rendering/WeaponViewmodel';
+import { updateHUD } from '@/ui/HUD';
+import { dom } from '@/ui/DOMElements';
 
 let invEl: HTMLDivElement | null = null;
 let pickupPromptEl: HTMLDivElement | null = null;
@@ -17,6 +21,85 @@ export function getPlayerInventory(): PlayerInventory {
 
 export function setPlayerInventory(inv: PlayerInventory): void {
   (gameState as any).brInventory = inv;
+}
+
+
+function isWeaponItem(item: InventoryItem | null | undefined): item is InventoryItem & { weaponId: WeaponId } {
+  return !!item && item.category === 'weapon' && !!item.weaponId;
+}
+
+function getFilledWeaponSlotIndices(inv: PlayerInventory): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < inv.weaponSlots.length; i++) {
+    if (isWeaponItem(inv.weaponSlots[i])) out.push(i);
+  }
+  return out;
+}
+
+/** Project BR inventory state into the live combat state. */
+export function syncCombatFromInventory(forceViewmodel = false): void {
+  const inv = getPlayerInventory();
+  if (!inv) return;
+
+  const filled = getFilledWeaponSlotIndices(inv);
+  if (filled.length === 0) {
+    gameState.pWeaponSlots = ['knife'];
+    gameState.pActiveSlot = 0;
+    gameState.pWeaponId = 'knife';
+    gameState.pAmmo = 0;
+    gameState.pMaxAmmo = 0;
+    gameState.pGrenades = inv.grenades;
+    gameState.pReloading = false;
+    dom.reloadBar.classList.remove('on');
+    dom.reloadText.classList.remove('on');
+    if (forceViewmodel) setViewmodelWeapon('knife');
+    updateHUD();
+    return;
+  }
+
+  if (!filled.includes(inv.activeSlot)) {
+    inv.activeSlot = filled[0] as 0 | 1 | 2;
+  }
+
+  const activeItem = inv.weaponSlots[inv.activeSlot]!;
+  const orderedWeapons = filled.map((idx) => inv.weaponSlots[idx]!.weaponId!) as WeaponId[];
+  const activeWeaponId = activeItem.weaponId as WeaponId;
+  const activeOrderSlot = Math.max(0, orderedWeapons.indexOf(activeWeaponId));
+  const wep = WEAPONS[activeWeaponId];
+
+  gameState.pWeaponSlots = orderedWeapons;
+  gameState.pActiveSlot = activeOrderSlot;
+  gameState.pWeaponId = activeWeaponId;
+  gameState.pAmmo = activeItem.currentAmmo ?? wep.magSize;
+  gameState.pMaxAmmo = activeItem.magSize ?? wep.magSize;
+  gameState.pGrenades = inv.grenades;
+  gameState.pReloadDuration = wep.reloadTime;
+
+  if (forceViewmodel) setViewmodelWeapon(activeWeaponId);
+  updateHUD();
+}
+
+/** Push the current live weapon state back into the BR inventory item. */
+export function syncInventoryFromCombat(): void {
+  const inv = getPlayerInventory();
+  if (!inv) return;
+  const activeItem = inv.weaponSlots[inv.activeSlot];
+  if (isWeaponItem(activeItem) && activeItem.weaponId === gameState.pWeaponId) {
+    activeItem.currentAmmo = gameState.pAmmo;
+    activeItem.magSize = gameState.pMaxAmmo;
+  }
+  inv.grenades = gameState.pGrenades;
+}
+
+/** Switch BR active weapon using the visible HUD order, not raw inventory slot index. */
+export function setBRActiveSlotByOrder(orderSlot: number): boolean {
+  const inv = getPlayerInventory();
+  if (!inv) return false;
+  const filled = getFilledWeaponSlotIndices(inv);
+  if (orderSlot < 0 || orderSlot >= filled.length) return false;
+  inv.activeSlot = filled[orderSlot] as 0 | 1 | 2;
+  syncCombatFromInventory(true);
+  return true;
 }
 
 function ensureElements(): void {
@@ -340,6 +423,7 @@ function renderInventory(): void {
       const slot = parseInt(el.getAttribute('data-slot') ?? '0', 10);
       if (inv.weaponSlots[slot]) {
         inv.activeSlot = slot as 0 | 1 | 2;
+        syncCombatFromInventory(true);
         renderInventory();
       }
     });
@@ -368,6 +452,11 @@ function pickupSpecificItem(lootId: number, itemId: string): void {
   const item = loot.items[itemIdx];
 
   if (addItem(inv, item)) {
+    if (item.category === 'weapon') {
+      const slotIdx = inv.weaponSlots.findIndex((s) => s === item);
+      if (slotIdx !== -1) inv.activeSlot = slotIdx as 0 | 1 | 2;
+    }
+    syncCombatFromInventory(true);
     loot.items.splice(itemIdx, 1);
     if (loot.items.length === 0) removeGroundLoot(loot.id);
     renderInventory();
@@ -382,9 +471,21 @@ export function pickupNearestLoot(): void {
 
   const loot = nearby[0];
   const remaining: InventoryItem[] = [];
+  let autoEquipSlot = -1;
+
   for (const item of loot.items) {
-    if (!addItem(inv, item)) remaining.push(item);
+    if (!addItem(inv, item)) {
+      remaining.push(item);
+      continue;
+    }
+    if (item.category === 'weapon' && autoEquipSlot === -1) {
+      autoEquipSlot = inv.weaponSlots.findIndex((s) => s === item);
+    }
   }
+
+  if (autoEquipSlot !== -1) inv.activeSlot = autoEquipSlot as 0 | 1 | 2;
+
+  syncCombatFromInventory(true);
   loot.items = remaining;
   if (loot.items.length === 0) removeGroundLoot(loot.id);
   if (isOpen) renderInventory();
