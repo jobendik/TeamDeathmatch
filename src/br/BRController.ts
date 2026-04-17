@@ -125,6 +125,11 @@ export async function startBRMatch(): Promise<void> {
   gameState.player.hp = 100;
   gameState.pDead = false;
   gameState.player.isDead = false;
+
+  // IMPORTANT: reset BR spectator and ADS state so nothing leaks from a previous match
+  gameState.spectatorTarget = null;
+  gameState.isADS = false;
+
   gameState.pKills = 0;
   gameState.pDeaths = 0;
   gameState.pWeaponSlots = ['knife'];
