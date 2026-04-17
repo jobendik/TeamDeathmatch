@@ -86,11 +86,30 @@ export const dom = {
   // Menus
   get mainMenu() { return getEl<HTMLDivElement>('mainMenu'); },
   get modeSelect() { return getEl<HTMLSelectElement>('modeSelect'); },
+  get classSelect() { return getEl<HTMLSelectElement>('classSelect'); },
   get startBtn() { return getEl<HTMLButtonElement>('startBtn'); },
   get pauseMenu() { return getEl<HTMLDivElement>('pauseMenu'); },
   get pauseResume() { return getEl<HTMLButtonElement>('pauseResume'); },
+  get pauseSettings() { return getEl<HTMLButtonElement>('pauseSettings'); },
   get pauseRestart() { return getEl<HTMLButtonElement>('pauseRestart'); },
   get pauseQuit() { return getEl<HTMLButtonElement>('pauseQuit'); },
+
+  // Settings
+  get settingsMenu() { return getEl<HTMLDivElement>('settingsMenu'); },
+  get setSensitivity() { return getEl<HTMLInputElement>('setSensitivity'); },
+  get setFOV() { return getEl<HTMLInputElement>('setFOV'); },
+  get setMasterVol() { return getEl<HTMLInputElement>('setMasterVol'); },
+  get setSfxVol() { return getEl<HTMLInputElement>('setSfxVol'); },
+  get setMusicVol() { return getEl<HTMLInputElement>('setMusicVol'); },
+  get settingsBack() { return getEl<HTMLButtonElement>('settingsBack'); },
+  get valSens() { return getEl<HTMLSpanElement>('valSens'); },
+  get valFOV() { return getEl<HTMLSpanElement>('valFOV'); },
+  get valMasterVol() { return getEl<HTMLSpanElement>('valMasterVol'); },
+  get valSfxVol() { return getEl<HTMLSpanElement>('valSfxVol'); },
+  get valMusicVol() { return getEl<HTMLSpanElement>('valMusicVol'); },
+
+  // Killstreak
+  get killstreak() { return getEl<HTMLDivElement>('killstreak'); },
 
   // Killfeed + reload
   get killfeed() { return getEl<HTMLDivElement>('killfeed'); },

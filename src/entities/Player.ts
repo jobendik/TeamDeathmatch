@@ -19,6 +19,22 @@ import { updateMovement, getCameraOffset, getCurrentPlayerHeight, requestJump, t
 import { playHeal } from '@/audio/SoundHooks';
 import { isKillcamActive, updateKillcam } from '@/ui/Killcam';
 
+export function getFloorY(x: number, z: number): number {
+  let floorY = 0;
+  for (const c of gameState.colliders) {
+    if (c.yTop !== undefined && gameState.pPosY >= c.yTop) {
+      if (c.type === 'box') {
+        if (Math.abs(x - c.x) <= c.hw && Math.abs(z - c.z) <= c.hd) floorY = Math.max(floorY, c.yTop);
+      } else {
+        const dx = x - c.x;
+        const dz = z - c.z;
+        if (dx * dx + dz * dz <= c.r * c.r) floorY = Math.max(floorY, c.yTop);
+      }
+    }
+  }
+  return floorY;
+}
+
 function collidesPlayer(x: number, z: number): boolean {
   const margin = gameState.mode === 'br' ? BR_MAP_MARGIN : ARENA_MARGIN;
   if (Math.abs(x) > margin || Math.abs(z) > margin) return true;
@@ -126,6 +142,7 @@ export function updatePlayer(dt: number): void {
       const respawnWeapon = WEAPONS[gameState.pWeaponId];
       gameState.pAmmo = respawnWeapon.magSize;
       gameState.pMaxAmmo = respawnWeapon.magSize;
+      gameState.pAmmoReserve = respawnWeapon.magSize * 3;
       gameState.pReloadDuration = respawnWeapon.reloadTime;
       gameState.pGrenades = startsArmed ? 2 : 0;
       gameState.pReloading = false;
@@ -186,7 +203,10 @@ export function updatePlayer(dt: number): void {
           syncInventoryFromCombat();
         }
       } else {
-        gameState.pAmmo = gameState.pMaxAmmo;
+        const missing = gameState.pMaxAmmo - gameState.pAmmo;
+        const loaded = Math.min(missing, gameState.pAmmoReserve);
+        gameState.pAmmo += loaded;
+        gameState.pAmmoReserve -= loaded;
       }
       updateHUD();
       dom.reloadBar.classList.remove('on');
@@ -197,6 +217,11 @@ export function updatePlayer(dt: number): void {
   // Shoot timer cooldown
   if (gameState.pShootTimer > 0) {
     gameState.pShootTimer -= dt;
+  }
+
+  // Spread decay when not firing
+  if (gameState.pSpreadAccum > 0) {
+    gameState.pSpreadAccum = Math.max(0, gameState.pSpreadAccum - dt * 6);
   }
 
   // ── Movement ──
@@ -212,9 +237,10 @@ export function updatePlayer(dt: number): void {
   // Gravity (jump itself is handled inside updateMovement via pVelY)
   gameState.pVelY -= FP.gravity * dt;
   gameState.pPosY += gameState.pVelY * dt;
-  if (gameState.pPosY <= 0) {
-    gameState.pPosY = 0;
-    gameState.pVelY = 0;
+  const floorY = getFloorY(player.position.x, player.position.z);
+  if (gameState.pPosY <= floorY) {
+    gameState.pPosY = floorY;
+    gameState.pVelY = Math.max(0, gameState.pVelY);
   }
   player.position.y = gameState.pPosY;
 
@@ -233,12 +259,15 @@ export function updatePlayer(dt: number): void {
         updateHUD();
         flashHeal();
         playHeal();
-      } else if (pk.t === 'ammo' && !isUnarmed && gameState.pAmmo < gameState.pMaxAmmo) {
-        pk.active = false;
-        pk.mesh.visible = pk.ring.visible = false;
-        pk.respawnAt = gameState.worldElapsed + 12;
-        gameState.pAmmo = Math.min(gameState.pMaxAmmo, gameState.pAmmo + 15);
-        updateHUD();
+      } else if (pk.t === 'ammo' && !isUnarmed) {
+        const maxReserve = gameState.pMaxAmmo * 3;
+        if (gameState.pAmmoReserve < maxReserve || gameState.pAmmo < gameState.pMaxAmmo) {
+          pk.active = false;
+          pk.mesh.visible = pk.ring.visible = false;
+          pk.respawnAt = gameState.worldElapsed + 12;
+          gameState.pAmmoReserve = Math.min(maxReserve, gameState.pAmmoReserve + Math.ceil(gameState.pMaxAmmo * 0.5));
+          updateHUD();
+        }
       } else if (pk.t === 'grenade' && gameState.pGrenades < 4) {
         pk.active = false;
         pk.mesh.visible = pk.ring.visible = false;
@@ -266,6 +295,7 @@ export function updatePlayer(dt: number): void {
         const wep = WEAPONS[wepId];
         gameState.pAmmo = wep.magSize;
         gameState.pMaxAmmo = wep.magSize;
+        gameState.pAmmoReserve = wep.magSize * 3;
         gameState.pShootTimer = 0;
         gameState.pBurstCount = 0;
         gameState.pReloading = false;

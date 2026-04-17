@@ -158,6 +158,13 @@ const LOCOMOTION_KEYS = new Set<AgentAnimKey>([
   'jumpUp',
   'jumpLoop',
   'jumpDown',
+
+  'deathFront',
+  'deathBack',
+  'deathRight',
+  'deathFrontHeadshot',
+  'deathBackHeadshot',
+  'deathCrouchHeadshotFront',
 ]);
 
 function loadFBX(url: string): Promise<THREE.Group> {

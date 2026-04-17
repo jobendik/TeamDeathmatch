@@ -1459,6 +1459,23 @@ canvas { display: block; cursor: none; }
 .rs-sep { color: var(--muted); margin: 0 2px; }
 .rs-kdr { color: var(--gold); font-weight: 700; text-align: right; }
 
+/* Combat stats row */
+.rs-combat-stats {
+  display: flex; justify-content: center; gap: 24px;
+  margin: 0 auto; max-width: 480px;
+}
+.rs-combat-stat {
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+}
+.rs-cs-val {
+  font-family: var(--hud-font); font-size: 22px; font-weight: 900;
+  color: var(--blue);
+}
+.rs-cs-lbl {
+  font-family: var(--hud-font); font-size: 8px; font-weight: 700;
+  letter-spacing: 0.15em; color: var(--muted);
+}
+
 /* Tighter bottom HUD — shrink the card */
 #bottomHud { gap: 10px; }
 .bh-section { padding: 8px 12px; }
@@ -1634,4 +1651,82 @@ canvas { display: block; cursor: none; }
   border-color: #4aa8ff;
   box-shadow: 0 0 8px rgba(74,168,255,0.3);
   background: rgba(74,168,255,0.15);
+}
+
+/* ═══════════════════════════════════════════════
+   SETTINGS MENU
+   ═══════════════════════════════════════════════ */
+#settingsMenu {
+  position: fixed; inset: 0; z-index: 40;
+  display: none;
+  align-items: center; justify-content: center;
+  background: radial-gradient(ellipse at center, rgba(12, 20, 36, 0.92), rgba(2, 6, 14, 0.98));
+  backdrop-filter: blur(12px);
+}
+#settingsMenu.on { display: flex; }
+.settings-panel {
+  min-width: 400px; max-width: 480px;
+  display: flex; flex-direction: column; gap: 18px;
+  padding: 36px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--panel);
+  box-shadow: 0 0 60px rgba(74, 168, 255, 0.15);
+}
+.settings-panel h2 {
+  font-family: var(--hud-font);
+  font-size: 22px; font-weight: 900;
+  letter-spacing: 0.2em;
+  color: var(--blue);
+  text-align: center;
+  margin-bottom: 4px;
+}
+.settings-group {
+  display: flex; align-items: center; gap: 12px;
+}
+.settings-group .settings-label {
+  flex: 0 0 140px;
+  font-family: var(--hud-font);
+  font-size: 10px; font-weight: 700;
+  letter-spacing: 0.15em;
+  color: var(--text-dim);
+  text-transform: uppercase;
+}
+.settings-group input[type="range"] {
+  flex: 1;
+  accent-color: var(--blue);
+  height: 4px;
+}
+.settings-group .settings-val {
+  flex: 0 0 56px;
+  font-family: var(--mono-font);
+  font-size: 11px;
+  color: var(--blue);
+  text-align: right;
+}
+
+/* ═══════════════════════════════════════════════
+   KILLSTREAK BANNER
+   ═══════════════════════════════════════════════ */
+#killstreak {
+  position: fixed;
+  top: 18%; left: 50%;
+  transform: translateX(-50%);
+  z-index: 25;
+  font-family: var(--hud-font);
+  font-size: 28px; font-weight: 900;
+  letter-spacing: 0.2em;
+  color: var(--gold);
+  text-shadow: 0 0 20px rgba(255, 204, 68, 0.6), 0 0 40px rgba(255, 170, 51, 0.3);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s;
+}
+#killstreak.on {
+  opacity: 1;
+  animation: streakPop 0.4s cubic-bezier(.2, 1, .3, 1);
+}
+@keyframes streakPop {
+  0% { transform: translateX(-50%) scale(1.6); opacity: 0; }
+  100% { transform: translateX(-50%) scale(1); opacity: 1; }
 }

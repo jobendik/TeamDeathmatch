@@ -3,6 +3,19 @@ import * as YUKA from 'yuka';
 import { gameState } from '@/core/GameState';
 import type { TDMAgent } from '@/entities/TDMAgent';
 
+/** Adaptive difficulty: returns a multiplier for bot aim spread based on player K/D */
+function getAdaptiveDifficulty(): number {
+  const k = gameState.pKills;
+  const d = gameState.pDeaths;
+  if (k + d < 3) return 1;
+  const kd = k / Math.max(1, d);
+  if (kd > 2.5) return 0.85;
+  if (kd > 1.5) return 0.95;
+  if (kd < 0.4) return 1.3;
+  if (kd < 0.7) return 1.15;
+  return 1;
+}
+
 /**
  * Per-agent simulated crosshair state.
  * Stored as a world-space direction pair (yaw/pitch) that moves toward
@@ -106,6 +119,10 @@ export function updateAim(ag: TDMAgent, dt: number): void {
     aim.onTargetTime += dt;
   } else if (ag.hasLastKnown) {
     _targetPos.set(ag.lastKnownPos.x, 1.1, ag.lastKnownPos.z);
+    aim.onTargetTime = 0;
+  } else if (ag.preAimPos) {
+    // Pre-aim: point crosshair at predicted engagement position
+    _targetPos.set(ag.preAimPos.x, 1.0, ag.preAimPos.z);
     aim.onTargetTime = 0;
   } else {
     // Default: aim forward along body heading
@@ -225,8 +242,10 @@ export function getAimDirection(ag: TDMAgent): {
   }
 
   const panicSpread = p.panicSprayFactor * ag.pressureLevel * 0.09;
-  const yaw = aim.yaw + (Math.random() - 0.5) * panicSpread;
-  const pitch = aim.pitch + (Math.random() - 0.5) * panicSpread * 0.5;
+  // Adaptive difficulty: widen/tighten spread based on player performance
+  const adaptiveMul = getAdaptiveDifficulty();
+  const yaw = aim.yaw + (Math.random() - 0.5) * panicSpread * adaptiveMul;
+  const pitch = aim.pitch + (Math.random() - 0.5) * panicSpread * 0.5 * adaptiveMul;
 
   const dir = new THREE.Vector3(
     -Math.sin(yaw) * Math.cos(pitch),

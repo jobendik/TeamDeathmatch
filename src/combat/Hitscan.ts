@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { gameState } from '@/core/GameState';
-import { spawnImpact, spawnWallSparks, spawnTracer, spawnMuzzleFlash, spawnExplosion, spawnRocketTrail } from './Particles';
+import { spawnImpact, spawnWallSparks, spawnTracer, spawnMuzzleFlash, spawnExplosion, spawnRocketTrail, spawnBulletHole } from './Particles';
 import { dealDmgPlayer, dealDmgAgent } from './Combat';
 import { TEAM_BLUE } from '@/config/constants';
 import { WEAPONS, type WeaponId } from '@/config/weapons';
@@ -66,7 +66,20 @@ export function hitscanShot(
     let dmg = wep.damage;
     (hitAgent as any)._lastHitWasHeadshot = isHeadshot;
     if (isHeadshot) dmg *= wep.headshotMult;
-    if (wep.range < 40 && hitDist > wep.range * 0.6) dmg *= 0.7;
+
+    if (ownerType === 'player') {
+      gameState.pShotsHit++;
+      if (isHeadshot) gameState.pHeadshots++;
+    }
+    // Distance-based damage falloff curve
+    if (wep.range > 0) {
+      const rangeFrac = hitDist / wep.range;
+      if (rangeFrac > 0.4) {
+        // Smooth falloff: 100% at 40% range → 50% at max range
+        const t = (rangeFrac - 0.4) / 0.6;
+        dmg *= 1 - t * 0.5;
+      }
+    }
 
     if (hitAgent === gameState.player) {
       dealDmgPlayer(dmg, ownerAgent);
@@ -84,6 +97,7 @@ export function hitscanShot(
     const normal = wallHits[0].face?.normal || null;
     const worldNormal = normal ? normal.clone().transformDirection(wallHits[0].object.matrixWorld) : null;
     spawnWallSparks(endPoint, worldNormal, 6);
+    spawnBulletHole(endPoint, worldNormal);
     playImpact(endPoint, 'wall');
   }
 

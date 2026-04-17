@@ -6,25 +6,59 @@ import { gameState } from '@/core/GameState';
 import { TEAM_BLUE } from '@/config/constants';
 import { WEAPONS } from '@/config/weapons';
 import { getEnemyFlagTeam } from '@/core/GameModes';
+import { getPreferredPosition } from '@/ai/StrategicPositions';
 
 // ═══════════════════════════════════════════
 //  ATOMIC GOALS — leaf-level behaviors
 // ═══════════════════════════════════════════
 
 export class PatrolGoal extends YUKA.Goal<TDMAgent> {
+  private origSpeed = 0;
+  private strategicTarget: YUKA.Vector3 | null = null;
+
   activate(): void {
     const ag = this.owner;
     ag.stateName = 'PATROL';
     ag.stateTime = 0;
+    this.origSpeed = ag.maxSpeed;
+    // Sprint while patrolling (personality-influenced)
+    const sprintMul = ag.personality ? 1.15 + ag.personality.aggressionBias * 0.15 : 1.2;
+    ag.maxSpeed *= sprintMul;
+    // Try to pick a strategic position instead of random wandering
+    this.strategicTarget = getPreferredPosition(ag);
     this.status = YUKA.Goal.STATUS.ACTIVE;
   }
   execute(): void {
     const ag = this.owner;
-    if (ag.wanderB) ag.wanderB.weight = 1.0;
-    if (ag.seekB) ag.seekB.weight = 0;
-    if (ag.arriveB) ag.arriveB.weight = 0;
-    if (ag.pursuitB) ag.pursuitB.weight = 0;
-    if (ag.fleeB) ag.fleeB.weight = 0;
+
+    if (this.strategicTarget) {
+      // Move toward strategic position
+      if (ag.wanderB) ag.wanderB.weight = 0;
+      if (ag.pursuitB) ag.pursuitB.weight = 0;
+      if (ag.fleeB) ag.fleeB.weight = 0;
+      if (ag.arriveB) {
+        ag.arriveB.weight = 1.2;
+        (ag.arriveB as any).target.copy(this.strategicTarget);
+      }
+      if (ag.seekB) ag.seekB.weight = 0;
+
+      // Reached strategic position — pick a new one or wander briefly
+      if (ag.position.distanceTo(this.strategicTarget) < 4) {
+        this.strategicTarget = getPreferredPosition(ag);
+        if (!this.strategicTarget) {
+          // Briefly wander before picking a new point
+          if (ag.arriveB) ag.arriveB.weight = 0;
+          if (ag.wanderB) ag.wanderB.weight = 1.0;
+        }
+      }
+    } else {
+      // Fallback: random wander
+      if (ag.wanderB) ag.wanderB.weight = 1.0;
+      if (ag.seekB) ag.seekB.weight = 0;
+      if (ag.arriveB) ag.arriveB.weight = 0;
+      if (ag.pursuitB) ag.pursuitB.weight = 0;
+      if (ag.fleeB) ag.fleeB.weight = 0;
+    }
 
     if (ag.teamCallout && ag.teamCalloutTime > ag.stateTime - 5) {
       ag.lastKnownPos.copy(ag.teamCallout);
@@ -35,6 +69,9 @@ export class PatrolGoal extends YUKA.Goal<TDMAgent> {
   terminate(): void {
     const ag = this.owner;
     if (ag.wanderB) ag.wanderB.weight = 0;
+    if (ag.arriveB) ag.arriveB.weight = 0;
+    const cfg = CLASS_CONFIGS[ag.botClass];
+    if (cfg) ag.maxSpeed = cfg.maxSpeed;
     this.status = YUKA.Goal.STATUS.COMPLETED;
   }
 }
@@ -302,11 +339,15 @@ export class PeekGoal extends YUKA.Goal<TDMAgent> {
 
 export class FlankGoal extends YUKA.Goal<TDMAgent> {
   flankPos: YUKA.Vector3 | null = null;
+  private origSpeed = 0;
 
   activate(): void {
     const ag = this.owner;
     ag.stateName = 'FLANK';
     ag.stateTime = 0;
+    this.origSpeed = ag.maxSpeed;
+    // Sprint during flanking maneuver
+    ag.maxSpeed *= 1.25;
     if (ag.currentTarget) {
       this.flankPos = findFlankPosition(ag, ag.currentTarget.position);
     }
@@ -336,6 +377,8 @@ export class FlankGoal extends YUKA.Goal<TDMAgent> {
   terminate(): void {
     const ag = this.owner;
     if (ag.seekB) ag.seekB.weight = 0;
+    const cfg = CLASS_CONFIGS[ag.botClass];
+    if (cfg) ag.maxSpeed = cfg.maxSpeed;
     this.status = YUKA.Goal.STATUS.COMPLETED;
   }
 }
@@ -774,6 +817,12 @@ function findHuntTarget(ag: TDMAgent): YUKA.Vector3 | null {
         });
       }
     }
+  }
+
+  // Strategic positions as hunt waypoints (archetype-weighted)
+  const stratPos = getPreferredPosition(ag);
+  if (stratPos) {
+    scores.push({ pos: stratPos, score: 45 + Math.random() * 15 });
   }
 
   if (scores.length === 0) return null;

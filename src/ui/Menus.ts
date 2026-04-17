@@ -2,6 +2,8 @@ import { gameState } from '@/core/GameState';
 import { dom } from './DOMElements';
 import { getModeDefaults, getModeLabel, type GameMode } from '@/core/GameModes';
 import { resetMatch } from '@/combat/Combat';
+import { Audio } from '@/audio/AudioManager';
+import type { BotClass } from '@/config/classes';
 
 function setMainMenuVisible(on: boolean): void {
   dom.mainMenu.classList.toggle('on', on);
@@ -11,8 +13,10 @@ function setMainMenuVisible(on: boolean): void {
 
 export async function startMatchFromMenu(): Promise<void> {
   const mode = (dom.modeSelect.value || 'tdm') as GameMode;
+  const playerClass = (dom.classSelect.value || 'rifleman') as BotClass;
   const defaults = getModeDefaults(mode);
   gameState.mode = mode;
+  gameState.pClass = playerClass;
   gameState.matchTime = defaults.matchTime;
   gameState.scoreLimit = defaults.scoreLimit;
   setMainMenuVisible(false);
@@ -35,6 +39,8 @@ export async function startMatchFromMenu(): Promise<void> {
 
   const { rebuildWaypoints } = await import('@/ui/Waypoints');
   rebuildWaypoints();
+
+  Audio.startAmbientMusic();
 
   setTimeout(() => {
     gameState.renderer?.domElement?.requestPointerLock();

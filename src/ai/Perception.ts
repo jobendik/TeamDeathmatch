@@ -125,6 +125,60 @@ export function checkAudioAwareness(ag: TDMAgent): void {
     return;
   }
 
+  // Hear nearby enemy footsteps (sprinting/running)
+  const footstepRange = ag.personality ? 15 + ag.personality.skill * 10 : 18;
+  const footstepRangeSq = footstepRange * footstepRange;
+  for (const other of gameState.agents) {
+    if (other === ag || other.isDead || other.team === ag.team) continue;
+    const dx = ag.position.x - other.position.x;
+    const dz = ag.position.z - other.position.z;
+    const distSq = dx * dx + dz * dz;
+    if (distSq > footstepRangeSq) continue;
+    // Only hear enemies who are moving fast (sprinting/running)
+    const speed = other.velocity.length();
+    if (speed < 3) continue;
+    // Crouching enemies are silent
+    if (other.isBotCrouching) continue;
+    const hearChance = speed > 6 ? 0.06 : 0.02;
+    if (Math.random() > hearChance) continue;
+    ag.alertLevel = Math.min(100, ag.alertLevel + 12);
+    updateEnemyMemory(ag, other, 'audio');
+    if (!ag.hasTarget && !ag.hasLastKnown) {
+      const noise = 5 + (ag.personality ? (1 - ag.personality.skill) * 4 : 3);
+      ag.lastKnownPos.set(
+        other.position.x + (Math.random() - 0.5) * noise,
+        0,
+        other.position.z + (Math.random() - 0.5) * noise,
+      );
+      ag.hasLastKnown = true;
+    }
+    break;
+  }
+
+  // Hear nearby enemy reloading
+  const reloadHearRange = 10;
+  const reloadHearRangeSq = reloadHearRange * reloadHearRange;
+  for (const other of gameState.agents) {
+    if (other === ag || other.isDead || other.team === ag.team) continue;
+    if (!other.isReloading) continue;
+    const dx = ag.position.x - other.position.x;
+    const dz = ag.position.z - other.position.z;
+    if (dx * dx + dz * dz < reloadHearRangeSq) {
+      ag.alertLevel = Math.min(100, ag.alertLevel + 20);
+      updateEnemyMemory(ag, other, 'audio');
+      if (!ag.hasTarget) {
+        const noise = 2;
+        ag.lastKnownPos.set(
+          other.position.x + (Math.random() - 0.5) * noise,
+          0,
+          other.position.z + (Math.random() - 0.5) * noise,
+        );
+        ag.hasLastKnown = true;
+      }
+      break;
+    }
+  }
+
   const hearRange = 25;
   const hearRangeSq = hearRange * hearRange;
   const checkCount = Math.min(gameState.bullets.length, 5);

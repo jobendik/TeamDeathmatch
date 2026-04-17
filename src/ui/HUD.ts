@@ -45,7 +45,7 @@ export function updateHUD(): void {
     dom.weaponName.textContent = wep.name;
   } else {
     dom.ammoTxt.textContent = String(gameState.pAmmo);
-    dom.ammoMax.textContent = '/ ' + wep.magSize;
+    dom.ammoMax.textContent = '/ ' + wep.magSize + ' [' + gameState.pAmmoReserve + ']';
     dom.weaponName.textContent = wep.name;
   }
 

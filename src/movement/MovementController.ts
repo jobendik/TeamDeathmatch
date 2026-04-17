@@ -15,6 +15,7 @@
 import * as THREE from 'three';
 import { gameState } from '@/core/GameState';
 import { FP } from '@/config/player';
+import { WEAPONS } from '@/config/weapons';
 import { playJump, playLand, playSlide, playFootstep } from '@/audio/SoundHooks';
 
 export interface MovementState {
@@ -116,6 +117,11 @@ function getSpeedMultiplier(): number {
   let mult = 1;
   if (movement.isCrouching) mult *= CROUCH_SPEED_MULT;
   if (gameState.isADS) mult *= ADS_SPEED_MULT;
+  // Weapon-weight penalty (heavier weapons slow you down)
+  const wep = WEAPONS[gameState.pWeaponId];
+  if (wep && wep.movePenalty > 1) {
+    mult /= wep.movePenalty;
+  }
   return mult;
 }
 

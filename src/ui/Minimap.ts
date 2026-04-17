@@ -3,6 +3,7 @@ import { ARENA_HALF, TEAM_BLUE } from '@/config/constants';
 import { dom } from './DOMElements';
 import { canSee } from '@/ai/Perception';
 import { zone as brZone } from '@/br/ZoneSystem';
+import { isUAVActive } from '@/combat/Streaks';
 
 export function drawMinimap(): void {
   const canvas = dom.mmCanvas;
@@ -112,9 +113,11 @@ export function drawMinimap(): void {
     } else {
       const isAlly = ag.team === TEAM_BLUE;
       if (!isAlly) {
-        // Only show spotted enemies
-        const spotted = agents.some((a) => a.team === TEAM_BLUE && !a.isDead && canSee(a, ag));
-        if (!spotted) continue;
+        // Only show spotted enemies (or all if UAV active)
+        if (!isUAVActive()) {
+          const spotted = agents.some((a) => a.team === TEAM_BLUE && !a.isDead && canSee(a, ag));
+          if (!spotted) continue;
+        }
       }
       const col = isAlly ? '#4aa8ff' : '#ff5c5c';
       const inCombat = ag.stateName === 'ENGAGE' || ag.stateName === 'TEAM_PUSH';

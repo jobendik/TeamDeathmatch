@@ -172,6 +172,23 @@ export function showRoundSummary(winnerTeam: number): void {
     </div>
   ` : '';
 
+  // ── Personal combat stats ──
+  const accuracy = gameState.pShotsFired > 0
+    ? Math.round((gameState.pShotsHit / gameState.pShotsFired) * 100) : 0;
+  const hsRate = gameState.pShotsHit > 0
+    ? Math.round((gameState.pHeadshots / gameState.pShotsHit) * 100) : 0;
+
+  const combatHtml = `
+    <div class="rs-section-header">COMBAT STATS</div>
+    <div class="rs-combat-stats">
+      <div class="rs-combat-stat"><span class="rs-cs-val">${gameState.pShotsFired}</span><span class="rs-cs-lbl">SHOTS</span></div>
+      <div class="rs-combat-stat"><span class="rs-cs-val">${gameState.pShotsHit}</span><span class="rs-cs-lbl">HITS</span></div>
+      <div class="rs-combat-stat"><span class="rs-cs-val">${accuracy}%</span><span class="rs-cs-lbl">ACCURACY</span></div>
+      <div class="rs-combat-stat"><span class="rs-cs-val">${gameState.pHeadshots}</span><span class="rs-cs-lbl">HEADSHOTS</span></div>
+      <div class="rs-combat-stat"><span class="rs-cs-val">${hsRate}%</span><span class="rs-cs-lbl">HS RATE</span></div>
+    </div>
+  `;
+
   // ── Scoreboard ──
   const scoreboardHtml = `
     <div class="rs-section-header">FINAL STANDINGS</div>
@@ -191,7 +208,7 @@ export function showRoundSummary(winnerTeam: number): void {
     </div>
   `;
 
-  dom.rsStats.innerHTML = challengeHtml + scoreboardHtml;
+  dom.rsStats.innerHTML = combatHtml + challengeHtml + scoreboardHtml;
 
   dom.rsBtn.textContent = 'DEPLOY AGAIN';
   dom.rsBtn.onclick = () => {

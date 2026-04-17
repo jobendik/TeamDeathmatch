@@ -16,6 +16,30 @@ const WEAPON_SHOT_SOUND: Record<WeaponId, string | null> = {
   rocket_launcher: 'shot_rocket',
 };
 
+const WEAPON_RELOAD_SOUND: Record<WeaponId, string> = {
+  unarmed: 'reload',
+  knife: 'reload',
+  pistol: 'reload_pistol',
+  smg: 'reload_smg',
+  assault_rifle: 'reload_ar',
+  shotgun: 'reload_shotgun',
+  sniper_rifle: 'reload_sniper',
+  rocket_launcher: 'reload',
+};
+
+const FOOTSTEP_POOL = ['footstep_1', 'footstep_2', 'footstep_3', 'footstep_4', 'footstep_5', 'footstep_6'];
+let footstepIdx = 0;
+
+const BODY_IMPACT_POOL = ['impact_body', 'impact_body_2', 'impact_body_3'];
+const WALL_IMPACT_POOL = [
+  'impact_wall', 'impact_wall_2', 'impact_metal',
+  'impact_rock_1', 'impact_rock_2', 'impact_wood_1', 'impact_wood_2',
+];
+const GRUNT_POOL = ['grunt_1', 'grunt_2', 'grunt_3'];
+const LAND_POOL = ['land', 'land_2'];
+
+function pick<T>(arr: T[]): T { return arr[Math.floor(Math.random() * arr.length)]; }
+
 export function playShot(weaponId: WeaponId, pos?: THREE.Vector3, fromPlayer = false): void {
   const id = WEAPON_SHOT_SOUND[weaponId];
   if (!id) return;
@@ -27,31 +51,47 @@ export function playShot(weaponId: WeaponId, pos?: THREE.Vector3, fromPlayer = f
 }
 
 export function playImpact(pos: THREE.Vector3, kind: 'body' | 'headshot' | 'wall'): void {
-  const id = kind === 'headshot' ? 'impact_headshot' : kind === 'body' ? 'impact_body' : 'impact_wall';
+  const id = kind === 'headshot' ? 'impact_headshot'
+           : kind === 'body' ? pick(BODY_IMPACT_POOL)
+           : pick(WALL_IMPACT_POOL);
   Audio.play(id, { pos, pitchJitter: 0.1 });
 }
 
 export function playFootstep(pos: THREE.Vector3, fromPlayer = false): void {
+  const id = FOOTSTEP_POOL[footstepIdx];
+  footstepIdx = (footstepIdx + 1) % FOOTSTEP_POOL.length;
   if (fromPlayer) {
-    Audio.play('footstep', { volume: 0.5, pitchJitter: 0.15 });
+    Audio.play(id, { volume: 0.5, pitchJitter: 0.08 });
   } else {
-    Audio.play('footstep', { pos, pitchJitter: 0.15 });
+    Audio.play(id, { pos, pitchJitter: 0.08 });
   }
 }
 
-export function playReload(fromPlayer = false, pos?: THREE.Vector3): void {
-  if (fromPlayer) Audio.play('reload', { volume: 0.85 });
-  else if (pos) Audio.play('reload', { pos, volume: 0.6 });
+export function playReload(fromPlayer = false, pos?: THREE.Vector3, weaponId?: WeaponId): void {
+  const id = weaponId ? WEAPON_RELOAD_SOUND[weaponId] : 'reload';
+  if (fromPlayer) Audio.play(id, { volume: 0.85 });
+  else if (pos) Audio.play(id, { pos, volume: 0.6 });
 }
 
 export function playEmptyClick(): void { Audio.play('empty_click'); }
 export function playWeaponSwap(): void { Audio.play('weapon_swap'); }
 export function playJump(): void { Audio.play('jump'); }
-export function playLand(intensity = 1): void { Audio.play('land', { volume: 0.5 + intensity * 0.5 }); }
+export function playLand(intensity = 1): void { Audio.play(pick(LAND_POOL), { volume: 0.5 + intensity * 0.5 }); }
 export function playSlide(): void { Audio.play('slide'); }
-export function playHitTaken(): void { Audio.play('hit_taken'); }
+export function playHitTaken(): void { Audio.play(pick(GRUNT_POOL)); }
 export function playHeal(): void { Audio.play('heal'); }
 export function playPickup(): void { Audio.play('pickup'); }
+export function playDeath(pos?: THREE.Vector3): void {
+  if (pos) {
+    Audio.play('death', { pos, pitchJitter: 0.1 });
+    Audio.play('death_impact', { pos, volume: 0.7 });
+  } else {
+    Audio.play('death', { pitchJitter: 0.1 });
+  }
+}
+export function playRespawn(): void { Audio.play('respawn'); }
+export function playShotgunCock(): void { Audio.play('shotgun_cock'); }
+export function playSniperZoom(): void { Audio.play('sniper_zoom'); }
 export function playExplosion(pos: THREE.Vector3): void {
   Audio.play('explosion', { pos, pitchJitter: 0.1 });
 }

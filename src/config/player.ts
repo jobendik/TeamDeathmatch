@@ -11,4 +11,4 @@ export const FP = {
   gravity: 14,
   /** Max step height that can be auto-walked-over (e.g. building foundations) */
   stepHeight: 0.4,
-} as const;
+};

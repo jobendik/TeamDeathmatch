@@ -264,6 +264,55 @@ class AudioMgr {
       this.playingLoops.delete(id);
     }
   }
+
+  // ── Ambient music drone ──
+  private ambientNodes: OscillatorNode[] = [];
+  private ambientPlaying = false;
+
+  startAmbientMusic(): void {
+    if (!this.ctx || this.ambientPlaying) return;
+    this.ambientPlaying = true;
+
+    const ctx = this.ctx;
+    const gain = ctx.createGain();
+    gain.gain.value = 0;
+    gain.connect(this.busMusic);
+    // Fade in
+    gain.gain.linearRampToValueAtTime(0.12, ctx.currentTime + 3);
+
+    // Low drone — two detuned oscillators for thickness
+    const freqs = [55, 55.3, 82.4]; // A1 + detuned + E2
+    for (const f of freqs) {
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.value = f;
+      const oscGain = ctx.createGain();
+      oscGain.gain.value = f > 60 ? 0.06 : 0.1;
+      osc.connect(oscGain);
+      oscGain.connect(gain);
+      osc.start();
+      this.ambientNodes.push(osc);
+    }
+
+    // Sub-bass pulse
+    const lfo = ctx.createOscillator();
+    lfo.type = 'sine';
+    lfo.frequency.value = 0.15; // slow pulse
+    const lfoGain = ctx.createGain();
+    lfoGain.gain.value = 0.03;
+    lfo.connect(lfoGain);
+    lfoGain.connect(gain);
+    lfo.start();
+    this.ambientNodes.push(lfo);
+  }
+
+  stopAmbientMusic(): void {
+    for (const osc of this.ambientNodes) {
+      try { osc.stop(); } catch { /* already stopped */ }
+    }
+    this.ambientNodes = [];
+    this.ambientPlaying = false;
+  }
 }
 
 export const Audio = new AudioMgr();
@@ -337,6 +386,14 @@ const SOUNDS: Record<string, SoundDef> = {
     synth: (ctx, d) => gunshot(ctx, d, 180, 0.30, 1.0) },
   shot_rocket:   { category: 'sfx', volume: 0.7, polyphonic: true,
     synth: (ctx, d) => gunshot(ctx, d, 90, 0.45, 1.0) },
+  shot_ak47:     { category: 'sfx', volume: 0.55, polyphonic: true,
+    synth: (ctx, d) => gunshot(ctx, d, 220, 0.14, 0.8) },
+  shot_awp:      { category: 'sfx', volume: 0.8, polyphonic: true,
+    synth: (ctx, d) => gunshot(ctx, d, 160, 0.35, 1.0) },
+  shot_scar:     { category: 'sfx', volume: 0.55, polyphonic: true,
+    synth: (ctx, d) => gunshot(ctx, d, 230, 0.14, 0.75) },
+  shot_lmg:      { category: 'sfx', volume: 0.55, polyphonic: true,
+    synth: (ctx, d) => gunshot(ctx, d, 200, 0.12, 0.7) },
 
   // ── Impacts ──
   impact_body:   { category: 'sfx', volume: 0.5, polyphonic: true,
@@ -399,6 +456,72 @@ const SOUNDS: Record<string, SoundDef> = {
         noise.start(t + offset); noise.stop(t + offset + 0.06);
       }
       return 0.4;
+    },
+  },
+  reload_pistol: { category: 'sfx', volume: 0.45,
+    synth: (ctx, d) => {
+      const t = ctx.currentTime;
+      for (const offset of [0, 0.15]) {
+        const noise = ctx.createBufferSource();
+        noise.buffer = whiteNoise(ctx, 0.03);
+        const f = ctx.createBiquadFilter();
+        f.type = 'bandpass'; f.frequency.value = 1800; f.Q.value = 5;
+        const g = ctx.createGain();
+        envelope(g, t + offset, 0.001, 0.04, 0.3);
+        noise.connect(f).connect(g).connect(d);
+        noise.start(t + offset); noise.stop(t + offset + 0.05);
+      }
+      return 0.25;
+    },
+  },
+  reload_smg:    { category: 'sfx', volume: 0.45,
+    synth: (ctx, d) => SOUNDS.reload.synth(ctx, d) },
+  reload_ar:     { category: 'sfx', volume: 0.45,
+    synth: (ctx, d) => SOUNDS.reload.synth(ctx, d) },
+  reload_shotgun: { category: 'sfx', volume: 0.5,
+    synth: (ctx, d) => {
+      const t = ctx.currentTime;
+      for (const offset of [0, 0.25, 0.50, 0.75]) {
+        const noise = ctx.createBufferSource();
+        noise.buffer = whiteNoise(ctx, 0.04);
+        const f = ctx.createBiquadFilter();
+        f.type = 'bandpass'; f.frequency.value = 1200; f.Q.value = 4;
+        const g = ctx.createGain();
+        envelope(g, t + offset, 0.001, 0.05, 0.35);
+        noise.connect(f).connect(g).connect(d);
+        noise.start(t + offset); noise.stop(t + offset + 0.06);
+      }
+      return 1.0;
+    },
+  },
+  reload_sniper: { category: 'sfx', volume: 0.5,
+    synth: (ctx, d) => SOUNDS.reload.synth(ctx, d) },
+  reload_lmg:    { category: 'sfx', volume: 0.5,
+    synth: (ctx, d) => SOUNDS.reload.synth(ctx, d) },
+  shotgun_cock:  { category: 'sfx', volume: 0.5,
+    synth: (ctx, d) => {
+      const t = ctx.currentTime;
+      const noise = ctx.createBufferSource();
+      noise.buffer = whiteNoise(ctx, 0.08);
+      const f = ctx.createBiquadFilter();
+      f.type = 'bandpass'; f.frequency.value = 1100; f.Q.value = 3;
+      const g = ctx.createGain();
+      envelope(g, t, 0.001, 0.07, 0.4);
+      noise.connect(f).connect(g).connect(d);
+      noise.start(t); noise.stop(t + 0.1);
+      return 0.1;
+    },
+  },
+  sniper_zoom:   { category: 'sfx', volume: 0.35,
+    synth: (ctx, d) => {
+      const t = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      osc.type = 'sine'; osc.frequency.value = 600;
+      const g = ctx.createGain();
+      envelope(g, t, 0.01, 0.15, 0.2);
+      osc.connect(g).connect(d);
+      osc.start(t); osc.stop(t + 0.18);
+      return 0.18;
     },
   },
   weapon_swap:   { category: 'sfx', volume: 0.4,
@@ -738,17 +861,195 @@ const SOUNDS: Record<string, SoundDef> = {
       return 0.6;
     },
   },
+
+  // ── Footstep variants (real samples rotate; synth just uses base) ──
+  footstep_1:    { category: 'sfx', volume: 0.25, polyphonic: true,
+    synth: (ctx, d) => SOUNDS.footstep.synth(ctx, d) },
+  footstep_2:    { category: 'sfx', volume: 0.25, polyphonic: true,
+    synth: (ctx, d) => SOUNDS.footstep.synth(ctx, d) },
+  footstep_3:    { category: 'sfx', volume: 0.25, polyphonic: true,
+    synth: (ctx, d) => SOUNDS.footstep.synth(ctx, d) },
+  footstep_4:    { category: 'sfx', volume: 0.25, polyphonic: true,
+    synth: (ctx, d) => SOUNDS.footstep.synth(ctx, d) },
+  footstep_5:    { category: 'sfx', volume: 0.25, polyphonic: true,
+    synth: (ctx, d) => SOUNDS.footstep.synth(ctx, d) },
+  footstep_6:    { category: 'sfx', volume: 0.25, polyphonic: true,
+    synth: (ctx, d) => SOUNDS.footstep.synth(ctx, d) },
+
+  // ── Landing variant ──
+  land_2:        { category: 'sfx', volume: 0.45,
+    synth: (ctx, d) => SOUNDS.land.synth(ctx, d) },
+
+  // ── Death & grunt sounds ──
+  death:         { category: 'sfx', volume: 0.6, polyphonic: true,
+    synth: (ctx, d) => {
+      const t = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(200, t);
+      osc.frequency.exponentialRampToValueAtTime(60, t + 0.4);
+      const g = ctx.createGain();
+      envelope(g, t, 0.005, 0.35, 0.5);
+      osc.connect(g).connect(d);
+      osc.start(t); osc.stop(t + 0.42);
+      return 0.42;
+    },
+  },
+  grunt_1:       { category: 'sfx', volume: 0.45, polyphonic: true,
+    synth: (ctx, d) => SOUNDS.hit_taken.synth(ctx, d) },
+  grunt_2:       { category: 'sfx', volume: 0.45, polyphonic: true,
+    synth: (ctx, d) => SOUNDS.hit_taken.synth(ctx, d) },
+  grunt_3:       { category: 'sfx', volume: 0.45, polyphonic: true,
+    synth: (ctx, d) => SOUNDS.hit_taken.synth(ctx, d) },
+
+  // ── Respawn ──
+  respawn:       { category: 'sfx', volume: 0.5,
+    synth: (ctx, d) => {
+      const t = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(330, t);
+      osc.frequency.linearRampToValueAtTime(660, t + 0.2);
+      const g = ctx.createGain();
+      envelope(g, t, 0.01, 0.3, 0.4);
+      osc.connect(g).connect(d);
+      osc.start(t); osc.stop(t + 0.35);
+      return 0.35;
+    },
+  },
+
+  // ── Impact variants (surface types) ──
+  impact_body_2:     { category: 'sfx', volume: 0.5, polyphonic: true,
+    synth: (ctx, d) => SOUNDS.impact_body.synth(ctx, d) },
+  impact_body_3:     { category: 'sfx', volume: 0.5, polyphonic: true,
+    synth: (ctx, d) => SOUNDS.impact_body.synth(ctx, d) },
+  impact_wall_2:     { category: 'sfx', volume: 0.4, polyphonic: true,
+    synth: (ctx, d) => SOUNDS.impact_wall.synth(ctx, d) },
+  impact_metal:      { category: 'sfx', volume: 0.45, polyphonic: true,
+    synth: (ctx, d) => SOUNDS.impact_wall.synth(ctx, d) },
+  impact_iron:       { category: 'sfx', volume: 0.45, polyphonic: true,
+    synth: (ctx, d) => SOUNDS.impact_wall.synth(ctx, d) },
+  impact_iron_light: { category: 'sfx', volume: 0.35, polyphonic: true,
+    synth: (ctx, d) => SOUNDS.impact_wall.synth(ctx, d) },
+  impact_wood_1:     { category: 'sfx', volume: 0.4, polyphonic: true,
+    synth: (ctx, d) => SOUNDS.impact_wall.synth(ctx, d) },
+  impact_wood_2:     { category: 'sfx', volume: 0.4, polyphonic: true,
+    synth: (ctx, d) => SOUNDS.impact_wall.synth(ctx, d) },
+  impact_rock_1:     { category: 'sfx', volume: 0.45, polyphonic: true,
+    synth: (ctx, d) => SOUNDS.impact_wall.synth(ctx, d) },
+  impact_rock_2:     { category: 'sfx', volume: 0.45, polyphonic: true,
+    synth: (ctx, d) => SOUNDS.impact_wall.synth(ctx, d) },
+  impact_gravel_1:   { category: 'sfx', volume: 0.35, polyphonic: true,
+    synth: (ctx, d) => SOUNDS.impact_wall.synth(ctx, d) },
+  impact_gravel_2:   { category: 'sfx', volume: 0.35, polyphonic: true,
+    synth: (ctx, d) => SOUNDS.impact_wall.synth(ctx, d) },
+  death_impact:      { category: 'sfx', volume: 0.6, polyphonic: true,
+    synth: (ctx, d) => SOUNDS.impact_body.synth(ctx, d) },
+  result_impact:     { category: 'sfx', volume: 0.5, polyphonic: true,
+    synth: (ctx, d) => SOUNDS.impact_body.synth(ctx, d) },
+
+  // ── Extra weapon mechanical sounds ──
+  sniper_load:       { category: 'sfx', volume: 0.45,
+    synth: (ctx, d) => SOUNDS.weapon_swap.synth(ctx, d) },
+  scar_mag_load:     { category: 'sfx', volume: 0.45,
+    synth: (ctx, d) => SOUNDS.weapon_swap.synth(ctx, d) },
+  scar_tail:         { category: 'sfx', volume: 0.3, polyphonic: true,
+    synth: (ctx, d) => { return 0; } },
+  scar_tail_fire:    { category: 'sfx', volume: 0.3, polyphonic: true,
+    synth: (ctx, d) => { return 0; } },
+  tec9_tail:         { category: 'sfx', volume: 0.3, polyphonic: true,
+    synth: (ctx, d) => { return 0; } },
+  tec9_tail_fire:    { category: 'sfx', volume: 0.3, polyphonic: true,
+    synth: (ctx, d) => { return 0; } },
+  tec9_load:         { category: 'sfx', volume: 0.4,
+    synth: (ctx, d) => SOUNDS.weapon_swap.synth(ctx, d) },
+  tec9_unload:       { category: 'sfx', volume: 0.4,
+    synth: (ctx, d) => SOUNDS.weapon_swap.synth(ctx, d) },
 };
 
 /**
- * Real asset URLs. Drop files into /public/audio/<filename> and they'll
- * be loaded automatically and replace the synth versions.
- *
- * Recommended pack: Kenney's "Impact Sounds", "Sci-fi Sounds", and
- * "Music Loops" (CC0). Or any pack with .wav / .ogg shorts.
+ * Real asset URLs. Files live in /public/audio/<path>.
+ * They automatically replace the synth fallbacks.
  */
 export const REAL_SOUND_URLS: Record<string, string> = {
-  // shot_pistol: 'shot_pistol.wav',
-  // shot_ar: 'shot_ar.wav',
-  // ...
+  // ── Weapons: fire ──
+  shot_pistol:       'weapons/pistol-fire.mp3',
+  shot_smg:          'weapons/tec9-fire.mp3',
+  shot_ar:           'weapons/m4-fire.mp3',
+  shot_shotgun:      'weapons/shotgun-fire.mp3',
+  shot_sniper:       'weapons/sniper-fire.mp3',
+  shot_rocket:       'weapons/grenade-launcher.mp3',
+  shot_ak47:         'weapons/ak47-fire.mp3',
+  shot_awp:          'weapons/awp-fire.mp3',
+  shot_scar:         'weapons/scar-fire.mp3',
+  shot_lmg:          'weapons/lmg-fire.mp3',
+
+  // ── Weapons: reload / mechanical ──
+  reload:            'weapons/scar-reload.mp3',
+  reload_pistol:     'weapons/pistol-reload.mp3',
+  reload_smg:        'weapons/tec9-reload.mp3',
+  reload_ar:         'weapons/scar-reload.mp3',
+  reload_shotgun:    'weapons/shotgun-load.mp3',
+  reload_sniper:     'weapons/sniper-reload.mp3',
+  reload_lmg:        'weapons/lmg-reload.mp3',
+  weapon_swap:       'weapons/scar-magazine-click.mp3',
+  shotgun_cock:      'weapons/shotgun-cock.mp3',
+  sniper_zoom:       'weapons/sniper-zoom.mp3',
+  sniper_load:       'weapons/sniper-load.mp3',
+  scar_mag_load:     'weapons/scar-magazine-load.mp3',
+  scar_tail:         'weapons/scar-tail.mp3',
+  scar_tail_fire:    'weapons/scar-tail-fire.mp3',
+  tec9_tail:         'weapons/tec9-tail.mp3',
+  tec9_tail_fire:    'weapons/tec9-tail-fire.mp3',
+  tec9_load:         'weapons/tec9-load.mp3',
+  tec9_unload:       'weapons/tec9-unload.mp3',
+
+  // ── Explosions ──
+  explosion:         'weapons/grenade-explosion.mp3',
+
+  // ── Impacts ──
+  impact_body:       'impact/body-impact-1.mp3',
+  impact_body_2:     'impact/body-impact-2.mp3',
+  impact_body_3:     'impact/body-impact-3.mp3',
+  impact_headshot:   'impact/hit-impact.mp3',
+  impact_wall:       'impact/impact-brick-1.mp3',
+  impact_wall_2:     'impact/impact-brick-2.mp3',
+  impact_metal:      'impact/impact-metal.mp3',
+  impact_iron:       'impact/impact-iron.mp3',
+  impact_iron_light: 'impact/impact-iron-light.mp3',
+  impact_wood_1:     'impact/impact-wood-1.mp3',
+  impact_wood_2:     'impact/impact-wood-2.mp3',
+  impact_rock_1:     'impact/impact-rock-1.mp3',
+  impact_rock_2:     'impact/impact-rock-2.mp3',
+  impact_gravel_1:   'impact/impact-gravel-1.mp3',
+  impact_gravel_2:   'impact/impact-gravel-2.mp3',
+  death_impact:      'impact/death-impact.mp3',
+  result_impact:     'impact/result-impact.mp3',
+
+  // ── Player: footsteps ──
+  footstep:          'player/concrete-run-1.mp3',
+  footstep_1:        'player/concrete-run-1.mp3',
+  footstep_2:        'player/concrete-run-2.mp3',
+  footstep_3:        'player/concrete-run-3.mp3',
+  footstep_4:        'player/concrete-run-4.mp3',
+  footstep_5:        'player/concrete-run-5.mp3',
+  footstep_6:        'player/concrete-run-6.mp3',
+
+  // ── Player: movement ──
+  jump:              'player/jump.mp3',
+  land:              'player/land-1.mp3',
+  land_2:            'player/land-2.mp3',
+
+  // ── Player: voice / body ──
+  hit_taken:         'player/echo-grunt-1.mp3',
+  grunt_1:           'player/echo-grunt-1.mp3',
+  grunt_2:           'player/echo-grunt-2.mp3',
+  grunt_3:           'player/echo-grunt-3.mp3',
+  death:             'player/echo-death-1.mp3',
+  heartbeat:         'player/heart-beat.mp3',
+
+  // ── Level / game events ──
+  heal:              'level/health-regen.mp3',
+  pickup:            'level/potion-pickup.mp3',
+  respawn:           'level/respawn-sound.mp3',
 };

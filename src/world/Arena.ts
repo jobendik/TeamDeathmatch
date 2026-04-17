@@ -139,6 +139,15 @@ void main(){
     addPillar(x, 1.5, z, 0.9);
   }
 
+  // ── Raised Platforms (Elevation) ──
+  // Mid-field platforms over looking center
+  addPlatform(-14, 0, -14, 4, 1.5, 4);
+  addPlatform(14, 0, 14, 4, 1.5, 4);
+  
+  // Corner sniper platforms
+  addPlatform(-38, 0, -38, 4, 1.8, 4);
+  addPlatform(38, 0, 38, 4, 1.8, 4);
+
   // ── Team base platforms ──
   // Blue base
   const bluePlat = new THREE.Mesh(
@@ -319,6 +328,102 @@ function addPillar(x: number, y: number, z: number, r: number): void {
   ob.boundingRadius = r + 0.5;
   yukaObs.push(ob);
   entityManager.add(ob);
+}
+
+/**
+ * Add an elevated platform with ramps for accessibility.
+ * Uses yTop so players and bots can walk on it.
+ */
+function addPlatform(x: number, _y: number, z: number, w: number, h: number, d: number): void {
+  const { scene, wallMeshes, colliders, arenaColliders } = gameState;
+
+  // Main platform block
+  const platMesh = new THREE.Mesh(
+    new THREE.BoxGeometry(w, h, d),
+    new THREE.MeshStandardMaterial({
+      color: 0x142840, roughness: 0.9, metalness: 0.1, emissive: 0x081020, emissiveIntensity: 0.2,
+    }),
+  );
+  platMesh.position.set(x, h / 2, z);
+  platMesh.castShadow = true;
+  platMesh.receiveShadow = true;
+  scene.add(platMesh);
+  arenaMeshes.push(platMesh);
+
+  // Platform top edge highlight
+  platMesh.add(
+    new THREE.LineSegments(
+      new THREE.EdgesGeometry(platMesh.geometry),
+      new THREE.LineBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.4 }),
+    ),
+  );
+  wallMeshes.push(platMesh);
+
+  // Platform collision with yTop
+  colliders.push({ type: 'box', x, z, hw: w * 0.5 + Math.max(FP.playerRadius, 0.2), hd: d * 0.5 + Math.max(FP.playerRadius, 0.2), yTop: h });
+  // Arena colliders are slightly larger. Also give them yTop so bots can step on them.
+  arenaColliders.push({ type: 'box', x, z, hw: w * 0.5 + 0.45, hd: d * 0.5 + 0.45, yTop: h });
+
+  // Ramp geometry (custom wedge)
+  const rampW = 2; // width of the ramp
+  const rampL = 3.5; // length of the ramp
+  const rampShape = new THREE.Shape();
+  rampShape.moveTo(0, 0);
+  rampShape.lineTo(rampL, 0);
+  rampShape.lineTo(rampL, h);
+  rampShape.lineTo(0, 0);
+  
+  const extrudeSettings = { depth: rampW, bevelEnabled: false };
+  const rampGeo = new THREE.ExtrudeGeometry(rampShape, extrudeSettings);
+  rampGeo.computeVertexNormals();
+  // Center the pivot a bit better
+  rampGeo.translate(-rampL / 2, 0, -rampW / 2);
+
+  const rampMat = new THREE.MeshStandardMaterial({
+    color: 0x1a3556, roughness: 0.8, metalness: 0.1, emissive: 0x081020, emissiveIntensity: 0.2
+  });
+
+  // Decide ramp orientation based on position to face the center of the arena
+  const toCenterX = -x;
+  const toCenterZ = -z;
+  const isXDominant = Math.abs(toCenterX) > Math.abs(toCenterZ);
+  
+  const rampMesh = new THREE.Mesh(rampGeo, rampMat);
+  rampMesh.castShadow = true;
+  rampMesh.receiveShadow = true;
+
+  if (isXDominant) {
+    const side = Math.sign(toCenterX);
+    rampMesh.position.set(x + side * (w / 2 + rampL / 2), 0, z);
+    rampMesh.rotation.y = side > 0 ? Math.PI : 0;
+    
+    // Ramp steps for collision (players/bots slide/step up)
+    const steps = 4;
+    for (let i = 0; i < steps; i++) {
+      const stepH = h * ((i + 1) / steps);
+      const stepW = rampL / steps;
+      const stepX = x + side * (w / 2 + rampL - stepW * i - stepW / 2);
+      colliders.push({ type: 'box', x: stepX, z, hw: stepW * 0.5 + 0.2, hd: rampW * 0.5 + 0.2, yTop: stepH });
+      arenaColliders.push({ type: 'box', x: stepX, z, hw: stepW * 0.5 + 0.2, hd: rampW * 0.5 + 0.2, yTop: stepH });
+    }
+  } else {
+    const side = Math.sign(toCenterZ);
+    rampMesh.position.set(x, 0, z + side * (d / 2 + rampL / 2));
+    rampMesh.rotation.y = side > 0 ? -Math.PI / 2 : Math.PI / 2;
+    
+    const steps = 4;
+    for (let i = 0; i < steps; i++) {
+      const stepH = h * ((i + 1) / steps);
+      const stepL = rampL / steps;
+      const stepZ = z + side * (d / 2 + rampL - stepL * i - stepL / 2);
+      colliders.push({ type: 'box', x, z: stepZ, hw: rampW * 0.5 + 0.2, hd: stepL * 0.5 + 0.2, yTop: stepH });
+      arenaColliders.push({ type: 'box', x, z: stepZ, hw: rampW * 0.5 + 0.2, hd: stepL * 0.5 + 0.2, yTop: stepH });
+    }
+  }
+
+  scene.add(rampMesh);
+  arenaMeshes.push(rampMesh);
+  wallMeshes.push(rampMesh);
 }
 
 export function hideArena(): void {

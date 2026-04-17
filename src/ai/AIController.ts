@@ -11,11 +11,155 @@ import { evalFuzzy } from './FuzzyLogic';
 import { findCoverFrom, pushOutOfWall } from './CoverSystem';
 import { hitscanShot, shotgunBlast, spawnRocket, spawnGrenade } from '@/combat/Hitscan';
 import { spawnMuzzleFlash } from '@/combat/Particles';
-import { keepInside } from '@/entities/Player';
+import { keepInside, getFloorY } from '@/entities/Player';
 import { updateAim, getAimDirection } from './HumanAim';
+import { playFootstep } from '@/audio/SoundHooks';
+import { CLASS_CONFIGS } from '@/config/classes';
+import { WEAPONS, CLASS_DEFAULT_WEAPON, type WeaponId } from '@/config/weapons';
+
+// Bot footstep timers (keyed by agent name)
+const _footstepTimers = new Map<string, number>();
 import { deliverPendingCallouts, queueCallout } from './TeamIntel';
+import type { TeamIntent } from './AITypes';
+
+// ═══════════════════════════════════════════
+//  TEAM TACTICAL BOARD
+// ═══════════════════════════════════════════
+interface TeamBoard {
+  intent: TeamIntent;
+  lastUpdate: number;
+  focusPos: YUKA.Vector3 | null;
+  pressure: number;
+}
+
+const teamBoards: Record<number, TeamBoard> = {
+  0: { intent: 'hold', lastUpdate: -10, focusPos: null, pressure: 0 },
+  1: { intent: 'hold', lastUpdate: -10, focusPos: null, pressure: 0 },
+};
+
+function updateTeamBoard(teamId: number): void {
+  const now = gameState.worldElapsed;
+  const board = teamBoards[teamId];
+  if (now - board.lastUpdate < 2) return; // update every 2 seconds
+  board.lastUpdate = now;
+
+  const allies = gameState.agents.filter(a => a.team === teamId && !a.isDead && a !== gameState.player);
+  const enemies = gameState.agents.filter(a => a.team !== teamId && !a.isDead);
+  if (allies.length === 0) return;
+
+  // Calculate team health and pressure
+  const avgHP = allies.reduce((s, a) => s + a.hp / a.maxHP, 0) / allies.length;
+  const aliveEnemies = enemies.length;
+  const aliveAllies = allies.length;
+  const scoreDiff = gameState.teamScores[teamId] - gameState.teamScores[teamId === 0 ? 1 : 0];
+
+  board.pressure = Math.max(0, Math.min(1, (aliveEnemies - aliveAllies) / 5 + (1 - avgHP)));
+
+  // Focus pos: average of all known enemy positions
+  let fx = 0, fz = 0, fcount = 0;
+  for (const ally of allies) {
+    for (const [, mem] of ally.enemyMemory) {
+      if (mem.confidence > 0.3) {
+        fx += mem.lastSeenPos.x;
+        fz += mem.lastSeenPos.z;
+        fcount++;
+      }
+    }
+  }
+  if (fcount > 0) {
+    if (!board.focusPos) board.focusPos = new YUKA.Vector3();
+    board.focusPos.set(fx / fcount, 0, fz / fcount);
+  }
+
+  // Determine team intent
+  if (avgHP < 0.35 || board.pressure > 0.7) {
+    board.intent = 'reset';
+  } else if (scoreDiff < -3 && avgHP > 0.6) {
+    board.intent = 'hunt';
+  } else if (aliveAllies > aliveEnemies + 1 && avgHP > 0.5) {
+    board.intent = 'collapse';
+  } else if (scoreDiff > 3) {
+    board.intent = 'hold';
+  } else {
+    board.intent = Math.random() < 0.5 ? 'hold' : 'hunt';
+  }
+
+  // Apply team intent to agents' aggression
+  for (const ally of allies) {
+    switch (board.intent) {
+      case 'hunt':
+      case 'collapse':
+        ally.fuzzyAggr = Math.min(100, ally.fuzzyAggr + 10);
+        break;
+      case 'reset':
+        ally.fuzzyAggr = Math.max(0, ally.fuzzyAggr - 15);
+        break;
+    }
+  }
+}
 
 const _muzzlePos = new THREE.Vector3();
+
+// ═══════════════════════════════════════════
+//  BOT WEAPON SWAP — range-based secondary switching
+// ═══════════════════════════════════════════
+function botTryWeaponSwap(ag: TDMAgent, dist: number): void {
+  if (ag.weaponSwapCooldown > 0) return;
+  if (ag.isReloading) return;
+  if (ag.weaponId === 'unarmed' || ag.weaponId === 'knife') return;
+
+  const current = WEAPONS[ag.weaponId];
+  const secondary = WEAPONS[ag.secondaryWeaponId];
+  if (!current || !secondary) return;
+
+  let shouldSwap = false;
+
+  if (ag.weaponId !== ag.secondaryWeaponId) {
+    if ((ag.weaponId === 'sniper_rifle' || ag.weaponId === 'rocket_launcher') && dist < 8) {
+      shouldSwap = true;
+    }
+    if (ag.ammo <= 0 && !ag.isReloading) {
+      shouldSwap = true;
+    }
+  } else {
+    const primary = WEAPONS[CLASS_DEFAULT_WEAPON[ag.botClass] || 'assault_rifle'];
+    if (primary && dist > 15 && ag.weaponId === ag.secondaryWeaponId) {
+      shouldSwap = true;
+    }
+  }
+
+  if (shouldSwap) {
+    const targetWeapon: WeaponId = ag.weaponId === ag.secondaryWeaponId
+      ? (CLASS_DEFAULT_WEAPON[ag.botClass] || 'assault_rifle') as WeaponId
+      : ag.secondaryWeaponId;
+    const def = WEAPONS[targetWeapon];
+    ag.weaponId = targetWeapon;
+    ag.damage = def.damage;
+    ag.fireRate = def.fireRate;
+    ag.burstSize = def.burstSize;
+    ag.burstDelay = def.burstDelay;
+    ag.reloadTime = def.reloadTime;
+    ag.magSize = def.magSize;
+    ag.ammo = def.magSize;
+    ag.aimError = def.aimError;
+    ag.weaponSwapCooldown = 3;
+    ag.shootTimer = 0.5;
+  }
+}
+
+// Adaptive difficulty: softens/hardens bot aim based on player K/D
+function getAdaptiveDifficultyMul(): number {
+  const k = gameState.pKills;
+  const d = gameState.pDeaths;
+  if (k + d < 3) return 1; // not enough data
+  const kd = k / Math.max(1, d);
+  // Player dominating → bots get slightly worse aim; player struggling → bots soften
+  if (kd > 2.5) return 0.85; // player dominating, make bots a tiny bit harder (lower = tighter)
+  if (kd > 1.5) return 0.95;
+  if (kd < 0.4) return 1.3;  // player struggling, widen bot aim
+  if (kd < 0.7) return 1.15;
+  return 1;
+}
 
 let _lastCalloutFrame = -1;
 function deliverCalloutsOncePerFrame(): void {
@@ -137,12 +281,32 @@ function setCommitment(ag: TDMAgent, seconds: number): void {
   ag.commitmentUntil = gameState.worldElapsed + seconds;
 }
 
+const _footstepPos = new THREE.Vector3();
+function updateBotFootsteps(ag: TDMAgent, dt: number): void {
+  const speed = ag.velocity.length();
+  if (speed < 1.5) return; // too slow / crouching — silent
+  const interval = speed > 8 ? 0.28 : 0.42; // faster cadence when sprinting
+  let timer = _footstepTimers.get(ag.name) ?? 0;
+  timer -= dt;
+  if (timer <= 0) {
+    _footstepPos.set(ag.position.x, ag.position.y, ag.position.z);
+    playFootstep(_footstepPos, false);
+    timer = interval;
+  }
+  _footstepTimers.set(ag.name, timer);
+}
+
 export function updateAI(ag: TDMAgent, dt: number): void {
   if (ag === gameState.player || ag.isDead) return;
 
   deliverCalloutsOncePerFrame();
+  // Team coordination — update board once per frame per team
+  if (gameState.mode !== 'ffa' && gameState.mode !== 'br') {
+    updateTeamBoard(ag.team);
+  }
 
   ag.stateTime += dt;
+  updateBotFootsteps(ag, dt);
   updateStrafing(ag, dt);
   updateDamagePressure(ag, dt);
   updateTilt(ag, dt);
@@ -184,8 +348,32 @@ export function updateAI(ag: TDMAgent, dt: number): void {
   }
 
   if (ag.grenadeCooldown > 0) ag.grenadeCooldown -= dt;
+  if (ag.weaponSwapCooldown > 0) ag.weaponSwapCooldown -= dt;
 
   checkAudioAwareness(ag);
+
+  // Pre-aim: if we have enemy memory, aim toward most likely threat direction
+  if (!ag.hasTarget && ag.personality && ag.personality.preAimBias > 0.2) {
+    let bestConf = 0;
+    let bestPos: YUKA.Vector3 | null = null;
+    for (const [, entry] of ag.enemyMemory) {
+      if (entry.confidence > bestConf) {
+        bestConf = entry.confidence;
+        bestPos = entry.lastSeenPos;
+      }
+    }
+    if (bestPos && bestConf > 0.15) {
+      ag.preAimPos = bestPos;
+    } else {
+      // Pre-aim toward center of arena / common engagement areas
+      const teamBoard = teamBoards[ag.team];
+      if (teamBoard.focusPos) {
+        ag.preAimPos = teamBoard.focusPos;
+      } else {
+        ag.preAimPos = null;
+      }
+    }
+  }
 
   ag.allyCheckTimer -= dt;
   if (ag.allyCheckTimer <= 0) {
@@ -224,6 +412,7 @@ export function updateAI(ag: TDMAgent, dt: number): void {
     if (ag.pursuitB && target) (ag.pursuitB as any).evader = target;
 
     evalFuzzy(ag, dist);
+    botTryWeaponSwap(ag, dist);
 
     const canReact = ag.reactionTimer <= 0;
 
@@ -379,10 +568,26 @@ export function updateAI(ag: TDMAgent, dt: number): void {
 
   ag.brain.execute();
 
+  // ── Bot crouch speed modifier ──
+  // When crouching, reduce speed to 55% of class baseline (matches player CROUCH_SPEED_MULT)
+  const cfg = CLASS_CONFIGS[ag.botClass];
+  if (cfg) {
+    if (ag.isBotCrouching) {
+      ag.maxSpeed = Math.min(ag.maxSpeed, cfg.maxSpeed * 0.55);
+    } else if (ag.maxSpeed < cfg.maxSpeed && ag.stateName !== 'PATROL' && ag.stateName !== 'FLANK' && ag.stateName !== 'RETREAT') {
+      // Restore base speed when not crouching (goals like PATROL/FLANK/RETREAT manage their own speed)
+      ag.maxSpeed = cfg.maxSpeed;
+    }
+  }
+
   // Passive spawn-heal only in arena modes (not BR — spawn positions are random)
   if (gameState.mode !== 'br' && ag.position.distanceTo(ag.spawnPos) < 8) {
     ag.hp = Math.min(ag.maxHP, ag.hp + dt * 15);
   }
 
   keepInside(ag);
+
+  // Snap bot altitude to the highest floor surface + 0.5 (bot center offset)
+  const floorY = getFloorY(ag.position.x, ag.position.z);
+  ag.position.y = floorY + 0.5;
 }

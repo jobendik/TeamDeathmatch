@@ -109,6 +109,8 @@ export class TDMAgent extends YUKA.Vehicle {
   killStreak: number;
 
   weaponId: WeaponId;
+  secondaryWeaponId: WeaponId;
+  weaponSwapCooldown: number;
   grenades: number;
   grenadeCooldown: number;
   seekingWeapon: boolean;
@@ -245,6 +247,8 @@ export class TDMAgent extends YUKA.Vehicle {
     this.killStreak = 0;
 
     this.weaponId = CLASS_DEFAULT_WEAPON[botClass] || 'assault_rifle';
+    this.secondaryWeaponId = 'pistol';
+    this.weaponSwapCooldown = 0;
     const wepDef = WEAPONS[this.weaponId];
     this.damage = wepDef.damage;
     this.fireRate = wepDef.fireRate;
@@ -329,6 +333,7 @@ export class TDMAgent extends YUKA.Vehicle {
     this.enemyMemory.clear();
     this.cachedNearbyPickups = [];
     this.pickupCacheTimer = 0;
+    this.weaponSwapCooldown = 0;
 
     this.navPath.length = 0;
     this.navWaypointIndex = 0;

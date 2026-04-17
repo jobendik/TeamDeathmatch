@@ -19,7 +19,7 @@ import { updateHeartbeat } from '@/audio/SoundHooks';
 import { updatePlayer, keepInside } from '@/entities/Player';
 import { updateAI } from '@/ai/AIController';
 import { updateProjectiles } from '@/combat/Hitscan';
-import { updateParticles, updateScreenShake } from '@/combat/Particles';
+import { updateParticles, updateScreenShake, initAmbientDust, updateAmbientDust } from '@/combat/Particles';
 import { updatePickups } from '@/combat/Pickups';
 import { updateRespawns } from '@/combat/Combat';
 import { updateObjectives } from '@/combat/Objectives';
@@ -40,6 +40,7 @@ import { updateStanceIndicator } from '@/ui/StanceIndicator';
 import { updateWaypoints } from '@/ui/Waypoints';
 import { recordKillcamSnapshot } from '@/ui/Killcam';
 import { getPostFX } from '@/rendering/PostProcess.Bridge';
+import { updateStreaks } from '@/combat/Streaks';
 
 // Lazy imports — keep BR modules out of the initial bundle cost.
 let brModule: typeof import('@/br/BRController') | null = null;
@@ -92,6 +93,7 @@ export function animate(): void {
 
     updateProjectiles(dt);
     updateParticles(dt);
+    updateAmbientDust(dt);
     updateScreenShake(dt);
 
     if (!isBR) updatePickups();
@@ -150,6 +152,7 @@ export function animate(): void {
     updateStanceIndicator();
     updateWaypoints();
     updateMedalTicker(dt);
+    updateStreaks(dt);
   }
 
   updateHUD();

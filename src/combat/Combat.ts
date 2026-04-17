@@ -13,7 +13,7 @@ import { updateHUD, flashDmg } from '@/ui/HUD';
 import { updateScoreboard } from '@/ui/Scoreboard';
 import { addKillfeedEntry } from '@/ui/Killfeed';
 import { showKillNotif } from '@/ui/KillNotification';
-import { resetAgentAnimation } from '@/rendering/AgentAnimations';
+import { resetAgentAnimation, playAgentDeathAnimation } from '@/rendering/AgentAnimations';
 import { CLASS_DEFAULT_WEAPON, WEAPONS, type WeaponId } from '@/config/weapons';
 import { dom } from '@/ui/DOMElements';
 import { showRoundSummary } from '@/ui/RoundSummary';
@@ -32,6 +32,27 @@ import { setViewmodelWeapon } from '@/rendering/WeaponViewmodel';
 import { isPlayerInAir } from '@/br/DropPlane';
 import { playHitTaken, playHeal } from '@/audio/SoundHooks';
 import { startKillcam } from '@/ui/Killcam';
+import { checkStreakReward, clearStreaks } from './Streaks';
+
+const STREAK_NAMES: Record<number, string> = {
+  3: 'KILLING SPREE',
+  5: 'RAMPAGE',
+  7: 'DOMINATING',
+  10: 'UNSTOPPABLE',
+  15: 'GODLIKE',
+};
+let _streakTimeout = 0;
+
+function showStreakBanner(streak: number): void {
+  const label = STREAK_NAMES[streak];
+  if (!label) return;
+  const el = dom.killstreak;
+  if (!el) return;
+  el.textContent = `${label} — ${streak} KILLS`;
+  el.classList.add('on');
+  clearTimeout(_streakTimeout);
+  _streakTimeout = window.setTimeout(() => el.classList.remove('on'), 2500);
+}
 
 function applyWeaponToAgent(ag: TDMAgent, weaponId: WeaponId): void {
   const def = WEAPONS[weaponId];
@@ -49,7 +70,8 @@ function applyWeaponToAgent(ag: TDMAgent, weaponId: WeaponId): void {
 function applyPlayerLoadoutForMode(): void {
   const defaults = getModeDefaults(gameState.mode);
   if (defaults.playerStartsArmed) {
-    gameState.pWeaponSlots = ['assault_rifle', 'pistol'];
+    const primary = CLASS_DEFAULT_WEAPON[gameState.pClass] || 'assault_rifle';
+    gameState.pWeaponSlots = [primary, 'pistol'];
     gameState.pActiveSlot = 0;
   } else {
     gameState.pWeaponSlots = ['knife'];
@@ -59,6 +81,7 @@ function applyPlayerLoadoutForMode(): void {
   const wep = WEAPONS[gameState.pWeaponId];
   gameState.pAmmo = wep.magSize;
   gameState.pMaxAmmo = wep.magSize;
+  gameState.pAmmoReserve = wep.magSize * 3;
   gameState.pReloadDuration = wep.reloadTime;
   gameState.pShootTimer = 0;
   gameState.pBurstCount = 0;
@@ -99,9 +122,10 @@ export function dealDmgPlayer(dmg: number, attacker: TDMAgent | null = null): vo
   playHitTaken();
   
 if (attacker) {
+  const attackerHS = Boolean((gameState.player as any)._lastHitWasHeadshot);
   spawnDamageNumber(
     new THREE.Vector3(gameState.player.position.x, 1.5, gameState.player.position.z),
-    { amount: dmg, isHeadshot: false },
+    { amount: dmg, isHeadshot: attackerHS },
   );
 }
   if (attacker) showDamageArc(attacker.position.x, attacker.position.z);
@@ -119,6 +143,8 @@ function playerDied(attacker: TDMAgent | null): void {
   gameState.respTimer = RESPAWN_TIME;
   dom.ds.classList.add('on');
   gameState.pDeaths++;
+  gameState.pKillStreak = 0;
+  clearStreaks();
   if (dom.deathTxt) dom.deathTxt.textContent = String(gameState.pDeaths);
   if (dom.dsKiller) dom.dsKiller.textContent = attacker ? attacker.name.toUpperCase() : 'UNKNOWN';
   if (dom.dsWeapon) dom.dsWeapon.textContent = attacker ? WEAPONS[attacker.weaponId].name : 'MYSTERY';
@@ -169,13 +195,14 @@ export function dealDmgAgent(ag: TDMAgent, dmg: number, attacker: TDMAgent | nul
   applyAimFlinch(ag, dmgFrac);
 
   // Hit marker when the player scores a hit
+  const wasHS = Boolean((ag as any)._lastHitWasHeadshot);
   if (attacker === gameState.player) {
-    showHitMarker(false);
+    showHitMarker(wasHS);
   }
   if (attacker === gameState.player) {
     spawnDamageNumber(
       new THREE.Vector3(ag.position.x, 1.5, ag.position.z),
-      { amount: dmg, isHeadshot: false },
+      { amount: dmg, isHeadshot: wasHS },
     );
   }
 
@@ -187,7 +214,9 @@ function killAgent(ag: TDMAgent, attacker: TDMAgent | null): void {
   ag.isDead = true;
   ag.deaths++;
   ag.respawnAt = gameState.worldElapsed + RESPAWN_TIME + Math.random() * 2;
-  ag.renderComponent!.visible = false;
+  const deathDur = playAgentDeathAnimation(ag.renderComponent);
+  const rc = ag.renderComponent!;
+  setTimeout(() => { if (ag.isDead) rc.visible = false; }, deathDur * 1000);
   spawnDeath(new THREE.Vector3(ag.position.x, 0.5, ag.position.z), TEAM_COLORS[ag.team]);
   ag.confidence = Math.max(10, ag.confidence - 15);
   ag.killStreak = 0;
@@ -225,9 +254,12 @@ function killAgent(ag: TDMAgent, attacker: TDMAgent | null): void {
 
   if (attacker === gameState.player) {
     gameState.pKills++;
+    gameState.pKillStreak++;
     if (dom.killTxt) dom.killTxt.textContent = String(gameState.pKills);
     showKillNotif(ag.name, ag.team);
     showKillMarker();
+    showStreakBanner(gameState.pKillStreak);
+    checkStreakReward(gameState.pKillStreak);
   }
   if (attacker === gameState.player) {
     const distance = attacker.position.distanceTo(ag.position);
@@ -424,6 +456,10 @@ export function resetMatch(mode = gameState.mode): void {
   gameState.teamScores = [0, 0];
   gameState.pKills = 0;
   gameState.pDeaths = 0;
+  gameState.pKillStreak = 0;
+  gameState.pShotsFired = 0;
+  gameState.pShotsHit = 0;
+  gameState.pHeadshots = 0;
   gameState.killfeedEntries = [];
   dom.killfeed.innerHTML = '';
   gameState.eliminationRound = 0;

@@ -136,16 +136,16 @@ export function updateKillcam(dt: number): boolean {
   const pos = new THREE.Vector3().lerpVectors(prev.pos, next.pos, Math.max(0, Math.min(1, segT)));
   const yaw = THREE.MathUtils.lerp(prev.yaw, next.yaw, segT);
 
-  // Position camera over the killer's shoulder
-  const offsetX = Math.sin(yaw) * 1.2;
-  const offsetZ = Math.cos(yaw) * 1.2;
+  // Position camera behind the killer's shoulder
+  const offsetX = -Math.sin(yaw) * 1.2;
+  const offsetZ = -Math.cos(yaw) * 1.2;
   gameState.camera.position.set(pos.x + offsetX, pos.y + 0.5, pos.z + offsetZ);
 
   // Look in killer's facing direction
   const lookTarget = new THREE.Vector3(
-    pos.x - Math.sin(yaw) * 5,
+    pos.x + Math.sin(yaw) * 5,
     pos.y - 0.2,
-    pos.z - Math.cos(yaw) * 5,
+    pos.z + Math.cos(yaw) * 5,
   );
   gameState.camera.lookAt(lookTarget);
 

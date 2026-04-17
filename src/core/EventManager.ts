@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { gameState } from './GameState';
 import { FP } from '@/config/player';
 import { dom } from '@/ui/DOMElements';
+import { getStreakFireRateMult } from '@/combat/Streaks';
 import { WEAPONS } from '@/config/weapons';
 import { hitscanShot, shotgunBlast, spawnRocket, spawnGrenade } from '@/combat/Hitscan';
 import { updateHUD, flashCrosshairFire } from '@/ui/HUD';
@@ -134,13 +135,16 @@ export function onShoot(): void {
   const dir = aimPoint.clone().sub(o).normalize();
   const errMul = gameState.isADS ? 0.35 : gameState.keys.shift ? 1.35 : 1.0;
   const firstShotBonus = (gameState.pAmmo === gameState.pMaxAmmo || gameState.pFirstShotReady) ? 0.5 : 1;
-  const err = wep.aimError * errMul * firstShotBonus;
+  const spreadAccum = gameState.pSpreadAccum;
+  const err = wep.aimError * errMul * firstShotBonus + spreadAccum * 0.012;
   if (err > 0) {
     dir.x += (Math.random() - 0.5) * err;
     dir.y += (Math.random() - 0.5) * err * 0.5;
     dir.z += (Math.random() - 0.5) * err;
     dir.normalize();
   }
+  // Accumulate spread from sustained fire (decays in updatePlayer)
+  gameState.pSpreadAccum = Math.min(8, gameState.pSpreadAccum + 1);
 
   if (pWeaponId === 'rocket_launcher') {
     spawnRocket(o, dir, 'player', player.team, 0x60a5fa, player);
@@ -153,8 +157,9 @@ export function onShoot(): void {
   fireViewmodel();
   flashCrosshairFire();
   gameState.pAmmo--;
+  gameState.pShotsFired++;
   updateBRAmmoAfterShot();
-  gameState.pShootTimer = wep.fireRate;
+  gameState.pShootTimer = wep.fireRate * getStreakFireRateMult();
   gameState.pFirstShotReady = false;
   updateHUD();
 
@@ -206,7 +211,7 @@ export function bindEvents(): void {
     if (k in keys) { (keys as any)[k] = true; e.preventDefault(); }
     if (k === 'tab') { e.preventDefault(); keys.tab = true; }
 
-    if (k === 'r' && !gameState.pDead && !gameState.pReloading && gameState.pWeaponId !== 'unarmed' && gameState.pAmmo < gameState.pMaxAmmo) {
+    if (k === 'r' && !gameState.pDead && !gameState.pReloading && gameState.pWeaponId !== 'unarmed' && gameState.pAmmo < gameState.pMaxAmmo && (gameState.mode === 'br' || gameState.pAmmoReserve > 0)) {
       startReload();
     }
 

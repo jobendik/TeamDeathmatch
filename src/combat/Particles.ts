@@ -322,6 +322,35 @@ export function spawnRocketTrail(pos: THREE.Vector3): void {
 //  SCREEN SHAKE
 // ═══════════════════════════════════════════
 
+// ── Bullet hole decals ──
+const _decalGeo = new THREE.PlaneGeometry(0.12, 0.12);
+const _decalMat = new THREE.MeshBasicMaterial({
+  color: 0x111111, transparent: true, opacity: 0.7,
+  depthWrite: false, side: THREE.DoubleSide,
+  polygonOffset: true, polygonOffsetFactor: -1,
+});
+const MAX_DECALS = 64;
+const _decals: THREE.Mesh[] = [];
+
+export function spawnBulletHole(pos: THREE.Vector3, normal: THREE.Vector3 | null): void {
+  const decal = new THREE.Mesh(_decalGeo, _decalMat);
+  decal.position.copy(pos);
+  if (normal) {
+    decal.position.addScaledVector(normal, 0.01);
+    decal.lookAt(pos.clone().add(normal));
+  } else {
+    decal.rotation.x = -Math.PI / 2;
+    decal.position.y = 0.02;
+  }
+  gameState.scene.add(decal);
+  _decals.push(decal);
+  if (_decals.length > MAX_DECALS) {
+    const old = _decals.shift()!;
+    gameState.scene.remove(old);
+    old.geometry.dispose();
+  }
+}
+
 let shakeIntensity = 0;
 let shakeTimer = 0;
 
@@ -383,4 +412,55 @@ export function updateParticles(dt: number): void {
       p.mesh.scale.setScalar(t * 0.8 + 0.2);
     }
   }
+}
+
+// ── Ambient dust motes ──
+let _dustPoints: THREE.Points | null = null;
+let _dustVelocities: Float32Array | null = null;
+const DUST_COUNT = 120;
+const DUST_RANGE = 30; // around camera
+
+export function initAmbientDust(): void {
+  const geo = new THREE.BufferGeometry();
+  const positions = new Float32Array(DUST_COUNT * 3);
+  _dustVelocities = new Float32Array(DUST_COUNT * 3);
+  for (let i = 0; i < DUST_COUNT; i++) {
+    positions[i * 3] = (Math.random() - 0.5) * DUST_RANGE * 2;
+    positions[i * 3 + 1] = Math.random() * 6;
+    positions[i * 3 + 2] = (Math.random() - 0.5) * DUST_RANGE * 2;
+    _dustVelocities[i * 3] = (Math.random() - 0.5) * 0.3;
+    _dustVelocities[i * 3 + 1] = (Math.random() - 0.5) * 0.08;
+    _dustVelocities[i * 3 + 2] = (Math.random() - 0.5) * 0.3;
+  }
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  const mat = new THREE.PointsMaterial({
+    color: 0xccccaa, size: 0.06, transparent: true,
+    opacity: 0.35, depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  });
+  _dustPoints = new THREE.Points(geo, mat);
+  _dustPoints.frustumCulled = false;
+  gameState.scene.add(_dustPoints);
+}
+
+export function updateAmbientDust(dt: number): void {
+  if (!_dustPoints || !_dustVelocities) return;
+  const posArr = _dustPoints.geometry.attributes.position.array as Float32Array;
+  const cam = gameState.camera;
+  for (let i = 0; i < DUST_COUNT; i++) {
+    const i3 = i * 3;
+    posArr[i3] += _dustVelocities[i3] * dt;
+    posArr[i3 + 1] += _dustVelocities[i3 + 1] * dt;
+    posArr[i3 + 2] += _dustVelocities[i3 + 2] * dt;
+    // wrap around camera
+    const dx = posArr[i3] - cam.position.x;
+    const dz = posArr[i3 + 2] - cam.position.z;
+    if (Math.abs(dx) > DUST_RANGE) posArr[i3] = cam.position.x + (Math.random() - 0.5) * DUST_RANGE * 2;
+    if (Math.abs(dz) > DUST_RANGE) posArr[i3 + 2] = cam.position.z + (Math.random() - 0.5) * DUST_RANGE * 2;
+    if (posArr[i3 + 1] < 0 || posArr[i3 + 1] > 6) {
+      posArr[i3 + 1] = Math.random() * 5;
+      _dustVelocities[i3 + 1] = (Math.random() - 0.5) * 0.08;
+    }
+  }
+  _dustPoints.geometry.attributes.position.needsUpdate = true;
 }

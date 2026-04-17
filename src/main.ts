@@ -12,6 +12,8 @@ import { buildPickups } from '@/combat/Pickups';
 import { buildObjectives } from '@/combat/Objectives';
 import { initViewmodel } from '@/rendering/WeaponViewmodel';
 import { initMenus } from '@/ui/Menus';
+import { initSettings } from '@/ui/Settings';
+import { initAmbientDust } from '@/combat/Particles';
 import { updateHUD } from '@/ui/HUD';
 import { updateScoreboard } from '@/ui/Scoreboard';
 import { initPostProcess } from '@/rendering/PostProcess';
@@ -31,6 +33,8 @@ async function init(): Promise<void> {
   initViewmodel();
   bindEvents();
   initMenus();
+  initSettings();
+  initAmbientDust();
 
   // Post-process pipeline
   const fx = initPostProcess();

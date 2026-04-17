@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import * as YUKA from 'yuka';
 import type { TDMAgent } from '@/entities/TDMAgent';
 import type { WeaponId } from '@/config/weapons';
+import type { BotClass } from '@/config/classes';
 import type { GameMode } from './GameModes';
 
 // ────────────────────────────────────────────
@@ -169,13 +170,19 @@ export const gameState = {
   pMaxAmmo: 30,
   pKills: 0,
   pDeaths: 0,
+  pKillStreak: 0,
+  pShotsFired: 0,
+  pShotsHit: 0,
+  pHeadshots: 0,
   pDead: false,
   respTimer: 0,
   pReloading: false,
   pReloadTimer: 0,
   pReloadDuration: 2.0,
+  pAmmoReserve: 90, // ammo reserve pool
 
-  // Player weapon
+  // Player class & weapon
+  pClass: 'rifleman' as BotClass,
   pWeaponId: 'assault_rifle' as WeaponId,
   pWeaponSlots: ['assault_rifle', 'pistol'] as WeaponId[],
   pActiveSlot: 0,
@@ -185,6 +192,7 @@ export const gameState = {
   pBurstCount: 0,
   pBurstTimer: 0,
   pFirstShotReady: true,
+  pSpreadAccum: 0, // cumulative spread from sustained fire
 
   // Camera / input
   mouseLocked: false,
