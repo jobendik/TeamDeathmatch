@@ -177,6 +177,14 @@ function scoreTarget(ag: TDMAgent, target: TDMAgent, dist: number): number {
   const mem = ag.enemyMemory.get(target.name);
   if (mem && mem.confidence > 0.5) score += 10;
 
+  // Third-partying bonus: wounded enemies are prime targets in BR
+if (gameState.mode === 'br') {
+  if (target.hp < target.maxHP * 0.4) score += 20;
+  // If target just took damage from someone else, they're distracted
+  if (target.lastAttacker && target.lastAttacker !== ag &&
+      (gameState.worldElapsed - target.lastDamageTime) < 2) score += 25;
+}
+
   // Grudge: prioritize the one who killed us
   if (ag.grudge === target) {
     const revenge = ag.personality ? ag.personality.revengeBias : 0.4;
