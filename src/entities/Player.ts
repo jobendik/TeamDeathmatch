@@ -276,7 +276,7 @@ export function updatePlayer(dt: number): void {
         gameState.pReloading = false;
         dom.reloadBar.classList.remove('on');
         dom.reloadText.classList.remove('on');
-        setViewmodelWeapon(wepId);
+        setViewmodelWeapon(wepId, true);
         updateHUD();
         flashHeal();
       }
