@@ -92,7 +92,7 @@ function switchWeapon(slot: number): void {
   gameState.pShootTimer = 0;
   gameState.pBurstCount = 0;
 
-  setViewmodelWeapon(gameState.pWeaponId);
+  setViewmodelWeapon(gameState.pWeaponId, true);
   updateHUD();
 }
 
