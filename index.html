@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<html lang="no">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>WARZONE TDM — Team Deathmatch</title>
-  <meta name="description" content="WARZONE TDM - Intense team deathmatch with AI bots. First to 10 kills wins.">
+  <title>WARZONE — FPS Combat Sandbox</title>
+  <meta name="description" content="WARZONE - Intense FPS combat sandbox with multiple game modes and AI bots.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Exo+2:wght@400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
   <style>body { opacity: 0; } body.ready { opacity: 1; }</style>
@@ -31,6 +31,7 @@
       </svg>
     </div>
   </div>
+  <div id="scopeOverlay"></div>
 
   <!-- Damage direction indicators -->
   <div id="dmgArcs">
@@ -108,7 +109,7 @@
   <div id="lockHint">
     <div class="lh-icon">◆</div>
     <h2>CLICK TO DEPLOY</h2>
-    <p>Velg modus i menyen · Esc åpner pausemeny</p>
+    <p>Select a mode in the menu · Esc opens the pause menu</p>
     <div class="keys">
       <span class="kbd">WASD</span>
       <span class="kbd">LMB</span>
@@ -125,7 +126,7 @@
       <div class="ds-header">◆ KILLED IN ACTION ◆</div>
       <div class="ds-killer" id="dsKiller">—</div>
       <div class="ds-weapon" id="dsWeapon">—</div>
-      <p id="dsp">Respawner om 3s…</p>
+      <p id="dsp">Respawning in 3s…</p>
     </div>
   </div>
 
