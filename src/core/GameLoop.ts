@@ -225,7 +225,6 @@ if (ag.nameTag) {
     ag.nameTag.scale.set(0.9 * s, 0.22 * s, 1);
   }
 }
-}
 
 /**
  * Only animate skeletons for nearby, active agents. Far bots were
