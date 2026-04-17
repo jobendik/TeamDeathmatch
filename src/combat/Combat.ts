@@ -413,7 +413,7 @@ export function resetMatch(mode = gameState.mode): void {
   dom.reloadText.classList.remove('on');
   gameState.spectatorTarget = null;
   gameState.isADS = false;
-  setViewmodelWeapon(gameState.pWeaponId);
+  setViewmodelWeapon(gameState.pWeaponId, true);
 
   for (const ag of gameState.agents) {
     if (ag === gameState.player) continue;
