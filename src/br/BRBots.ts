@@ -1,24 +1,21 @@
 /**
  * BRBots — Battle-royale bot system.
  *
- * Three performance pillars:
- *  1. Async chunked spawning — bots are created 4 at a time with frame yields
- *     between chunks, keeping the loading screen responsive.
- *  2. Lazy skeletal models — bots start with the cheap procedural SoldierMesh
- *     and only upgrade to Mixamo skeletons when the player is within
- *     SKELETAL_ACTIVATION_DIST. They downgrade again past the hysteresis
- *     threshold so animation mixers don't run for 30 bots across the map.
- *  3. Gated updates — bots are ag.active=false until landBRBots() is called,
- *     so the entity manager + animation system skip them while the player is
- *     still on the drop plane.
+ * This rewrite adds true agency. Bots:
+ *   • See each other across the map (BR-extended perception)
+ *   • Assess fights before engaging (winProbability, range fit)
+ *   • Heal/shield between fights like a real player
+ *   • Third-party ongoing fights to steal kills
+ *   • Seek elevation + cover in the endgame instead of running in circles
+ *   • Squad up with same-team bots when nearby
+ *   • Rotate early and aggressively when the zone pressures them
  *
- * Behaviour is phase-driven. determinePhase() returns one of:
+ * Phases:
  *   inactive | storm_flee | retreating | loot_urgent | loot_safe
- *   | rotating | hunting | engaging
- * …and the phase handlers own the bot's steering exclusively (clearing
- * all weights before setting their own), so there's no conflict between
- * updateAI's combat goals and the BR overlay. Combat steering from updateAI
- * is only honoured during the 'engaging' phase.
+ *   heal_up  | third_party | rotating | hunting | engaging | endgame_hold
+ *
+ * The 'engaging' phase yields steering to updateAI (combat goals own it).
+ * All other phases explicitly override steering.
  */
 
 import * as THREE from 'three';
@@ -54,31 +51,33 @@ import { WEAPONS } from '@/config/weapons';
 import { SpatialGrid } from './SpatialGrid';
 import { buildingGrid, getBRMapData } from './BRMap';
 import { findCoverFrom, pushOutOfWall } from '@/ai/CoverSystem';
+import {
+  findNearbyFight, decideEngagement, shouldHealUp, doHealUp,
+  findEndgameHold, winProbability,
+} from './BRBrain';
 
-// ── Bot grid for fast proximity queries ──
 export const botGrid = new SpatialGrid<TDMAgent>();
 
-// Distance (metres) at which skeletal models are attached/removed.
-// Hysteresis prevents thrashing at the boundary.
 const SKELETAL_ACTIVATION_DIST = 90;
 const SKELETAL_DEACTIVATION_DIST = 120;
-
-// How many bots to spawn per frame during async construction.
 const SPAWN_CHUNK_SIZE = 4;
 
-// First window after landing where bots refuse to engage (everyone's looting).
-const COMBAT_SUPPRESS_MIN_S = 16;
-const COMBAT_SUPPRESS_MAX_S = 24;
+// Shorter suppression window — bots start engaging earlier for action
+const COMBAT_SUPPRESS_MIN_S = 10;
+const COMBAT_SUPPRESS_MAX_S = 16;
 
 export type BRBotPhase =
-  | 'inactive'      // Pre-drop. Skipped entirely.
-  | 'loot_urgent'   // Unarmed — weapon is the only thing that matters.
-  | 'loot_safe'     // Has a weapon; grazing for upgrades / ammo / heals.
-  | 'rotating'      // Zone closing, near edge — head for next circle.
-  | 'hunting'       // Well-geared, late game — seek engagement.
-  | 'engaging'      // Active combat — hand off steering to updateAI.
-  | 'retreating'    // Low HP or outgunned — find cover, break contact.
-  | 'storm_flee';   // Outside zone — sprint to safety.
+  | 'inactive'
+  | 'loot_urgent'
+  | 'loot_safe'
+  | 'heal_up'
+  | 'third_party'
+  | 'rotating'
+  | 'hunting'
+  | 'engaging'
+  | 'retreating'
+  | 'storm_flee'
+  | 'endgame_hold';
 
 export interface BRBotState {
   phase: BRBotPhase;
@@ -100,6 +99,14 @@ export interface BRBotState {
 
   combatSuppressUntil: number;
   lastPhaseDecision: number;
+
+  /** Target position for current third-party approach */
+  thirdPartyPos: { x: number; z: number } | null;
+  thirdPartyExpiresAt: number;
+
+  /** Cached endgame hold point */
+  endgameHold: YUKA.Vector3 | null;
+  endgameHoldSetAt: number;
 }
 
 const BOT_NAMES = [
@@ -112,10 +119,6 @@ const BOT_NAMES = [
 export function getBRState(ag: TDMAgent): BRBotState | null {
   return (ag as any)._brState ?? null;
 }
-
-// ─────────────────────────────────────────────────────────────────────
-//  CONSTRUCTION
-// ─────────────────────────────────────────────────────────────────────
 
 function syncRC(entity: YUKA.GameEntity, renderComponent: THREE.Object3D): void {
   renderComponent.position.copy(entity.position as unknown as THREE.Vector3);
@@ -142,7 +145,6 @@ function mkBot(name: string, cls: BotClass, x: number, z: number): TDMAgent {
   ag.renderComponent = root;
   ag.setRenderComponent(root, syncRC);
 
-  // Always start with the cheap mesh; skeletal rig is attached on demand.
   root.add(buildPlaceholderMesh(team, cls));
 
   const tag = makeNameTag(name, TEAM_COLORS[team]);
@@ -151,7 +153,6 @@ function mkBot(name: string, cls: BotClass, x: number, z: number): TDMAgent {
   ag.nameTag = tag;
   addHPBar(ag);
 
-  // Steering
   ag.wanderB = new YUKA.WanderBehavior(1.0, 4, 2.2);
   ag.arriveB = new YUKA.ArriveBehavior(new YUKA.Vector3(), 3, 0.5);
   ag.seekB = new YUKA.SeekBehavior(new YUKA.Vector3());
@@ -166,7 +167,6 @@ function mkBot(name: string, cls: BotClass, x: number, z: number): TDMAgent {
   ag.arriveB.weight = 0; ag.seekB.weight = 0;
   ag.fleeB.weight = 0; ag.pursuitB.weight = 0;
 
-  // State machine (used for animation/state name display)
   ag.stateMachine = new YUKA.StateMachine(ag);
   ag.stateMachine.add('PATROL', new PatrolState());
   ag.stateMachine.add('ENGAGE', new EngageState());
@@ -179,18 +179,16 @@ function mkBot(name: string, cls: BotClass, x: number, z: number): TDMAgent {
   ag.stateMachine.add('PEEK', new PeekState());
   ag.stateMachine.changeTo('PATROL');
 
-  // Evaluators. SeekHealth/GetWeapon self-gate to zero in BR mode (BRBots handles loot).
   ag.brain.addEvaluator(new AttackEvaluator(1.0 + personality.aggressionBias));
   ag.brain.addEvaluator(new SurviveEvaluator(1.2 + personality.cautionBias));
   ag.brain.addEvaluator(new ReloadEvaluator(1.0));
   ag.brain.addEvaluator(new SeekHealthEvaluator(1.1));
   ag.brain.addEvaluator(new GetWeaponEvaluator(1.3));
-  ag.brain.addEvaluator(new HuntEvaluator(0.7 + personality.aggressionBias * 0.3));
+  ag.brain.addEvaluator(new HuntEvaluator(0.9 + personality.aggressionBias * 0.3));
   ag.brain.addEvaluator(new PatrolEvaluator(1.0));
   setupFuzzy(ag);
   ag.perceptionSlot = gameState.agents.length % 3;
 
-  // BR state — INACTIVE until landBRBots() is called.
   (ag as any)._brState = {
     phase: 'inactive',
     phaseStart: 0,
@@ -206,12 +204,15 @@ function mkBot(name: string, cls: BotClass, x: number, z: number): TDMAgent {
     skeletalLastFlipAt: -10,
     combatSuppressUntil: 0,
     lastPhaseDecision: 0,
+    thirdPartyPos: null,
+    thirdPartyExpiresAt: 0,
+    endgameHold: null,
+    endgameHoldSetAt: 0,
   } as BRBotState;
 
   ag.active = false;
   root.visible = false;
 
-  // Start with knife — they must find a real weapon.
   ag.weaponId = 'knife';
   ag.damage = 55; ag.magSize = 0; ag.ammo = 0;
 
@@ -221,11 +222,6 @@ function mkBot(name: string, cls: BotClass, x: number, z: number): TDMAgent {
   return ag;
 }
 
-/**
- * Spawn positions for BR bots. We cluster around POIs — that's where
- * human players drop, so having AI cluster there too keeps the world
- * populated exactly where the player expects to find action.
- */
 function generateSpawnPoints(count: number): [number, number][] {
   const map = getBRMapData();
   const spawns: [number, number][] = [];
@@ -240,7 +236,6 @@ function generateSpawnPoints(count: number): [number, number][] {
     return spawns;
   }
 
-  // Assign bots to POIs round-robin so every POI gets some initial activity.
   for (let i = 0; i < count; i++) {
     const poi = map.pois[i % map.pois.length];
     const angle = Math.random() * Math.PI * 2;
@@ -253,12 +248,6 @@ function generateSpawnPoints(count: number): [number, number][] {
   return spawns;
 }
 
-/**
- * Build all BR bots asynchronously, yielding between chunks so the
- * loading screen actually animates. This replaces the synchronous
- * buildBRBots that used to freeze the tab for ~1s during 29 skeleton
- * clones.
- */
 export async function buildBRBots(
   onProgress?: (done: number, total: number) => void,
 ): Promise<void> {
@@ -275,17 +264,11 @@ export async function buildBRBots(
 
     if ((i + 1) % SPAWN_CHUNK_SIZE === 0 || i === count - 1) {
       onProgress?.(i + 1, count);
-      // Yield to the browser so the loading screen repaints.
       await new Promise<void>(r => requestAnimationFrame(() => r()));
     }
   }
 }
 
-/**
- * Activate all bots — call when the player jumps from the plane.
- * This is the "everyone lands together" moment: bots start looting
- * exactly when the human player starts their freefall.
- */
 export function landBRBots(): void {
   const now = gameState.worldElapsed;
   for (const ag of gameState.agents) {
@@ -318,7 +301,7 @@ export function clearBRBots(): void {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-//  LOD
+//  LOD  (unchanged from original)
 // ─────────────────────────────────────────────────────────────────────
 
 function computeLOD(ag: TDMAgent): 0 | 1 | 2 | 3 {
@@ -331,16 +314,8 @@ function computeLOD(ag: TDMAgent): 0 | 1 | 2 | 3 {
   return 3;
 }
 
-/**
- * Upgrade the bot to the Mixamo skeletal rig when the player is close
- * enough to see the difference, and downgrade back to the placeholder
- * when far away. This keeps the expensive animation mixer count low
- * (typically 2–5 at a time) instead of having 29 of them running.
- */
 function updateBotVisualLOD(ag: TDMAgent, state: BRBotState, now: number): void {
   if (!ag.renderComponent) return;
-
-  // Flip at most every 2 seconds per bot — avoids thrashing at the boundary.
   if (now - state.skeletalLastFlipAt < 2) return;
 
   const dx = ag.position.x - gameState.player.position.x;
@@ -353,19 +328,14 @@ function updateBotVisualLOD(ag: TDMAgent, state: BRBotState, now: number): void 
   if (needsSkeletal && !state.skeletalAttached) {
     const hasAssets = ag.team === TEAM_BLUE ? hasBlueSwatAssets() : hasEnemyAssets();
     if (!hasAssets) return;
-
-    // Swap placeholder → skeletal. Preserve nameTag and hpBarGroup.
     for (let i = ag.renderComponent.children.length - 1; i >= 0; i--) {
       const child = ag.renderComponent.children[i];
       if (child === ag.nameTag || child === ag.hpBarGroup) continue;
       ag.renderComponent.remove(child);
     }
     try {
-      if (ag.team === TEAM_BLUE) {
-        attachBlueSwatCharacter(ag.renderComponent as THREE.Group);
-      } else {
-        attachEnemyCharacter(ag.renderComponent as THREE.Group);
-      }
+      if (ag.team === TEAM_BLUE) attachBlueSwatCharacter(ag.renderComponent as THREE.Group);
+      else attachEnemyCharacter(ag.renderComponent as THREE.Group);
       state.skeletalAttached = true;
       state.skeletalLastFlipAt = now;
     } catch {
@@ -385,10 +355,6 @@ function updateBotVisualLOD(ag: TDMAgent, state: BRBotState, now: number): void 
   }
 }
 
-/**
- * Gating used by BRController — returns true if this bot should run full
- * AI this frame.
- */
 export function shouldUpdateBot(ag: TDMAgent, frameCount: number): boolean {
   if (!ag.active) return false;
   const state = getBRState(ag);
@@ -397,7 +363,6 @@ export function shouldUpdateBot(ag: TDMAgent, frameCount: number): boolean {
 
   state.lodTier = computeLOD(ag);
 
-  // In combat with a close target, always update.
   if (ag.currentTarget && state.lodTier <= 1) return true;
 
   switch (state.lodTier) {
@@ -430,7 +395,7 @@ function goTo(ag: TDMAgent, x: number, z: number, weight = 1.4): void {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-//  LOOT
+//  LOOT (unchanged)
 // ─────────────────────────────────────────────────────────────────────
 
 function isInsideCollider(x: number, z: number): boolean {
@@ -452,9 +417,7 @@ function botWantsItem(ag: TDMAgent, item: any): boolean {
     const offered = WEAPONS[item.weaponId as keyof typeof WEAPONS]?.desirability ?? 0;
     return offered > cur;
   }
-  if (item.category === 'ammo') {
-    return ag.weaponId !== 'knife' && ag.ammo < ag.magSize * 2;
-  }
+  if (item.category === 'ammo') return ag.weaponId !== 'knife' && ag.ammo < ag.magSize * 2;
   if (item.category === 'heal') return ag.hp < ag.maxHP;
   if (item.category === 'grenade') return ag.grenades < 3;
   return false;
@@ -506,7 +469,6 @@ function findNearestPOI(ag: TDMAgent): { x: number; z: number } | null {
   if (!map) return null;
   let best: { x: number; z: number; d2: number } | null = null;
   for (const poi of map.pois) {
-    // Avoid picking a POI that's outside the current zone.
     if (zone.active && isOutsideZone(poi.x, poi.z)) continue;
     const dx = poi.x - ag.position.x;
     const dz = poi.z - ag.position.z;
@@ -536,7 +498,7 @@ function tryPickupNearby(ag: TDMAgent, state: BRBotState): void {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-//  ZONE AWARENESS
+//  ZONE
 // ─────────────────────────────────────────────────────────────────────
 
 function rotateToZone(ag: TDMAgent, innerFactor = 0.5): void {
@@ -552,11 +514,21 @@ function rotateToZone(ag: TDMAgent, innerFactor = 0.5): void {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-//  PHASE DECISION
+//  PHASE DECISION — the brain
 // ─────────────────────────────────────────────────────────────────────
 
 function isEffectivelyUnarmed(ag: TDMAgent): boolean {
   return ag.weaponId === 'unarmed' || ag.weaponId === 'knife';
+}
+
+function isEndgame(): boolean {
+  return zone.active && zone.currentRadius > 0 && zone.currentRadius < 35;
+}
+
+function playersAliveRoughly(): number {
+  let n = 0;
+  for (const a of gameState.agents) if (!a.isDead) n++;
+  return n;
 }
 
 function determinePhase(ag: TDMAgent, state: BRBotState, now: number): BRBotPhase {
@@ -566,51 +538,75 @@ function determinePhase(ag: TDMAgent, state: BRBotState, now: number): BRBotPhas
   const outside = isOutsideZone(ag.position.x, ag.position.z);
   const nearEdge = distanceToZoneEdge(ag.position.x, ag.position.z) < 25;
   const suppressed = now < state.combatSuppressUntil;
+  const endgame = isEndgame();
 
-  // 1) Storm damage is the hardest constraint.
+  // 1) Storm — hardest constraint
   if (outside) return 'storm_flee';
 
-  // 2) Critically wounded and recently shot → retreat unconditionally.
-  if (hpRatio < 0.3 && (now - ag.lastDamageTime) < 4) return 'retreating';
-
-  // 3) Combat — but only if armed and past the opening lull.
-  if (hasTarget && !suppressed && !unarmed) {
-    if (hpRatio < 0.25) return 'retreating';
-    const distToTarget = ag.position.distanceTo(ag.currentTarget!.position);
-    // Very close + knife-range weapon → fight. Otherwise gun check.
-    if (ag.ammo <= 0 && distToTarget > 4) return 'retreating';
+  // 2) Combat decision with full context
+  if (hasTarget && !unarmed && !suppressed) {
+    const decision = decideEngagement(ag, ag.currentTarget!);
+    if (decision.action === 'disengage') return 'retreating';
+    // 'push', 'trade', 'flank' all become engagement; combat goals handle specifics
     return 'engaging';
   }
 
-  // 4) Unarmed near enemy → retreat (they can't fight back).
+  // 3) Critically wounded under fire
+  if (hpRatio < 0.3 && (now - ag.lastDamageTime) < 4) return 'retreating';
+
+  // 4) Unarmed + enemy nearby → retreat
   if (unarmed && hasTarget) {
-    const distToTarget = ag.position.distanceTo(ag.currentTarget!.position);
-    if (distToTarget < 22) return 'retreating';
+    const d = ag.position.distanceTo(ag.currentTarget!.position);
+    if (d < 25) return 'retreating';
   }
 
-  // 5) Still unarmed → loot is the only priority.
+  // 5) Unarmed → loot is the only priority
   if (unarmed) return 'loot_urgent';
 
-  // 6) Zone pressure — rotate before you're forced.
+  // 6) Heal when safe and wounded — a real player would pop a med here
+  if (shouldHealUp(ag, state)) return 'heal_up';
+
+  // 7) Endgame: once circle is small, seek elevation + hold
+  if (endgame) return 'endgame_hold';
+
+  // 8) Zone pressure
   if (nearEdge && zone.active && zone.isShrinking) return 'rotating';
   if (zone.active && zone.isShrinking && distanceToZoneEdge(ag.position.x, ag.position.z) < 15) {
     return 'rotating';
   }
 
-  // 7) Late game / small circle → hunt.
-  if (zone.active && zone.currentRadius > 0 && zone.currentRadius < 45) {
-    return 'hunting';
+  // 9) Third-party — look for ongoing fights nearby
+  if (!suppressed && ag.hp > ag.maxHP * 0.5) {
+    const fight = findNearbyFight(ag, 55);
+    if (fight && fight.staleness < 0.6) {
+      const p = ag.personality;
+      const opportunism = p ? (0.4 + p.egoismBias + p.aggressionBias * 0.5) : 0.5;
+      if (Math.random() < opportunism) {
+        state.thirdPartyPos = { x: fight.pos.x, z: fight.pos.z };
+        state.thirdPartyExpiresAt = now + 6;
+        return 'third_party';
+      }
+    }
   }
 
-  // 8) Mid game decisions: keep looting if under-geared or wounded.
+  // 10) Continue active third-party if recently set
+  if (state.thirdPartyPos && now < state.thirdPartyExpiresAt) {
+    return 'third_party';
+  }
+
+  // 11) Still under-geared or wounded → keep looting
   if (!state.hasLooted) return 'loot_safe';
   if (hpRatio < 0.65 && Math.random() < 0.5) return 'loot_safe';
   if (ag.ammo < ag.magSize * 0.3) return 'loot_safe';
 
-  // 9) Otherwise — personality decides between hunting and roaming-loot.
+  // 12) Hunt vs. roam-loot — weighted by how many players remain
+  const alive = playersAliveRoughly();
   const p = ag.personality;
-  if (p && p.aggressionBias > 0.05) return 'hunting';
-  return Math.random() < 0.35 ? 'hunting' : 'loot_safe';
+  const huntChance = p ? (0.4 + p.aggressionBias * 0.5 + p.egoismBias * 0.3) : 0.45;
+  // Fewer players left → hunt more aggressively
+  const alivePush = alive < 12 ? 0.3 : alive < 20 ? 0.15 : 0;
+  if (Math.random() < huntChance + alivePush) return 'hunting';
+  return 'loot_safe';
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -619,23 +615,20 @@ function determinePhase(ag: TDMAgent, state: BRBotState, now: number): BRBotPhas
 
 function handleStormFlee(ag: TDMAgent): void {
   rotateToZone(ag, 0.4);
-  // Sprint back — storm damage compounds fast.
   const base = CLASS_CONFIGS[ag.botClass].maxSpeed;
-  ag.maxSpeed = base * 1.3;
+  ag.maxSpeed = base * 1.35;
 }
 
 function handleRetreating(ag: TDMAgent, state: BRBotState): void {
   const threat = ag.lastAttacker ?? ag.currentTarget;
 
   if (threat && !threat.isDead) {
-    // Prefer actual cover geometry.
     const cover = findCoverFrom(ag, threat.position);
     if (cover) {
       goTo(ag, cover.x, cover.z, 1.7);
       ag.currentCover = cover;
       return;
     }
-    // Nothing? Run directly away.
     const ax = ag.position.x - threat.position.x;
     const az = ag.position.z - threat.position.z;
     const d = Math.hypot(ax, az) || 1;
@@ -649,7 +642,6 @@ function handleRetreating(ag: TDMAgent, state: BRBotState): void {
     return;
   }
 
-  // No immediate threat — break for a nearby building to heal up.
   const b = buildingGrid.nearest(ag.position.x, ag.position.z, 60);
   if (b && b.obj.doorPositions.length > 0) {
     const door = b.obj.doorPositions[0];
@@ -660,28 +652,16 @@ function handleRetreating(ag: TDMAgent, state: BRBotState): void {
 }
 
 function handleLootUrgent(ag: TDMAgent, state: BRBotState): void {
-  // If an enemy shows up while unarmed, retreat instead of looting.
   if (ag.currentTarget && !ag.currentTarget.isDead) {
     const d = ag.position.distanceTo(ag.currentTarget.position);
     if (d < 20) { handleRetreating(ag, state); return; }
   }
-
   const loot = findNearestWantedLoot(ag, 60);
-  if (loot) {
-    state.lootTargetId = loot.id;
-    goTo(ag, loot.x, loot.z, 1.7);
-    return;
-  }
-
-  // No visible loot — head to the nearest POI to search buildings.
+  if (loot) { state.lootTargetId = loot.id; goTo(ag, loot.x, loot.z, 1.7); return; }
   const poi = findNearestPOI(ag);
   if (poi) {
-    state.poiTarget = poi;
-    state.poiTargetSetAt = gameState.worldElapsed;
-    goTo(ag,
-      poi.x + (Math.random() - 0.5) * 10,
-      poi.z + (Math.random() - 0.5) * 10,
-      1.5);
+    state.poiTarget = poi; state.poiTargetSetAt = gameState.worldElapsed;
+    goTo(ag, poi.x + (Math.random() - 0.5) * 10, poi.z + (Math.random() - 0.5) * 10, 1.5);
     return;
   }
   clearSteering(ag);
@@ -690,71 +670,100 @@ function handleLootUrgent(ag: TDMAgent, state: BRBotState): void {
 
 function handleLootSafe(ag: TDMAgent, state: BRBotState): void {
   const loot = findNearestWantedLoot(ag, 40);
-  if (loot) {
-    state.lootTargetId = loot.id;
-    goTo(ag, loot.x, loot.z, 1.3);
-    return;
-  }
+  if (loot) { state.lootTargetId = loot.id; goTo(ag, loot.x, loot.z, 1.3); return; }
 
-  // If we've sat at a POI for > 8s without finding loot, pick a new one.
   const now = gameState.worldElapsed;
-  if (state.poiTarget && (now - state.poiTargetSetAt) > 8) {
-    state.poiTarget = null;
-  }
-
+  if (state.poiTarget && (now - state.poiTargetSetAt) > 8) state.poiTarget = null;
   if (!state.poiTarget) {
     const poi = findNearestPOI(ag);
-    if (poi) {
-      state.poiTarget = poi;
-      state.poiTargetSetAt = now;
-    }
+    if (poi) { state.poiTarget = poi; state.poiTargetSetAt = now; }
   }
-
-  if (state.poiTarget) {
-    goTo(ag, state.poiTarget.x, state.poiTarget.z, 1.2);
-    return;
-  }
-
+  if (state.poiTarget) { goTo(ag, state.poiTarget.x, state.poiTarget.z, 1.2); return; }
   clearSteering(ag);
   if (ag.wanderB) ag.wanderB.weight = 1;
 }
 
-function handleRotating(ag: TDMAgent): void {
-  rotateToZone(ag, 0.5);
+function handleHealUp(ag: TDMAgent, state: BRBotState): void {
+  // Walk into cover (if threat was recent) or stand still
+  const threat = ag.lastAttacker;
+  if (threat && !threat.isDead && gameState.worldElapsed - ag.lastDamageTime < 6) {
+    const cover = findCoverFrom(ag, threat.position);
+    if (cover) { goTo(ag, cover.x, cover.z, 1.3); }
+  } else {
+    // Stand still "chugging" — stop all steering
+    clearSteering(ag);
+  }
+  // Apply heal once — the chug is instant in gameplay terms, with cooldown
+  doHealUp(ag, state);
 }
 
-function handleHunting(ag: TDMAgent): void {
-  // Investigate any last-known enemy position.
-  if (ag.hasLastKnown) {
-    goTo(ag, ag.lastKnownPos.x, ag.lastKnownPos.z, 1.3);
-    return;
+function handleThirdParty(ag: TDMAgent, state: BRBotState): void {
+  if (!state.thirdPartyPos) { clearSteering(ag); if (ag.wanderB) ag.wanderB.weight = 1; return; }
+  // Approach the fight from cover — goTo with slight weight
+  goTo(ag, state.thirdPartyPos.x, state.thirdPartyPos.z, 1.45);
+  // If we reach it, clear so we can re-evaluate (likely 'engaging' next tick)
+  const d = Math.hypot(state.thirdPartyPos.x - ag.position.x, state.thirdPartyPos.z - ag.position.z);
+  if (d < 12 || gameState.worldElapsed > state.thirdPartyExpiresAt) {
+    state.thirdPartyPos = null;
   }
-  // Otherwise push toward the current circle centre — that's where the
-  // fight ultimately converges.
+}
+
+function handleRotating(ag: TDMAgent): void { rotateToZone(ag, 0.5); }
+
+function handleHunting(ag: TDMAgent): void {
+  if (ag.hasLastKnown) { goTo(ag, ag.lastKnownPos.x, ag.lastKnownPos.z, 1.3); return; }
   if (zone.active) {
     const dx = zone.currentCenter.x - ag.position.x;
     const dz = zone.currentCenter.y - ag.position.z;
     const d = Math.sqrt(dx * dx + dz * dz);
-    if (d > zone.currentRadius * 0.35) {
-      const tx = zone.currentCenter.x - (dx / d) * zone.currentRadius * 0.35;
-      const tz = zone.currentCenter.y - (dz / d) * zone.currentRadius * 0.35;
+    if (d > zone.currentRadius * 0.4) {
+      const tx = zone.currentCenter.x - (dx / d) * zone.currentRadius * 0.4;
+      const tz = zone.currentCenter.y - (dz / d) * zone.currentRadius * 0.4;
       goTo(ag, tx, tz, 1.2);
       return;
     }
+    // Already near centre — patrol small arc
+    const a = Math.random() * Math.PI * 2;
+    const rr = Math.min(zone.currentRadius * 0.6, 25);
+    goTo(ag, zone.currentCenter.x + Math.cos(a) * rr, zone.currentCenter.y + Math.sin(a) * rr, 1.1);
+    return;
   }
   clearSteering(ag);
   if (ag.wanderB) ag.wanderB.weight = 1;
+}
+
+function handleEndgameHold(ag: TDMAgent, state: BRBotState): void {
+  const now = gameState.worldElapsed;
+  // Cache hold spot — but refresh if zone shifted
+  if (!state.endgameHold || now - state.endgameHoldSetAt > 6) {
+    state.endgameHold = findEndgameHold(ag);
+    state.endgameHoldSetAt = now;
+  }
+  if (state.endgameHold) {
+    const dist = ag.position.distanceTo(state.endgameHold);
+    if (dist > 3) {
+      goTo(ag, state.endgameHold.x, state.endgameHold.z, 1.35);
+    } else {
+      // Reached hold — stand still, hold angles toward centre
+      clearSteering(ag);
+      // Face zone centre so FOV catches pushes
+      if (zone.active) {
+        // Nudge heading toward centre via seek with tiny weight
+        if (ag.seekB) {
+          (ag.seekB as any).target.set(zone.currentCenter.x, 0, zone.currentCenter.y);
+          ag.seekB.weight = 0.02;
+        }
+      }
+    }
+  } else {
+    rotateToZone(ag, 0.3);
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────
 //  FRAME UPDATE
 // ─────────────────────────────────────────────────────────────────────
 
-/**
- * Called per-frame for each active, LOD-gated BR bot.
- * Must be called AFTER updateAI so we can override its steering for
- * non-combat phases but still honour combat goals when 'engaging'.
- */
 export function updateBRBot(ag: TDMAgent, dt: number): void {
   const state = getBRState(ag);
   if (!state) return;
@@ -765,14 +774,11 @@ export function updateBRBot(ag: TDMAgent, dt: number): void {
   botGrid.update(ag, ag.position.x, ag.position.z);
   updateBotVisualLOD(ag, state, now);
 
-  if (ag.renderComponent) {
-    ag.renderComponent.visible = state.lodTier < 3;
-  }
+  if (ag.renderComponent) ag.renderComponent.visible = state.lodTier < 3;
 
-  // Default speed — handlers may override (e.g. storm_flee).
   ag.maxSpeed = CLASS_CONFIGS[ag.botClass].maxSpeed;
 
-  // Stuck detection — uses building door routing to escape building geometry.
+  // Stuck detection
   const moveDx = ag.position.x - state.lastX;
   const moveDz = ag.position.z - state.lastZ;
   if (moveDx * moveDx + moveDz * moveDz < 0.04) state.stuckTimer += dt;
@@ -784,6 +790,7 @@ export function updateBRBot(ag: TDMAgent, dt: number): void {
     state.stuckTimer = 0;
     state.lootTargetId = null;
     state.poiTarget = null;
+    state.thirdPartyPos = null;
 
     const nearbyB = buildingGrid.queryRadius(ag.position.x, ag.position.z, 25);
     let bestDoor: { x: number; z: number } | null = null;
@@ -801,9 +808,8 @@ export function updateBRBot(ag: TDMAgent, dt: number): void {
       }
     }
 
-    if (bestDoor) {
-      goTo(ag, bestDoor.x, bestDoor.z, 2.0);
-    } else {
+    if (bestDoor) goTo(ag, bestDoor.x, bestDoor.z, 2.0);
+    else {
       const pushed = pushOutOfWall(ag.position.x, ag.position.z);
       ag.position.set(pushed.x, 0, pushed.z);
       clearSteering(ag);
@@ -811,7 +817,7 @@ export function updateBRBot(ag: TDMAgent, dt: number): void {
     }
   }
 
-  // Re-evaluate phase a few times per second (not every frame — too spammy).
+  // Re-evaluate phase ~4x/sec
   if (now - state.lastPhaseDecision > 0.25) {
     state.lastPhaseDecision = now;
     const newPhase = determinePhase(ag, state, now);
@@ -821,18 +827,18 @@ export function updateBRBot(ag: TDMAgent, dt: number): void {
     }
   }
 
-  // Phase execution. 'engaging' intentionally does nothing here — updateAI
-  // already set combat steering before we ran, and we leave it alone.
   switch (state.phase) {
-    case 'storm_flee':  handleStormFlee(ag); break;
-    case 'retreating':  handleRetreating(ag, state); break;
-    case 'loot_urgent': handleLootUrgent(ag, state); break;
-    case 'loot_safe':   handleLootSafe(ag, state); break;
-    case 'rotating':    handleRotating(ag); break;
-    case 'hunting':     handleHunting(ag); break;
-    case 'engaging':    /* updateAI owns steering */ break;
+    case 'storm_flee':    handleStormFlee(ag); break;
+    case 'retreating':    handleRetreating(ag, state); break;
+    case 'loot_urgent':   handleLootUrgent(ag, state); break;
+    case 'loot_safe':     handleLootSafe(ag, state); break;
+    case 'heal_up':       handleHealUp(ag, state); break;
+    case 'third_party':   handleThirdParty(ag, state); break;
+    case 'rotating':      handleRotating(ag); break;
+    case 'hunting':       handleHunting(ag); break;
+    case 'endgame_hold':  handleEndgameHold(ag, state); break;
+    case 'engaging':      /* updateAI owns steering */ break;
   }
 
-  // Pickup is opportunistic and cheap — runs every phase.
   tryPickupNearby(ag, state);
 }
