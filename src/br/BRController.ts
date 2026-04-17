@@ -1,18 +1,22 @@
 /**
  * BRController — Match state machine with LOD-aware bot updates.
  *
- * Performance: the main updateBR() drives LOD checks so that
- * updateAI is only called on bots that should update this frame.
- * Far bots are skipped entirely — the biggest CPU saving.
+ * Key behaviours vs previous version:
+ *  - buildBRBots is async + chunked, drives a progress bar on the loading screen
+ *  - landBRBots() is called exactly when the player jumps from the plane, so
+ *    bots start looting at the same moment the player is freefalling (instead
+ *    of being frozen up top while the player descends)
+ *  - While the player is on the plane, updateBR returns almost immediately;
+ *    updateGroundLoot only animates nearby instances
+ *  - Bot AI is LOD-gated via shouldUpdateBot
  */
 
-import * as THREE from 'three';
 import { gameState } from '@/core/GameState';
 import { buildBRMap, disposeBRMap } from './BRMap';
-import { populateMapLoot, groundLoot, spawnGroundLoot, clearAllLoot, updateGroundLoot } from './LootSystem';
+import { populateMapLoot, spawnGroundLoot, clearAllLoot, updateGroundLoot } from './LootSystem';
 import { startZone, updateZone, disposeZone } from './ZoneSystem';
 import { buildBRBots, clearBRBots, updateBRBot, shouldUpdateBot, landBRBots } from './BRBots';
-import { startDropSequence, updateDropSequence, resetDrop, isPlayerInAir, isPlayerOnPlane, drop } from './DropPlane';
+import { startDropSequence, updateDropSequence, resetDrop, isPlayerInAir, isPlayerOnPlane } from './DropPlane';
 import { createEmptyInventory, dumpInventoryOnDeath } from './Inventory';
 import { setPlayerInventory, getPlayerInventory } from './InventoryUI';
 import { populateVehicles, updateVehicles, clearVehicles } from './Vehicles';
@@ -30,7 +34,7 @@ export interface BRMatchState {
   phaseStart: number;
   playersAlive: number;
   winnerName: string | null;
-  frameCount: number; // for LOD stagger
+  frameCount: number;
 }
 
 export const brState: BRMatchState = {
@@ -46,7 +50,7 @@ function nextFrame(): Promise<void> {
   return new Promise(r => requestAnimationFrame(() => r()));
 }
 
-function showLoading(msg: string): void {
+function showLoading(msg: string, pct?: number): void {
   let el = document.getElementById('br-loading');
   if (!el) {
     el = document.createElement('div');
@@ -54,7 +58,10 @@ function showLoading(msg: string): void {
     el.style.cssText = 'position:fixed;inset:0;z-index:9999;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#0a0e18;color:#e0e8f0;font-family:monospace;';
     document.body.appendChild(el);
   }
-  el.innerHTML = `<div style="font-size:28px;font-weight:bold;margin-bottom:18px;color:#4aa8ff;">BATTLE ROYALE</div><div style="font-size:16px;opacity:0.8;">${msg}</div>`;
+  const bar = pct != null
+    ? `<div style="margin-top:18px;width:320px;height:6px;background:#1a2238;border-radius:3px;overflow:hidden"><div style="height:100%;width:${pct}%;background:linear-gradient(90deg,#4aa8ff,#60c0ff);transition:width .2s"></div></div>`
+    : '';
+  el.innerHTML = `<div style="font-size:28px;font-weight:bold;margin-bottom:18px;color:#4aa8ff;">BATTLE ROYALE</div><div style="font-size:16px;opacity:0.8;">${msg}</div>${bar}`;
   el.style.display = 'flex';
 }
 
@@ -71,7 +78,8 @@ export async function startBRMatch(): Promise<void> {
 
   hideArena();
 
-  // Deactivate arena agents — they stay in the agents array but don't update or render
+  // Deactivate arena agents — they stay in the agents array but don't
+  // update or render. Their mesh is hidden.
   for (const ag of gameState.agents) {
     if (ag === gameState.player) continue;
     if (!(ag as any)._brState) {
@@ -97,9 +105,11 @@ export async function startBRMatch(): Promise<void> {
   await nextFrame();
   populateVehicles();
 
-  showLoading('Assembling combatants...');
-  await nextFrame();
-  buildBRBots();
+  // Bot creation is the heaviest step — make it visibly progressive.
+  await buildBRBots((done, total) => {
+    const pct = (done / total) * 100;
+    showLoading(`Assembling combatants... (${done}/${total})`, pct);
+  });
 
   showLoading('Preparing drop...');
   await nextFrame();
@@ -126,7 +136,7 @@ export async function startBRMatch(): Promise<void> {
   gameState.pReloading = false;
 
   setViewmodelWeapon('knife');
-  setViewmodelVisible(false); // hidden until player lands
+  setViewmodelVisible(false);
 
   startDropSequence();
   brState.phase = 'airdrop';
@@ -145,7 +155,6 @@ export function cleanupBR(): void {
   disposeBRMap();
   showArena();
 
-  // Reactivate arena agents
   for (const ag of gameState.agents) {
     if (ag === gameState.player) continue;
     if (!(ag as any)._brState) {
@@ -159,9 +168,8 @@ function countAlive(): number {
   let c = gameState.pDead ? 0 : 1;
   for (const ag of gameState.agents) {
     if (ag === gameState.player || ag.isDead) continue;
-    // Count BR bots (even those still dropping) but skip deactivated arena bots
     const brSt = (ag as any)._brState;
-    if (!brSt) continue; // arena agent — not part of BR
+    if (!brSt) continue;
     c++;
   }
   return c;
@@ -181,9 +189,8 @@ export function onBRDeath(victim: TDMAgent): void {
       }
     }
   } else {
-    // Bot death → simple death loot
     const items: any[] = [];
-    if (victim.weaponId !== 'unarmed') {
+    if (victim.weaponId !== 'unarmed' && victim.weaponId !== 'knife') {
       const wep = WEAPONS[victim.weaponId];
       items.push({
         id: `w_${victim.weaponId}_c`, category: 'weapon',
@@ -205,7 +212,7 @@ export function onBRDeath(victim: TDMAgent): void {
 }
 
 // ═══════════════════════════════════════════
-//  MAIN BR UPDATE — LOD-aware
+//  MAIN BR UPDATE
 // ═══════════════════════════════════════════
 
 export function updateBR(dt: number): void {
@@ -213,31 +220,34 @@ export function updateBR(dt: number): void {
 
   brState.frameCount++;
 
-  // Drop plane
+  // Drop plane physics
   if (isPlayerInAir()) {
     updateDropSequence(dt);
   }
 
-  // While on plane, skip all heavy updates
+  // While the player is on the plane, bots are inactive and the zone
+  // hasn't started — nothing to do beyond animating the drop loot.
   if (isPlayerOnPlane()) {
-    updateGroundLoot();
+    // Only animate loot every 4th frame during the on-plane window; the
+    // player is 120m up and can't see individual boxes.
+    if ((brState.frameCount & 3) === 0) updateGroundLoot();
     brState.playersAlive = countAlive();
     return;
   }
 
-  // Player jumped from plane — activate bots & zone
+  // Transition from 'airdrop' to 'landing' — this is the moment the
+  // player jumps. Activate all bots so they start looting.
   if (brState.phase === 'airdrop') {
     brState.phase = 'landing';
     brState.phaseStart = gameState.worldElapsed;
     startZone();
+    landBRBots();
   }
 
-  // Player just landed — show viewmodel
   if (!isPlayerInAir()) {
     setViewmodelVisible(true);
   }
 
-  // Phase transitions
   if (brState.phase === 'landing') {
     if (gameState.worldElapsed - brState.phaseStart > 20) {
       brState.phase = 'combat';
@@ -245,30 +255,24 @@ export function updateBR(dt: number): void {
     }
   }
 
-  // Zone
   updateZone(dt);
-
-  // Vehicles
   updateVehicles(dt);
 
-  // ── LOD-gated bot updates ──
-  // This is the performance core: only nearby bots get full AI.
+  // LOD-gated bot updates. `shouldUpdateBot` returns false for inactive
+  // bots and applies per-tier frame stagger for distant ones.
   for (const ag of gameState.agents) {
     if (ag === gameState.player || ag.isDead || !ag.active) continue;
     if (!shouldUpdateBot(ag, brState.frameCount)) continue;
 
     updateAI(ag, dt);
 
-    // BR-specific behavior (loot seeking, zone rotation)
     if ((ag as any)._brState) {
       updateBRBot(ag, dt);
     }
   }
 
-  // Ground loot animation (only nearby instances are animated in LootSystem)
   updateGroundLoot();
 
-  // Count alive
   brState.playersAlive = countAlive();
 
   if (brState.playersAlive <= 1 && brState.phase !== 'over' && brState.phase !== 'pregame') {
@@ -277,7 +281,7 @@ export function updateBR(dt: number): void {
     if (!gameState.pDead) {
       brState.winnerName = 'YOU';
     } else {
-      const survivor = gameState.agents.find(a => a !== gameState.player && !a.isDead);
+      const survivor = gameState.agents.find(a => a !== gameState.player && !a.isDead && (a as any)._brState);
       brState.winnerName = survivor?.name ?? 'UNKNOWN';
     }
   }
