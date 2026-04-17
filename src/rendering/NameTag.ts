@@ -47,9 +47,10 @@ export function makeNameTag(text: string, color: number): THREE.Sprite {
     transparent: true,
     depthTest: false,
     depthWrite: false,
+    sizeAttenuation: false,
   });
   const sprite = new THREE.Sprite(smat);
-  sprite.scale.set(2.8, 0.7, 1);
+  sprite.scale.set(1.8, 0.42, 1);
   sprite.renderOrder = 999;
 
   return sprite;

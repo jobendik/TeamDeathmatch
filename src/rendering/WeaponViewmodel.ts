@@ -14,6 +14,10 @@ let vmMuzzleSprite: THREE.Sprite;
 let currentWeaponMesh: THREE.Group | null = null;
 let currentWeaponId: WeaponId = 'assault_rifle';
 let vmHidden = false;
+let muzzleDebugOverlay: HTMLDivElement | null = null;
+
+const PLAYER_BASE_FOV = 78;
+const VM_BASE_FOV = 70;
 
 let currentViewmodelMixer: THREE.AnimationMixer | null = null;
 let currentViewmodelActions: THREE.AnimationAction[] = [];
@@ -43,6 +47,34 @@ const VM_LAYOUTS: Record<WeaponId, VMLayout> = {
   shotgun:         { pos: [0.12, -0.11, -0.22], rot: [0, 0, 0], scale: 1.2, muzzleOffset: [0, 0.012, -0.20], recoilZ: 0.040, recoilUp: 0.025, recoilRot: 0.14 },
   sniper_rifle:    { pos: [0.10, -0.10, -0.26], rot: [0, 0, 0], scale: 1.1, muzzleOffset: [0, 0.010, -0.26], recoilZ: 0.035, recoilUp: 0.018, recoilRot: 0.10 },
   rocket_launcher: { pos: [0.14, -0.13, -0.20], rot: [0, 0, 0], scale: 1.2, muzzleOffset: [0, 0.000, -0.18], recoilZ: 0.050, recoilUp: 0.030, recoilRot: 0.12 },
+};
+
+interface ADSSettings {
+  pos: [number, number, number];
+  rot: [number, number, number];
+  playerFov: number;
+  vmFov: number;
+  swayMul: number;
+  bobMul: number;
+}
+
+const ADS_SETTINGS: Partial<Record<WeaponId, ADSSettings>> = {
+  pistol:          { pos: [0.012, -0.098, -0.155], rot: [0.01, -0.01, 0.0], playerFov: 68, vmFov: 60, swayMul: 0.45, bobMul: 0.30 },
+  smg:             { pos: [0.000, -0.098, -0.205], rot: [0.00, -0.01, 0.0], playerFov: 66, vmFov: 58, swayMul: 0.40, bobMul: 0.24 },
+  assault_rifle:   { pos: [0.000, -0.093, -0.205], rot: [0.00,  0.00, 0.0], playerFov: 63, vmFov: 54, swayMul: 0.32, bobMul: 0.18 },
+  shotgun:         { pos: [0.010, -0.102, -0.175], rot: [0.00, -0.01, 0.0], playerFov: 68, vmFov: 60, swayMul: 0.45, bobMul: 0.28 },
+  sniper_rifle:    { pos: [0.000, -0.090, -0.140], rot: [0.00,  0.00, 0.0], playerFov: 26, vmFov: 34, swayMul: 0.10, bobMul: 0.05 },
+  rocket_launcher: { pos: [0.020, -0.110, -0.168], rot: [0.00, -0.01, 0.0], playerFov: 70, vmFov: 62, swayMul: 0.55, bobMul: 0.34 },
+};
+
+const MUZZLE_DEBUG_TUNER = {
+  enabled: false,
+  weaponId: 'assault_rifle' as WeaponId,
+  offset: new THREE.Vector3(
+    VM_LAYOUTS.assault_rifle.muzzleOffset[0],
+    VM_LAYOUTS.assault_rifle.muzzleOffset[1],
+    VM_LAYOUTS.assault_rifle.muzzleOffset[2],
+  ),
 };
 
 let recoilZ = 0;
@@ -1132,6 +1164,10 @@ function applyWeaponSwap(weaponId: WeaponId): void {
   recoilZ = 0;
   recoilUp = 0;
   recoilRot = 0;
+
+  if (MUZZLE_DEBUG_TUNER.enabled) {
+    applyMuzzleTunerForWeapon(weaponId);
+  }
 }
 
 async function tryLoadSpecialViewmodel(weaponId: WeaponId): Promise<void> {
@@ -1187,7 +1223,7 @@ export function initViewmodel(): void {
   rim.position.set(-2, 1, -1);
   vmScene.add(rim);
 
-  vmCamera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.01, 10);
+  vmCamera = new THREE.PerspectiveCamera(VM_BASE_FOV, innerWidth / innerHeight, 0.01, 10);
 
   vmGroup = new THREE.Group();
   vmScene.add(vmGroup);
@@ -1223,6 +1259,11 @@ export function initViewmodel(): void {
   if (KNIFE_DEBUG_TUNER.enabled) {
     ensureKnifeDebugOverlay();
     window.addEventListener('keydown', onKnifeDebugKeyDown);
+  }
+
+  if (MUZZLE_DEBUG_TUNER.enabled) {
+    ensureMuzzleDebugOverlay();
+    window.addEventListener('keydown', onMuzzleDebugKeyDown);
   }
 
   setViewmodelWeapon(gameState.pWeaponId);
@@ -1336,12 +1377,17 @@ export function updateViewmodel(dt: number): void {
     bobPhase += dt * 1.8;
   }
 
-  const bobAmt = isMoving ? (isSprinting ? 0.008 : 0.004) : 0.0012;
+  const adsSettings = ADS_SETTINGS[currentWeaponId] ?? null;
+  const adsAmount = getADSAmount(dt, isSprinting);
+  const bobMul = adsSettings ? (1 - adsAmount) + adsSettings.bobMul * adsAmount : 1;
+  const swayMul = adsSettings ? (1 - adsAmount) + adsSettings.swayMul * adsAmount : 1;
+
+  const bobAmt = (isMoving ? (isSprinting ? 0.008 : 0.004) : 0.0012) * bobMul;
   const bobX = Math.sin(bobPhase) * bobAmt;
   const bobY = Math.abs(Math.cos(bobPhase * 2)) * bobAmt * 0.7;
 
-  const targetSwayX = -mouseDeltaX * 0.0008;
-  const targetSwayY = -mouseDeltaY * 0.0008;
+  const targetSwayX = -mouseDeltaX * 0.0008 * swayMul;
+  const targetSwayY = -mouseDeltaY * 0.0008 * swayMul;
   swayX += (targetSwayX - swayX) * Math.min(1, dt * 12);
   swayY += (targetSwayY - swayY) * Math.min(1, dt * 12);
   swayX *= Math.max(0, 1 - dt * 5);
@@ -1351,6 +1397,22 @@ export function updateViewmodel(dt: number): void {
   sprintLerp += (sprintTarget - sprintLerp) * Math.min(1, dt * 8);
 
   const reloadTarget = pReloading ? 1 : 0;
+
+  const playerTargetFov = adsSettings
+    ? THREE.MathUtils.lerp(PLAYER_BASE_FOV, adsSettings.playerFov, adsAmount)
+    : PLAYER_BASE_FOV;
+  if (Math.abs(gameState.camera.fov - playerTargetFov) > 0.02) {
+    gameState.camera.fov += (playerTargetFov - gameState.camera.fov) * Math.min(1, dt * 10);
+    gameState.camera.updateProjectionMatrix();
+  }
+
+  const vmTargetFov = adsSettings
+    ? THREE.MathUtils.lerp(VM_BASE_FOV, adsSettings.vmFov, adsAmount)
+    : VM_BASE_FOV;
+  if (Math.abs(vmCamera.fov - vmTargetFov) > 0.02) {
+    vmCamera.fov += (vmTargetFov - vmCamera.fov) * Math.min(1, dt * 10);
+    vmCamera.updateProjectionMatrix();
+  }
   reloadLerp += (reloadTarget - reloadLerp) * Math.min(1, dt * 6);
 
   recoilZ *= Math.max(0, 1 - dt * 15);
@@ -1380,22 +1442,31 @@ export function updateViewmodel(dt: number): void {
   const reloadDrop = reloadLerp * 0.08;
   const reloadTilt = reloadLerp * 0.6;
 
+  const adsPos = adsSettings?.pos ?? layout.pos;
+  const adsRot = adsSettings?.rot ?? layout.rot;
+
   vmGroup.position.set(
-    layout.pos[0] + bobX + swayX + sprintLerp * 0.04,
-    layout.pos[1] + bobY + swayY + recoilUp - switchDrop - reloadDrop,
-    layout.pos[2] + recoilZ + switchDrop * 0.5,
+    THREE.MathUtils.lerp(layout.pos[0] + bobX + swayX + sprintLerp * 0.04, adsPos[0], adsAmount),
+    THREE.MathUtils.lerp(layout.pos[1] + bobY + swayY + recoilUp - switchDrop - reloadDrop, adsPos[1], adsAmount),
+    THREE.MathUtils.lerp(layout.pos[2] + recoilZ + switchDrop * 0.5, adsPos[2], adsAmount),
   );
 
   vmGroup.rotation.set(
-    layout.rot[0] - recoilRot + reloadTilt,
-    layout.rot[1] + sprintLerp * 0.35,
-    layout.rot[2] - sprintLerp * 0.25 + reloadLerp * 0.3,
+    THREE.MathUtils.lerp(layout.rot[0] - recoilRot + reloadTilt, adsRot[0], adsAmount),
+    THREE.MathUtils.lerp(layout.rot[1] + sprintLerp * 0.35, adsRot[1], adsAmount),
+    THREE.MathUtils.lerp(layout.rot[2] - sprintLerp * 0.25 + reloadLerp * 0.3, adsRot[2], adsAmount),
   );
 
-  const mOff = layout.muzzleOffset;
+  const mOff = MUZZLE_DEBUG_TUNER.enabled && MUZZLE_DEBUG_TUNER.weaponId === currentWeaponId
+    ? [MUZZLE_DEBUG_TUNER.offset.x, MUZZLE_DEBUG_TUNER.offset.y, MUZZLE_DEBUG_TUNER.offset.z] as const
+    : layout.muzzleOffset;
   vmMuzzleFlash.position.set(mOff[0], mOff[1], mOff[2]);
   vmMuzzleMesh.position.set(mOff[0], mOff[1], mOff[2]);
   vmMuzzleSprite.position.set(mOff[0], mOff[1], mOff[2]);
+
+  if (currentWeaponMesh) {
+    currentWeaponMesh.visible = !(currentWeaponId === 'sniper_rifle' && adsAmount > 0.7);
+  }
 
   if (Math.abs(gameState.recoilPitch) > 0.0001) {
     const apply = gameState.recoilPitch * Math.min(1, dt * 20);
@@ -1407,6 +1478,85 @@ export function updateViewmodel(dt: number): void {
     gameState.cameraYaw += apply;
     gameState.recoilYaw -= apply;
   }
+}
+
+function ensureMuzzleDebugOverlay(): void {
+  if (!MUZZLE_DEBUG_TUNER.enabled) return;
+  if (muzzleDebugOverlay) return;
+
+  const el = document.createElement('div');
+  el.style.position = 'fixed';
+  el.style.right = '16px';
+  el.style.bottom = '16px';
+  el.style.zIndex = '120';
+  el.style.padding = '10px 12px';
+  el.style.whiteSpace = 'pre';
+  el.style.font = '12px/1.45 monospace';
+  el.style.color = '#eaf3ff';
+  el.style.background = 'rgba(5,10,18,0.92)';
+  el.style.border = '1px solid rgba(120,180,255,0.35)';
+  el.style.borderRadius = '4px';
+  el.style.boxShadow = '0 0 24px rgba(0,0,0,0.35)';
+  document.body.appendChild(el);
+  muzzleDebugOverlay = el;
+  refreshMuzzleDebugOverlay();
+}
+
+function refreshMuzzleDebugOverlay(): void {
+  if (!muzzleDebugOverlay || !MUZZLE_DEBUG_TUNER.enabled) return;
+  const o = MUZZLE_DEBUG_TUNER.offset;
+  muzzleDebugOverlay.textContent =
+`MUZZLE TUNER — ${MUZZLE_DEBUG_TUNER.weaponId}
+Arrows = X/Y, PageUp/PageDown = Z
+Shift = bigger step, Enter = print to console
+
+offset: [${o.x.toFixed(3)}, ${o.y.toFixed(3)}, ${o.z.toFixed(3)}]`;
+}
+
+function applyMuzzleTunerForWeapon(weaponId: WeaponId): void {
+  MUZZLE_DEBUG_TUNER.weaponId = weaponId;
+  const off = VM_LAYOUTS[weaponId].muzzleOffset;
+  MUZZLE_DEBUG_TUNER.offset.set(off[0], off[1], off[2]);
+  refreshMuzzleDebugOverlay();
+}
+
+function commitMuzzleOffset(): void {
+  const layout = VM_LAYOUTS[MUZZLE_DEBUG_TUNER.weaponId];
+  layout.muzzleOffset = [MUZZLE_DEBUG_TUNER.offset.x, MUZZLE_DEBUG_TUNER.offset.y, MUZZLE_DEBUG_TUNER.offset.z];
+}
+
+function onMuzzleDebugKeyDown(ev: KeyboardEvent): void {
+  if (!MUZZLE_DEBUG_TUNER.enabled) return;
+  const step = ev.shiftKey ? 0.01 : 0.0025;
+  let changed = false;
+  switch (ev.key) {
+    case 'ArrowLeft': MUZZLE_DEBUG_TUNER.offset.x -= step; changed = true; break;
+    case 'ArrowRight': MUZZLE_DEBUG_TUNER.offset.x += step; changed = true; break;
+    case 'ArrowUp': MUZZLE_DEBUG_TUNER.offset.y += step; changed = true; break;
+    case 'ArrowDown': MUZZLE_DEBUG_TUNER.offset.y -= step; changed = true; break;
+    case 'PageUp': MUZZLE_DEBUG_TUNER.offset.z -= step; changed = true; break;
+    case 'PageDown': MUZZLE_DEBUG_TUNER.offset.z += step; changed = true; break;
+    case 'Enter':
+      commitMuzzleOffset();
+      console.log('[WeaponViewmodel] muzzleOffset', MUZZLE_DEBUG_TUNER.weaponId, [...VM_LAYOUTS[MUZZLE_DEBUG_TUNER.weaponId].muzzleOffset]);
+      break;
+    default:
+      return;
+  }
+
+  if (changed) {
+    ev.preventDefault();
+    commitMuzzleOffset();
+    refreshMuzzleDebugOverlay();
+  }
+}
+
+function getADSAmount(dt: number, isSprinting: boolean): number {
+  const canADS = !isSprinting && !gameState.pReloading && !gameState.pDead && !!ADS_SETTINGS[currentWeaponId] && gameState.isADS;
+  const target = canADS ? 1 : 0;
+  gameState.adsAmount += (target - gameState.adsAmount) * Math.min(1, dt * 12);
+  if (Math.abs(target - gameState.adsAmount) < 0.001) gameState.adsAmount = target;
+  return gameState.adsAmount;
 }
 
 function easeOutCubic(t: number): number {
