@@ -10,7 +10,7 @@
  *    updateGroundLoot only animates nearby instances
  *  - Bot AI is LOD-gated via shouldUpdateBot
  */
-
+import { resetSupplyDrops, scheduleNextSupplyDrop, updateSupplyDrops } from './SupplyDrops';
 import { gameState } from '@/core/GameState';
 import { buildBRMap, disposeBRMap } from './BRMap';
 import { populateMapLoot, spawnGroundLoot, clearAllLoot, updateGroundLoot, preloadLootVisuals } from './LootSystem';
@@ -111,7 +111,9 @@ export async function startBRMatch(): Promise<void> {
   showLoading('Placing vehicles...');
   await nextFrame();
   populateVehicles();
-
+  
+  resetSupplyDrops();
+  
   // Bot creation is the heaviest step — make it visibly progressive.
   await buildBRBots((done, total) => {
     const pct = (done / total) * 100;
@@ -165,6 +167,7 @@ export function cleanupBR(): void {
   resetDrop();
   clearBRBots();
   disposeBRMap();
+  resetSupplyDrops();
   showArena();
 
   for (const ag of gameState.agents) {
@@ -269,6 +272,7 @@ export function updateBR(dt: number): void {
 
   updateZone(dt);
   updateVehicles(dt);
+  updateSupplyDrops(dt);
 
   // LOD-gated bot updates. `shouldUpdateBot` returns false for inactive
   // bots and applies per-tier frame stagger for distant ones.
