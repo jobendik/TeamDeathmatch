@@ -77,20 +77,31 @@ export function spawnTracer(origin: THREE.Vector3, end: THREE.Vector3, col: numb
 
   const mid = origin.clone().add(end).multiplyScalar(0.5);
 
-  const geo = new THREE.CylinderGeometry(0.012, 0.008, len, 3, 1);
-  const mat = new THREE.MeshBasicMaterial({
-    color: col, transparent: true, opacity: 0.6,
-    blending: THREE.AdditiveBlending, depthWrite: false,
-  });
-  const mesh = new THREE.Mesh(geo, mat);
-  mesh.position.copy(mid);
+  const glow = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.028, 0.020, len, 4, 1),
+    new THREE.MeshBasicMaterial({
+      color: col, transparent: true, opacity: 0.22,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    }),
+  );
+  glow.position.copy(mid);
+  glow.lookAt(end);
+  glow.rotateX(Math.PI / 2);
+  gameState.scene.add(glow);
+  gameState.particles.push({ mesh: glow, vel: new THREE.Vector3(), life: 0.07, mL: 0.07 });
 
-  // Orient cylinder along the direction
-  mesh.lookAt(end);
-  mesh.rotateX(Math.PI / 2);
-
-  gameState.scene.add(mesh);
-  gameState.particles.push({ mesh, vel: new THREE.Vector3(), life: 0.06, mL: 0.06 });
+  const core = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.010, 0.008, len, 5, 1),
+    new THREE.MeshBasicMaterial({
+      color: 0xffffff, transparent: true, opacity: 0.95,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    }),
+  );
+  core.position.copy(mid);
+  core.lookAt(end);
+  core.rotateX(Math.PI / 2);
+  gameState.scene.add(core);
+  gameState.particles.push({ mesh: core, vel: new THREE.Vector3(), life: 0.05, mL: 0.05 });
 }
 
 /**

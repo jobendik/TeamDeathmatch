@@ -107,6 +107,9 @@ function playerDied(attacker: TDMAgent | null): void {
   if (dom.deathTxt) dom.deathTxt.textContent = String(gameState.pDeaths);
   if (dom.dsKiller) dom.dsKiller.textContent = attacker ? attacker.name.toUpperCase() : 'UNKNOWN';
   if (dom.dsWeapon) dom.dsWeapon.textContent = attacker ? WEAPONS[attacker.weaponId].name : 'MYSTERY';
+  if (gameState.mode === 'br') {
+    gameState.spectatorTarget = attacker && !attacker.isDead ? attacker : gameState.agents.find((ag) => ag !== gameState.player && !ag.isDead && ag.active && (ag as any)._brState) ?? null;
+  }
 
   clearDeadTargetReferences(gameState.player);
 
@@ -408,6 +411,8 @@ export function resetMatch(mode = gameState.mode): void {
   gameState.pReloading = false;
   dom.reloadBar.classList.remove('on');
   dom.reloadText.classList.remove('on');
+  gameState.spectatorTarget = null;
+  gameState.isADS = false;
   setViewmodelWeapon(gameState.pWeaponId);
 
   for (const ag of gameState.agents) {
