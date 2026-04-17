@@ -267,6 +267,14 @@ export function updateAI(ag: TDMAgent, dt: number): void {
       } else if (ag.ammo <= 0) {
         ag.isReloading = true;
         ag.reloadTimer = ag.reloadTime;
+        if (ag.team === gameState.player.team) {
+          const distToPlayer = ag.position.distanceTo(gameState.player.position);
+          if (distToPlayer < 25 && Math.random() < 0.3) {
+            import('@/audio/SoundHooks').then(s =>
+              s.playBotCallout('reload', new THREE.Vector3(ag.position.x, 1.6, ag.position.z))
+            );
+          }
+        }
         if (ag.stateName !== 'COVER' && ag.stateName !== 'RETREAT') {
           const cover = findCoverFrom(ag, target.position);
           if (cover) ag.currentCover = cover;
@@ -329,6 +337,14 @@ export function updateAI(ag: TDMAgent, dt: number): void {
     ag.currentTarget = null;
     ag.trackingTime = 0;
     ag.alertLevel = Math.max(0, ag.alertLevel - dt * 15);
+
+    // Smart reload — top up the magazine when no enemy visible and ammo < 60%
+    if (!ag.isReloading && ag.weaponId !== 'unarmed' && ag.weaponId !== 'knife') {
+      if (ag.ammo < ag.magSize * 0.6 && Math.random() < 0.02) {
+        ag.isReloading = true;
+        ag.reloadTimer = ag.reloadTime;
+      }
+    }
 
     const timeSinceDmg = gameState.worldElapsed - ag.lastDamageTime;
     if (timeSinceDmg < 1.5 && ag.lastAttacker && !ag.lastAttacker.isDead) {

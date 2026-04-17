@@ -218,6 +218,7 @@ export class TakeCoverGoal extends YUKA.Goal<TDMAgent> {
     const ag = this.owner;
     ag.stateName = 'COVER';
     ag.stateTime = 0;
+    ag.isBotCrouching = true;
     this.status = YUKA.Goal.STATUS.ACTIVE;
   }
 
@@ -245,6 +246,7 @@ export class TakeCoverGoal extends YUKA.Goal<TDMAgent> {
 
   terminate(): void {
     const ag = this.owner;
+    ag.isBotCrouching = false;
     if (ag.arriveB) ag.arriveB.weight = 0;
     this.status = YUKA.Goal.STATUS.COMPLETED;
   }
@@ -258,7 +260,10 @@ export class PeekGoal extends YUKA.Goal<TDMAgent> {
     ag.stateName = 'PEEK';
     ag.stateTime = 0;
     ag.isPeeking = true;
-    // Under pressure: shorter peeks
+    if (ag.currentCover && ag.currentTarget) {
+      const dx = ag.currentTarget.position.x - ag.currentCover.x;
+      ag.botLeanDir = dx > 0 ? 1 : -1;
+    }
     const baseDuration = 0.6 + Math.random() * 0.8;
     this.peekDuration = baseDuration * (1 - ag.pressureLevel * 0.5);
     this.status = YUKA.Goal.STATUS.ACTIVE;
@@ -289,6 +294,7 @@ export class PeekGoal extends YUKA.Goal<TDMAgent> {
   terminate(): void {
     const ag = this.owner;
     ag.isPeeking = false;
+    ag.botLeanDir = 0;
     if (ag.seekB) ag.seekB.weight = 0;
     this.status = YUKA.Goal.STATUS.COMPLETED;
   }

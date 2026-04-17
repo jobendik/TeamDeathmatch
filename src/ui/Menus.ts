@@ -27,7 +27,14 @@ export async function startMatchFromMenu(): Promise<void> {
     const br = await import('@/br/BRController');
     br.cleanupBR();
     resetMatch(mode);
+    const { rollChallenges } = await import('@/ui/Challenges');
+    const { resetMatchMedals } = await import('@/ui/Medals');
+    resetMatchMedals();
+    rollChallenges(3);
   }
+
+  const { rebuildWaypoints } = await import('@/ui/Waypoints');
+  rebuildWaypoints();
 
   setTimeout(() => {
     gameState.renderer?.domElement?.requestPointerLock();

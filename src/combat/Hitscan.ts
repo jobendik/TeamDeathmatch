@@ -6,6 +6,7 @@ import { TEAM_BLUE } from '@/config/constants';
 import { WEAPONS, type WeaponId } from '@/config/weapons';
 import type { TDMAgent } from '@/entities/TDMAgent';
 import { isEnemy } from '@/core/GameModes';
+import { playShot, playImpact, playExplosion } from '@/audio/SoundHooks';
 
 export function hitscanShot(
   origin: THREE.Vector3,
@@ -15,6 +16,7 @@ export function hitscanShot(
   weaponId: WeaponId,
   col: number,
   ownerAgent: TDMAgent | null = ownerType === 'player' ? gameState.player : null,
+  playShotAudio = true,
 ): boolean {
   const wep = WEAPONS[weaponId];
   const { agents, wallMeshes } = gameState;
@@ -55,9 +57,14 @@ export function hitscanShot(
 
   const endPoint = origin.clone().add(dir.clone().normalize().multiplyScalar(hitDist));
   spawnTracer(origin, endPoint, col);
+  if (playShotAudio) {
+    const isPlayerShot = ownerType === 'player';
+    playShot(weaponId, isPlayerShot ? undefined : new THREE.Vector3(origin.x, origin.y, origin.z), isPlayerShot);
+  }
 
   if (hitAgent) {
     let dmg = wep.damage;
+    (hitAgent as any)._lastHitWasHeadshot = isHeadshot;
     if (isHeadshot) dmg *= wep.headshotMult;
     if (wep.range < 40 && hitDist > wep.range * 0.6) dmg *= 0.7;
 
@@ -69,6 +76,7 @@ export function hitscanShot(
 
     const hitCol = hitAgent.team === TEAM_BLUE ? 0x38bdf8 : 0xef4444;
     spawnImpact(endPoint, hitCol, isHeadshot ? 12 : 6);
+    playImpact(endPoint, isHeadshot ? 'headshot' : 'body');
     return true;
   }
 
@@ -76,6 +84,7 @@ export function hitscanShot(
     const normal = wallHits[0].face?.normal || null;
     const worldNormal = normal ? normal.clone().transformDirection(wallHits[0].object.matrixWorld) : null;
     spawnWallSparks(endPoint, worldNormal, 6);
+    playImpact(endPoint, 'wall');
   }
 
   return false;
@@ -90,6 +99,8 @@ export function shotgunBlast(
   ownerAgent: TDMAgent | null = ownerType === 'player' ? gameState.player : null,
 ): void {
   const wep = WEAPONS.shotgun;
+  const isPlayerShot = ownerType === 'player';
+  playShot('shotgun', isPlayerShot ? undefined : new THREE.Vector3(origin.x, origin.y, origin.z), isPlayerShot);
 
   for (let i = 0; i < wep.pellets; i++) {
     const spread = dir.clone();
@@ -97,7 +108,7 @@ export function shotgunBlast(
     spread.y += (Math.random() - 0.5) * wep.aimError * 0.6;
     spread.z += (Math.random() - 0.5) * wep.aimError;
     spread.normalize();
-    hitscanShot(origin, spread, ownerType, ownerTeam, 'shotgun', col, ownerAgent);
+    hitscanShot(origin, spread, ownerType, ownerTeam, 'shotgun', col, ownerAgent, false);
   }
 }
 
@@ -110,6 +121,8 @@ export function spawnRocket(
   ownerAgent: TDMAgent | null = ownerType === 'player' ? gameState.player : null,
 ): void {
   const wep = WEAPONS.rocket_launcher;
+  const isPlayerShot = ownerType === 'player';
+  playShot('rocket_launcher', isPlayerShot ? undefined : new THREE.Vector3(origin.x, origin.y, origin.z), isPlayerShot);
   const mesh = new THREE.Mesh(
     new THREE.CylinderGeometry(0.05, 0.05, 0.3, 6),
     new THREE.MeshStandardMaterial({ color: 0xaa4400, emissive: 0xff6600, emissiveIntensity: 2 }),
@@ -233,6 +246,7 @@ export function updateProjectiles(dt: number): void {
 
 function explode(pos: THREE.Vector3, radius: number, damage: number, ownerAgent: TDMAgent | null): void {
   const { agents } = gameState;
+  playExplosion(pos);
   spawnExplosion(pos, radius);
 
   for (const ag of agents) {

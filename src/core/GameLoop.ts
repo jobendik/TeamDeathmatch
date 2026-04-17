@@ -14,6 +14,8 @@
 
 import * as THREE from 'three';
 import { gameState } from './GameState';
+import { Audio } from '@/audio/AudioManager';
+import { updateHeartbeat } from '@/audio/SoundHooks';
 import { updatePlayer, keepInside } from '@/entities/Player';
 import { updateAI } from '@/ai/AIController';
 import { updateProjectiles } from '@/combat/Hitscan';
@@ -29,7 +31,14 @@ import { updateTabboard, updateScoreboard } from '@/ui/Scoreboard';
 import { updateViewmodel, renderViewmodel } from '@/rendering/WeaponViewmodel';
 import { updateCompass } from '@/ui/Compass';
 import { updateDamageArcs } from '@/ui/DamageArcs';
+import { updateFloatingDamage } from '@/ui/FloatingDamage';
+import { updateAnnouncer } from '@/ui/Announcer';
+import { updateMedalTicker } from '@/ui/Medals';
+import { updatePings } from '@/ui/PingSystem';
 import { updateReloadRing } from '@/ui/ReloadRing';
+import { updateStanceIndicator } from '@/ui/StanceIndicator';
+import { updateWaypoints } from '@/ui/Waypoints';
+import { recordKillcamSnapshot } from '@/ui/Killcam';
 import { getPostFX } from '@/rendering/PostProcess.Bridge';
 
 // Lazy imports — keep BR modules out of the initial bundle cost.
@@ -73,6 +82,13 @@ export function animate(): void {
         updateAI(ag, dt);
       }
     }
+
+    recordKillcamSnapshot();
+    updateHeartbeat(dt);
+
+    const camFwd = new THREE.Vector3();
+    gameState.camera.getWorldDirection(camFwd);
+    Audio.updateListener(gameState.camera.position, camFwd);
 
     updateProjectiles(dt);
     updateParticles(dt);
@@ -128,6 +144,12 @@ export function animate(): void {
     }
 
     updateDamageArcs(dt);
+    updateFloatingDamage(dt);
+    updateAnnouncer(dt);
+    updatePings(dt);
+    updateStanceIndicator();
+    updateWaypoints();
+    updateMedalTicker(dt);
   }
 
   updateHUD();

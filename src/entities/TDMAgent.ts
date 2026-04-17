@@ -102,6 +102,8 @@ export class TDMAgent extends YUKA.Vehicle {
   allyCheckTimer: number;
   stateTime: number;
   isPeeking: boolean;
+  isBotCrouching: boolean;
+  botLeanDir: number;
   peekTimer: number;
   lastAttacker: TDMAgent | null;
   killStreak: number;
@@ -236,6 +238,8 @@ export class TDMAgent extends YUKA.Vehicle {
     this.allyCheckTimer = 0;
     this.stateTime = 0;
     this.isPeeking = false;
+    this.isBotCrouching = false;
+    this.botLeanDir = 0;
     this.peekTimer = 0;
     this.lastAttacker = null;
     this.killStreak = 0;

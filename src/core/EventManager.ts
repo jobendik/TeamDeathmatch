@@ -10,6 +10,9 @@ import { togglePause } from '@/ui/Menus';
 import { isPlayerInAir } from '@/br/DropPlane';
 import { getPlayerInventory, setBRActiveSlotByOrder, syncInventoryFromCombat } from '@/br/InventoryUI';
 import { getAmmoPool } from '@/br/Inventory';
+import { requestJump, toggleCrouch, setCrouch, setLean, attemptSlide } from '@/movement/MovementController';
+import { Audio } from '@/audio/AudioManager';
+import { playEmptyClick, playWeaponSwap } from '@/audio/SoundHooks';
 
 
 function getCameraForward(): THREE.Vector3 {
@@ -80,6 +83,7 @@ function switchWeapon(slot: number): void {
     if (!setBRActiveSlotByOrder(slot)) return;
     gameState.pShootTimer = 0;
     gameState.pBurstCount = 0;
+    playWeaponSwap();
     return;
   }
 
@@ -91,6 +95,8 @@ function switchWeapon(slot: number): void {
   gameState.pMaxAmmo = wep.magSize;
   gameState.pShootTimer = 0;
   gameState.pBurstCount = 0;
+  gameState.pFirstShotReady = true;
+  playWeaponSwap();
 
   setViewmodelWeapon(gameState.pWeaponId, true);
   updateHUD();
@@ -116,14 +122,19 @@ export function onShoot(): void {
     return;
   }
 
-  if (gameState.pAmmo <= 0) { startReload(); return; }
+  if (gameState.pAmmo <= 0) {
+    playEmptyClick();
+    startReload();
+    return;
+  }
 
   const aimPoint = getAimPoint(fwd, Math.max(wep.range, 120));
   const originKind = pWeaponId === 'rocket_launcher' ? 'projectile' : 'hitscan';
   const o = getShotOrigin(originKind);
   const dir = aimPoint.clone().sub(o).normalize();
   const errMul = gameState.isADS ? 0.35 : gameState.keys.shift ? 1.35 : 1.0;
-  const err = wep.aimError * errMul;
+  const firstShotBonus = (gameState.pAmmo === gameState.pMaxAmmo || gameState.pFirstShotReady) ? 0.5 : 1;
+  const err = wep.aimError * errMul * firstShotBonus;
   if (err > 0) {
     dir.x += (Math.random() - 0.5) * err;
     dir.y += (Math.random() - 0.5) * err * 0.5;
@@ -144,6 +155,7 @@ export function onShoot(): void {
   gameState.pAmmo--;
   updateBRAmmoAfterShot();
   gameState.pShootTimer = wep.fireRate;
+  gameState.pFirstShotReady = false;
   updateHUD();
 
   if (gameState.pAmmo <= 0) startReload();
@@ -167,6 +179,7 @@ function throwGrenade(): void {
 }
 
 function requestMouseLock(): void {
+  Audio.resume();
   gameState.renderer?.domElement?.requestPointerLock();
 }
 
@@ -237,9 +250,24 @@ export function bindEvents(): void {
       }
     }
 
-    // Jump (all game modes) — Space triggers a ground jump
+    // Movement keys
     if (k === ' ' && !gameState.pDead) {
-      gameState.pJumpRequested = true;
+      requestJump();
+    }
+    if (k === 'c') {
+      toggleCrouch();
+      if (keys.shift && (keys.w || keys.a || keys.s || keys.d)) attemptSlide();
+    }
+    if (k === 'q') setLean(-1);
+    if (k === 'e') setLean(1);
+    if (k === 'shift' && (keys.w || keys.a || keys.s || keys.d)) {
+      // First press of shift while moving — try slide if already at speed
+      // (real slide is auto when sprint+crouch, but C+Shift triggers it)
+      attemptSlide();
+    }
+    if (k === 'x') {
+      const { fireDeferredPing } = await import('@/ui/PingSystem');
+      fireDeferredPing();
     }
 
     if (k === 'escape') {
@@ -257,6 +285,11 @@ export function bindEvents(): void {
     const k = e.key.toLowerCase();
     if (k in keys) (keys as any)[k] = false;
     if (k === 'tab') keys.tab = false;
+    if (k === 'q' || k === 'e') setLean(0);
+    if (k === 'c') {
+      // Hold-to-crouch: uncomment to make crouch hold-only instead of toggle
+      // setCrouch(false);
+    }
   });
 
   window.addEventListener('resize', () => {
@@ -293,7 +326,10 @@ export function bindEvents(): void {
   });
 
   gameState.renderer.domElement.addEventListener('mouseup', (e) => {
-    if (e.button === 0) gameState.mouseHeld = false;
+    if (e.button === 0) {
+      gameState.mouseHeld = false;
+      gameState.pFirstShotReady = true;
+    }
     if (e.button === 2) gameState.isADS = false;
   });
 

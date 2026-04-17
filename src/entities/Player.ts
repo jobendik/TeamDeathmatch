@@ -15,6 +15,9 @@ import { playerVehicle } from '@/br/Vehicles';
 import { isInventoryOpen, getPlayerInventory, syncInventoryFromCombat } from '@/br/InventoryUI';
 import { consumeAmmo } from '@/br/Inventory';
 import { BR_MAP_MARGIN } from '@/br/BRConfig';
+import { updateMovement, getCameraOffset, getCurrentPlayerHeight, requestJump, toggleCrouch, setLean, attemptSlide, movement } from '@/movement/MovementController';
+import { playHeal } from '@/audio/SoundHooks';
+import { isKillcamActive, updateKillcam } from '@/ui/Killcam';
 
 function collidesPlayer(x: number, z: number): boolean {
   const margin = gameState.mode === 'br' ? BR_MAP_MARGIN : ARENA_MARGIN;
@@ -72,6 +75,10 @@ export function updatePlayer(dt: number): void {
   const { player, keys, pickups } = gameState;
 
   if (gameState.pDead) {
+    if (isKillcamActive()) {
+      if (updateKillcam(dt)) return;
+    }
+
     if (gameState.mode === 'br') {
       dom.dsp.textContent = 'Spectating killer — press ENTER for a new match';
       let target = gameState.spectatorTarget;
@@ -192,30 +199,17 @@ export function updatePlayer(dt: number): void {
     gameState.pShootTimer -= dt;
   }
 
-  // Movement
-  const spd = keys.shift ? FP.sprintSpeed : FP.moveSpeed;
-  const forward = (keys.w ? 1 : 0) - (keys.s ? 1 : 0);
-  const strafe = (keys.d ? 1 : 0) - (keys.a ? 1 : 0);
-  if (forward || strafe) {
-    let mx = (-Math.sin(gameState.cameraYaw)) * forward + (Math.cos(gameState.cameraYaw)) * strafe;
-    let mz = (-Math.cos(gameState.cameraYaw)) * forward + (-Math.sin(gameState.cameraYaw)) * strafe;
-    const len = Math.hypot(mx, mz) || 1;
-    mx /= len;
-    mz /= len;
-    const step = spd * dt;
-    const nx = player.position.x + mx * step;
-    const nz = player.position.z + mz * step;
+  // ── Movement ──
+  const { desiredVelX, desiredVelZ } = updateMovement(dt);
+  if (Math.abs(desiredVelX) > 0.001 || Math.abs(desiredVelZ) > 0.001) {
+    const step = dt;
+    const nx = player.position.x + desiredVelX * step;
+    const nz = player.position.z + desiredVelZ * step;
     if (!collidesPlayer(nx, player.position.z)) player.position.x = nx;
     if (!collidesPlayer(player.position.x, nz)) player.position.z = nz;
   }
 
-  // Jump & gravity
-  const onGround = gameState.pPosY <= 0;
-  if (gameState.pJumpRequested && onGround) {
-    gameState.pVelY = FP.jumpVelocity;
-  }
-  gameState.pJumpRequested = false;
-
+  // Gravity (jump itself is handled inside updateMovement via pVelY)
   gameState.pVelY -= FP.gravity * dt;
   gameState.pPosY += gameState.pVelY * dt;
   if (gameState.pPosY <= 0) {
@@ -238,6 +232,7 @@ export function updatePlayer(dt: number): void {
         player.hp = gameState.pHP;
         updateHUD();
         flashHeal();
+        playHeal();
       } else if (pk.t === 'ammo' && !isUnarmed && gameState.pAmmo < gameState.pMaxAmmo) {
         pk.active = false;
         pk.mesh.visible = pk.ring.visible = false;
@@ -279,6 +274,7 @@ export function updatePlayer(dt: number): void {
         setViewmodelWeapon(wepId, true);
         updateHUD();
         flashHeal();
+        playHeal();
       }
     }
   }
@@ -301,7 +297,14 @@ export function updatePlayer(dt: number): void {
   }
 
   // Camera
-  gameState.camera.position.set(player.position.x, gameState.pPosY + FP.height, player.position.z);
+  const ofs = getCameraOffset();
+  const camHeight = getCurrentPlayerHeight();
+  gameState.camera.position.set(
+    player.position.x + Math.cos(gameState.cameraYaw) * ofs.x,
+    gameState.pPosY + camHeight + ofs.y,
+    player.position.z - Math.sin(gameState.cameraYaw) * ofs.x,
+  );
   gameState.camera.rotation.y = gameState.cameraYaw;
   gameState.camera.rotation.x = gameState.cameraPitch;
+  gameState.camera.rotation.z = ofs.tilt;
 }

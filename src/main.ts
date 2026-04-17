@@ -1,5 +1,6 @@
 import '@/styles/index.css';
 
+import { Audio } from '@/audio/AudioManager';
 import { initScene } from '@/core/SceneSetup';
 import { bindEvents } from '@/core/EventManager';
 import { animate } from '@/core/GameLoop';
@@ -18,6 +19,7 @@ import { setPostFX } from '@/rendering/PostProcess.Bridge';
 
 async function init(): Promise<void> {
   initScene();
+  Audio.init();
   buildLights();
   buildArena();
   buildCoverPoints();

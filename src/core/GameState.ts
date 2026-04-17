@@ -184,6 +184,7 @@ export const gameState = {
   pShootTimer: 0,
   pBurstCount: 0,
   pBurstTimer: 0,
+  pFirstShotReady: true,
 
   // Camera / input
   mouseLocked: false,

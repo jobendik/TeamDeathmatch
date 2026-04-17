@@ -46,6 +46,10 @@ const VM_LAYOUTS: Record<WeaponId, VMLayout> = {
   rocket_launcher: { pos: [0.14, -0.13, -0.20], rot: [0, 0, 0], scale: 1.2, muzzleOffset: [0, 0.000, -0.18], recoilZ: 0.050, recoilUp: 0.030, recoilRot: 0.12 },
 };
 
+const ADS_LAYOUTS: Partial<Record<WeaponId, VMLayout>> = {
+  // Empty for now — ADS just centers each weapon. Customize per weapon if needed.
+};
+
 let recoilZ = 0;
 let recoilUp = 0;
 let recoilRot = 0;
@@ -1493,10 +1497,22 @@ export function updateViewmodel(dt: number): void {
   const reloadDrop = reloadLerp * 0.08;
   const reloadTilt = reloadLerp * 0.6;
 
+  // ── ADS interpolation ──
+  const adsTarget = gameState.isADS ? 1 : 0;
+  gameState.adsAmount = gameState.adsAmount ?? 0;
+  gameState.adsAmount += (adsTarget - gameState.adsAmount) * Math.min(1, dt * 12);
+
+  const adsLayout = ADS_LAYOUTS[currentWeaponId] ?? layout;
+  const adsLerp = gameState.adsAmount;
+
+  const finalPosX = THREE.MathUtils.lerp(layout.pos[0], adsLayout.pos[0] ?? 0, adsLerp);
+  const finalPosY = THREE.MathUtils.lerp(layout.pos[1], adsLayout.pos[1] ?? -0.05, adsLerp);
+  const finalPosZ = THREE.MathUtils.lerp(layout.pos[2], adsLayout.pos[2] ?? -0.30, adsLerp);
+
   vmGroup.position.set(
-    layout.pos[0] + bobX + swayX + sprintLerp * 0.04,
-    layout.pos[1] + bobY + swayY + recoilUp - switchDrop - reloadDrop,
-    layout.pos[2] + recoilZ + switchDrop * 0.5,
+    finalPosX + bobX * (1 - adsLerp) + swayX * (1 - adsLerp * 0.7) + sprintLerp * 0.04,
+    finalPosY + bobY * (1 - adsLerp) + swayY * (1 - adsLerp * 0.7) + recoilUp - switchDrop - reloadDrop,
+    finalPosZ + recoilZ + switchDrop * 0.5,
   );
 
   vmGroup.rotation.set(

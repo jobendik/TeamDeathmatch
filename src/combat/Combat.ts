@@ -4,6 +4,9 @@ import {
   TEAM_BLUE, TEAM_RED, TEAM_COLORS,
   RESPAWN_TIME, BLUE_SPAWNS, RED_SPAWNS,
 } from '@/config/constants';
+import { spawnDamageNumber } from '@/ui/FloatingDamage';
+import { onPlayerKill, onPlayerDeath } from '@/ui/Medals';
+import { fireChallengeEvent } from '@/ui/Challenges';
 import type { TDMAgent } from '@/entities/TDMAgent';
 import { spawnDeath } from './Particles';
 import { updateHUD, flashDmg } from '@/ui/HUD';
@@ -27,6 +30,8 @@ import { showDamageArc } from '@/ui/DamageArcs';
 import { getPostFX } from '@/rendering/PostProcess.Bridge';
 import { setViewmodelWeapon } from '@/rendering/WeaponViewmodel';
 import { isPlayerInAir } from '@/br/DropPlane';
+import { playHitTaken, playHeal } from '@/audio/SoundHooks';
+import { startKillcam } from '@/ui/Killcam';
 
 function applyWeaponToAgent(ag: TDMAgent, weaponId: WeaponId): void {
   const def = WEAPONS[weaponId];
@@ -91,7 +96,14 @@ export function dealDmgPlayer(dmg: number, attacker: TDMAgent | null = null): vo
   gameState.player.hp = gameState.pHP;
   updateHUD();
   flashDmg();
-
+  playHitTaken();
+  
+if (attacker) {
+  spawnDamageNumber(
+    new THREE.Vector3(gameState.player.position.x, 1.5, gameState.player.position.z),
+    { amount: dmg, isHeadshot: false },
+  );
+}
   if (attacker) showDamageArc(attacker.position.x, attacker.position.z);
   getPostFX()?.triggerHit(Math.min(1, dmg / 30) * 0.7);
 
@@ -100,6 +112,9 @@ export function dealDmgPlayer(dmg: number, attacker: TDMAgent | null = null): vo
 
 function playerDied(attacker: TDMAgent | null): void {
   gameState.pDead = true;
+  if (attacker && gameState.mode !== 'br') {
+    startKillcam(attacker);
+  }
   gameState.player.isDead = true;
   gameState.respTimer = RESPAWN_TIME;
   dom.ds.classList.add('on');
@@ -130,7 +145,7 @@ function playerDied(attacker: TDMAgent | null): void {
   } else if ((gameState.mode === 'ffa') && attacker) {
     attacker.kills++;
   }
-
+onPlayerDeath(attacker);
   addKillfeedEntry(
     attacker ? attacker.name : 'Enemy',
     'Player',
@@ -156,6 +171,12 @@ export function dealDmgAgent(ag: TDMAgent, dmg: number, attacker: TDMAgent | nul
   // Hit marker when the player scores a hit
   if (attacker === gameState.player) {
     showHitMarker(false);
+  }
+  if (attacker === gameState.player) {
+    spawnDamageNumber(
+      new THREE.Vector3(ag.position.x, 1.5, ag.position.z),
+      { amount: dmg, isHeadshot: false },
+    );
   }
 
   if (ag.hp <= 0) killAgent(ag, attacker);
@@ -199,13 +220,30 @@ function killAgent(ag: TDMAgent, attacker: TDMAgent | null): void {
     updateScoreboard();
   }
 
+  const wasHeadshot = Boolean((ag as any)._lastHitWasHeadshot);
+  delete (ag as any)._lastHitWasHeadshot;
+
   if (attacker === gameState.player) {
     gameState.pKills++;
     if (dom.killTxt) dom.killTxt.textContent = String(gameState.pKills);
     showKillNotif(ag.name, ag.team);
     showKillMarker();
   }
+  if (attacker === gameState.player) {
+    const distance = attacker.position.distanceTo(ag.position);
+    onPlayerKill(ag, distance, attacker.weaponId, wasHeadshot);
+    fireChallengeEvent({
+      type: 'kill',
+      headshot: wasHeadshot,
+      distance,
+      weaponId: attacker.weaponId,
+    });
 
+    spawnDamageNumber(
+      new THREE.Vector3(ag.position.x, 1.8, ag.position.z),
+      { amount: 0, isKill: true },
+    );
+  }
   addKillfeedEntry(
     attacker ? attacker.name : 'Unknown',
     ag.name,

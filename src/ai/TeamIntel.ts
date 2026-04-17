@@ -1,7 +1,9 @@
 import * as YUKA from 'yuka';
+import * as THREE from 'three';
 import { gameState } from '@/core/GameState';
 import type { TDMAgent } from '@/entities/TDMAgent';
 import { TEAM_BLUE, TEAM_RED, type TeamId } from '@/config/constants';
+import { playBotCallout } from '@/audio/SoundHooks';
 
 /**
  * A pending callout — a spotter saw an enemy and will tell the team
@@ -83,6 +85,7 @@ export function deliverPendingCallouts(): void {
   for (let i = pending.length - 1; i >= 0; i--) {
     const c = pending[i];
     if (now < c.reportedAtTime) continue;
+    let playedSpottedCallout = false;
 
     // Dead spotter → callout doesn't go through (they died mid-call)
     if (c.spotter.isDead) {
@@ -117,6 +120,14 @@ export function deliverPendingCallouts(): void {
       if (!ally.teamCallout) ally.teamCallout = new YUKA.Vector3();
       ally.teamCallout.copy(c.reportedPos);
       ally.teamCalloutTime = now;
+
+      if (!playedSpottedCallout && ally !== gameState.player) {
+        const distToPlayer = ally.position.distanceTo(gameState.player.position);
+        if (distToPlayer < 30 && Math.random() < 0.4) {
+          playBotCallout('spotted', new THREE.Vector3(ally.position.x, 1.6, ally.position.z));
+          playedSpottedCallout = true;
+        }
+      }
 
       // Alert bump — bigger for tunnel-visioned personalities receiving fresh info
       const alertBump = 18 + (1 - (ally.personality?.tunnelVision ?? 0.5)) * 12;
