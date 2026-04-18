@@ -1,7 +1,9 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { gameState } from '@/core/GameState';
-import { WEAPONS, type WeaponId } from '@/config/weapons';
+import { WEAPONS, GRENADE_CONFIG, type WeaponId } from '@/config/weapons';
+import { applyWeaponToAgent } from './Combat';
+import { setViewmodelWeapon } from '@/rendering/WeaponViewmodel';
 
 const BASE_URL = import.meta.env.BASE_URL;
 
@@ -224,7 +226,7 @@ export function updatePickups(): void {
       const dx = player.position.x - p.x;
       const dz = player.position.z - p.z;
       if (dx * dx + dz * dz < 2.5 * 2.5) {
-        if (p.t === 'health' && gameState.pHP < 100 * 0.7) {
+        if (p.t === 'health' && gameState.pHP < player.maxHP * 0.7) {
           p.active = false;
           p.mesh.visible = p.ring.visible = false;
           p.respawnAt = worldElapsed + 15;
@@ -235,11 +237,23 @@ export function updatePickups(): void {
           p.mesh.visible = p.ring.visible = false;
           p.respawnAt = worldElapsed + 12;
           gameState.pAmmo = gameState.pMaxAmmo;
-        } else if (p.t === 'grenade' && gameState.pGrenades < 3) {
+        } else if (p.t === 'grenade' && gameState.pGrenades < GRENADE_CONFIG.maxGrenades) {
           p.active = false;
           p.mesh.visible = p.ring.visible = false;
           p.respawnAt = worldElapsed + 10;
-          gameState.pGrenades = Math.min(3, gameState.pGrenades + 1);
+          gameState.pGrenades = Math.min(GRENADE_CONFIG.maxGrenades, gameState.pGrenades + 1);
+        } else if (p.t === 'weapon' && p.weaponId && p.weaponId !== gameState.pWeaponId) {
+          const newWep = WEAPONS[p.weaponId];
+          const curWep = WEAPONS[gameState.pWeaponId];
+          if (newWep.desirability > curWep.desirability || gameState.pAmmo <= 0) {
+            p.active = false;
+            p.mesh.visible = p.ring.visible = false;
+            p.respawnAt = worldElapsed + 25;
+            gameState.pWeaponId = p.weaponId;
+            gameState.pAmmo = newWep.magSize;
+            gameState.pMaxAmmo = newWep.magSize;
+            setViewmodelWeapon(p.weaponId);
+          }
         }
       }
     }
@@ -259,11 +273,11 @@ export function updatePickups(): void {
           p.mesh.visible = p.ring.visible = false;
           p.respawnAt = worldElapsed + 12;
           ag.ammo = ag.magSize;
-        } else if (p.t === 'grenade' && ag.grenades < 3) {
+        } else if (p.t === 'grenade' && ag.grenades < GRENADE_CONFIG.maxGrenades) {
           p.active = false;
           p.mesh.visible = p.ring.visible = false;
           p.respawnAt = worldElapsed + 10;
-          ag.grenades = Math.min(3, ag.grenades + 1);
+          ag.grenades = Math.min(GRENADE_CONFIG.maxGrenades, ag.grenades + 1);
         } else if (p.t === 'weapon' && p.weaponId) {
           const newWep = WEAPONS[p.weaponId];
           const curWep = WEAPONS[ag.weaponId];
@@ -273,15 +287,7 @@ export function updatePickups(): void {
             p.active = false;
             p.mesh.visible = p.ring.visible = false;
             p.respawnAt = worldElapsed + 25;
-            ag.weaponId = p.weaponId;
-            ag.damage = newWep.damage;
-            ag.fireRate = newWep.fireRate;
-            ag.burstSize = newWep.burstSize;
-            ag.burstDelay = newWep.burstDelay;
-            ag.reloadTime = newWep.reloadTime;
-            ag.magSize = newWep.magSize;
-            ag.ammo = newWep.magSize;
-            ag.aimError = newWep.aimError;
+            applyWeaponToAgent(ag, p.weaponId);
           }
         }
       }

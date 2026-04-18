@@ -323,12 +323,12 @@ function resolveLootVisual(items: InventoryItem[]): LootVisualKey {
   const weapon = items.find((it) => it.category === 'weapon');
   if (weapon) return resolveWeaponVisual(weapon.weaponId as WeaponId | undefined);
   if (items.some((it) => it.category === 'grenade')) return 'grenade';
-  if (items.some((it) => it.id === 'arm_b')) return 'armor_vest';
-  if (items.some((it) => it.id === 'arm_s')) return 'armor_plate';
-  if (items.some((it) => it.id === 'sh_b')) return 'shield_potion';
-  if (items.some((it) => it.id === 'sh_s')) return 'mini_shield';
-  if (items.some((it) => it.id === 'heal_b')) return 'healthkit';
-  if (items.some((it) => it.id === 'heal_s')) return 'bandage';
+  if (items.some((it) => it.id === 'arm_b' || it.id === 'armor_big')) return 'armor_vest';
+  if (items.some((it) => it.id === 'arm_s' || it.id === 'armor_small')) return 'armor_plate';
+  if (items.some((it) => it.id === 'sh_b' || it.id === 'shield_big')) return 'shield_potion';
+  if (items.some((it) => it.id === 'sh_s' || it.id === 'shield_small')) return 'mini_shield';
+  if (items.some((it) => it.id === 'heal_b' || it.id === 'heal_big')) return 'healthkit';
+  if (items.some((it) => it.id === 'heal_s' || it.id === 'heal_small')) return 'bandage';
   return 'ammo_crate';
 }
 
@@ -571,4 +571,9 @@ export function clearAllLoot(): void {
     gameState.scene.remove(beamInstances);
     beamInstances = null;
   }
+
+  _poolReady = false;
+  _visualsReady = false;
+  _preloadPromise = null;
+  _freeInstanceSlots = [];
 }

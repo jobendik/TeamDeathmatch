@@ -122,7 +122,8 @@ export function onPlayerKill(victim: TDMAgent, distance: number, weaponId: strin
   }
 
   // Revenge — victim was our last killer within 30s
-  if (matchState.lastKilledBy === victim && now - (gameState as any)._lastPlayerDeathTime < 30) {
+  const lastDeathTime = (gameState as any)._lastPlayerDeathTime;
+  if (matchState.lastKilledBy === victim && typeof lastDeathTime === 'number' && now - lastDeathTime < 30) {
     awardMedal('revenge');
     matchState.lastKilledBy = null;
   }

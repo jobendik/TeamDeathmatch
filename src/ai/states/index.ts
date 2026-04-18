@@ -36,7 +36,6 @@ export class EngageState extends YUKA.State<TDMAgent> {
   enter(ag: TDMAgent): void {
     ag.stateName = 'ENGAGE';
     ag.stateTime = 0;
-    ag.combatMoveTimer = 0;
   }
   execute(ag: TDMAgent): void {
     if (ag.wanderB) ag.wanderB.weight = 0;

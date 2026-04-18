@@ -465,6 +465,8 @@ function pickDirectionalSet(
   const f = Math.abs(forward) < 0.2 ? 0 : (forward > 0 ? 1 : -1);
   const r = Math.abs(right) < 0.2 ? 0 : (right > 0 ? 1 : -1);
 
+  if (f === 0 && r === 0) return `${prefix}Forward` as AgentAnimKey;
+
   if (prefix === 'crouchWalk') {
     if (f === 1 && r === -1) return 'crouchWalkForwardLeft';
     if (f === 1 && r === 1) return 'crouchWalkForwardRight';

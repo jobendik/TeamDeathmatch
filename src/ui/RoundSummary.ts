@@ -10,7 +10,9 @@ import { clearFloatingDamage } from './FloatingDamage';
 import { clearAnnouncer } from './Announcer';
 import { getPotgAgent, resetPotg } from '@/combat/Combat';
 import { startPotgReplay, stopPotgReplay } from './Killcam';
-import { stopDynamicMusic } from '@/audio/DynamicMusic';
+import { rebuildWaypoints } from './Waypoints';
+import { clearPings } from './PingSystem';
+import { startDynamicMusic, stopDynamicMusic } from '@/audio/DynamicMusic';
 import { Audio } from '@/audio/AudioManager';
 
 interface PlayerStats {
@@ -114,7 +116,7 @@ export function showRoundSummary(winnerTeam: number): void {
   }
 
   // ── XP / Level-up panel ──
-  const xpPct = (prog.xp / (prog.level * XP_PER_LEVEL)) * 100;
+  const endPct = leveledUp ? 100 : (prog.xp / (prog.level * XP_PER_LEVEL)) * 100;
   const startPct = (startXP / (startLevel * XP_PER_LEVEL)) * 100;
 
   dom.rsMvp.innerHTML = `
@@ -145,7 +147,7 @@ export function showRoundSummary(winnerTeam: number): void {
   _xpTO = setTimeout(() => {
     const bar = document.getElementById('progBarNew');
     const text = document.getElementById('progXpCount');
-    if (bar) bar.style.width = `${xpPct}%`;
+    if (bar) bar.style.width = `${endPct}%`;
     if (text) {
       const start = performance.now();
       const dur = 1200;
@@ -252,6 +254,10 @@ export function showRoundSummary(winnerTeam: number): void {
     clearChallenges();
     rollChallenges(3);
     resetMatch(gameState.mode);
+    rebuildWaypoints();
+    startDynamicMusic();
+    Audio.startEnvironmentAmbience();
+    clearPings();
     updateScoreboard();
     updateHUD();
     dom.roundSummary.classList.remove('on');

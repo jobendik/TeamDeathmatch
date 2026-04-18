@@ -307,7 +307,7 @@ export function updateVehicles(dt: number): void {
           hit = dx * dx + dz * dz < (c.r + 1.5) * (c.r + 1.5);
         }
         if (hit) {
-          v.position.sub(v.velocity.clone().multiplyScalar(dt * 1.5));
+          v.position.sub(v.velocity.clone().multiplyScalar(dt));
           v.speed *= -0.3;
           break;
         }

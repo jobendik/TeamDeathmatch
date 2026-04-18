@@ -1,6 +1,5 @@
 import { gameState } from '@/core/GameState';
 import { dom } from '@/ui/DOMElements';
-import { WEAPONS } from '@/config/weapons';
 
 /**
  * Scorestreak reward system — grants tangible gameplay effects
@@ -21,7 +20,6 @@ export interface StreakState {
   armorBoosted: boolean;
   rapidFireActive: boolean;
   rapidFireExpiry: number;
-  rapidFireOrigRate: number;
   juggernautActive: boolean;
   empActive: boolean;
   empExpiry: number;
@@ -33,7 +31,6 @@ const streak: StreakState = {
   armorBoosted: false,
   rapidFireActive: false,
   rapidFireExpiry: 0,
-  rapidFireOrigRate: 0,
   juggernautActive: false,
   empActive: false,
   empExpiry: 0,
@@ -77,8 +74,6 @@ function activateArmorBoost(): void {
 // ═══════════════════════════════════════════
 function activateRapidFire(): void {
   if (streak.rapidFireActive) return; // don't stack
-  const wep = WEAPONS[gameState.pWeaponId];
-  streak.rapidFireOrigRate = wep.fireRate;
   streak.rapidFireActive = true;
   streak.rapidFireExpiry = gameState.worldElapsed + 10;
   showStreakRewardNotif('⚡', 'RAPID FIRE', '20% faster fire rate for 10s');
@@ -157,7 +152,6 @@ export function clearStreaks(): void {
   streak.armorBoosted = false;
   streak.rapidFireActive = false;
   streak.rapidFireExpiry = 0;
-  streak.rapidFireOrigRate = 0;
   streak.juggernautActive = false;
   streak.empActive = false;
   streak.empExpiry = 0;

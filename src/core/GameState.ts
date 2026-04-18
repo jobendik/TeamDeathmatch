@@ -118,8 +118,6 @@ export const gameState = {
   entityManager: null as unknown as YUKA.EntityManager,
 
   // Viewmodel
-  vmScene: null as THREE.Scene | null,
-  vmCamera: null as THREE.PerspectiveCamera | null,
 
   // World elapsed time (only advances when unpaused)
   worldElapsed: 0,
@@ -224,7 +222,6 @@ export const gameState = {
   // Jump state
   pPosY: 0,
   pVelY: 0,
-  pJumpRequested: false,
   recoilRecoveryPitch: 0,
   recoilRecoveryYaw: 0,
 
@@ -234,7 +231,6 @@ export const gameState = {
   overtime: false,
   warmupTimer: 0,
   killfeedEntries: [] as KillfeedEntry[],
-  winnerText: '',
 
   // BR spectator
   spectatorTarget: null as TDMAgent | null,

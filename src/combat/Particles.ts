@@ -529,11 +529,13 @@ export function updateParticles(dt: number): void {
     if (p.life <= 0) {
       if ((p as any)._pool) {
         if (!returnMesh((p as any)._pool, p.mesh)) {
-          // Overflow mesh not from pool — dispose its cloned material and remove
+          // Overflow mesh not from pool — dispose its cloned material/geometry and remove
+          p.mesh.geometry.dispose();
           (p.mesh.material as THREE.Material).dispose();
           scene.remove(p.mesh);
         }
       } else {
+        p.mesh.geometry.dispose();
         (p.mesh.material as THREE.Material).dispose();
         scene.remove(p.mesh);
       }

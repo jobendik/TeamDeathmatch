@@ -18,6 +18,8 @@ import { FP } from '@/config/player';
 import { WEAPONS } from '@/config/weapons';
 import { playJump, playLand, playSlide, playFootstep, detectSurface } from '@/audio/SoundHooks';
 import { dealDmgPlayer } from '@/combat/Combat';
+import { getFloorY } from '@/entities/Player';
+import { shakeOnLand } from '@/movement/CameraShake';
 
 export interface MovementState {
   isCrouching: boolean;
@@ -163,6 +165,7 @@ function endSlide(): void {
   movement.isSliding = false;
   movement.slideTimer = 0;
   movement.slideCooldown = 1.2;
+  movement.isCrouching = false;
 }
 
 /**
@@ -212,7 +215,6 @@ function tryMantle(): number | null {
 
 // ── Input handlers ──
 
-let lastJumpTime = -1;
 let mantleTarget: { x: number; y: number; z: number; t: number } | null = null;
 
 export function setLean(dir: -1 | 0 | 1): void {
@@ -373,10 +375,12 @@ export function updateMovement(dt: number): {
   }
 
   // ── Landing detection ──
-  if (!movement.isGrounded && gameState.pPosY <= 0.001) {
+  const floorY = getFloorY(gameState.player.position.x, gameState.player.position.z);
+  if (!movement.isGrounded && gameState.pPosY <= floorY + 0.001) {
     const fallDist = movement.fallStartY - gameState.pPosY;
     const intensity = Math.min(1, fallDist / 6);
     playLand(intensity);
+    shakeOnLand(fallDist);
     if (fallDist > 4) {
       // Hard landing — camera punch downward
       gameState.cameraPitch -= intensity * 0.06;
@@ -389,7 +393,7 @@ export function updateMovement(dt: number): {
     movement.airTime = 0;
   }
 
-  if (gameState.pPosY > 0.05) {
+  if (gameState.pPosY > floorY + 0.05) {
     if (movement.isGrounded) movement.fallStartY = gameState.pPosY;
     movement.isGrounded = false;
     movement.airTime += dt;

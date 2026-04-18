@@ -30,9 +30,6 @@ export function isEnemy(a: TDMAgent, b: TDMAgent): boolean {
   if (a === b) return false;
   if (a.isDead || b.isDead) return false;
   if (isFreeForAll()) return true;
-  if (gameState.mode === 'elimination') {
-    return a.team !== b.team;
-  }
   return a.team !== b.team;
 }
 

@@ -3,7 +3,7 @@ import { gameState } from './GameState';
 import { FP } from '@/config/player';
 import { dom } from '@/ui/DOMElements';
 import { getStreakFireRateMult } from '@/combat/Streaks';
-import { WEAPONS } from '@/config/weapons';
+import { WEAPONS, GRENADE_CONFIG } from '@/config/weapons';
 import { hitscanShot, shotgunBlast, spawnRocket, spawnGrenade } from '@/combat/Hitscan';
 import { updateHUD, flashCrosshairFire } from '@/ui/HUD';
 import { fireViewmodel, setViewmodelWeapon, resizeViewmodel } from '@/rendering/WeaponViewmodel';
@@ -11,11 +11,12 @@ import { togglePause } from '@/ui/Menus';
 import { isPlayerInAir, drop, playerJumpFromPlane, deployParachute } from '@/br/DropPlane';
 import { getPlayerInventory, setBRActiveSlotByOrder, syncInventoryFromCombat, toggleInventory, pickupNearestLoot, isInventoryOpen, closeInventory } from '@/br/InventoryUI';
 import { getAmmoPool, getAttachmentModifiers } from '@/br/Inventory';
-import { requestJump, toggleCrouch, setCrouch, setLean, attemptSlide, movement } from '@/movement/MovementController';
+import { requestJump, toggleCrouch, setLean, attemptSlide, movement } from '@/movement/MovementController';
 import { Audio } from '@/audio/AudioManager';
 import { playEmptyClick, playWeaponSwap } from '@/audio/SoundHooks';
 import { applyPlayerRecoil } from '@/combat/Recoil';
 import { getSuppressionSpreadMul } from '@/combat/Suppression';
+import { shakeOnShot } from '@/movement/CameraShake';
 import { startBRMatch } from '@/br/BRController';
 import { playerVehicle, exitVehicle, findNearbyVehicle, enterVehicle } from '@/br/Vehicles';
 import { fireDeferredPing } from '@/ui/PingSystem';
@@ -38,10 +39,10 @@ const defaultKeyMap: Record<ActionKey, string> = {
 let keyMap: Record<ActionKey, string> = { ...defaultKeyMap };
 
 /** Get the current key mapping */
-export function getKeyMap(): Record<ActionKey, string> { return { ...keyMap }; }
+function getKeyMap(): Record<ActionKey, string> { return { ...keyMap }; }
 
 /** Set a keybind */
-export function setKeybind(action: ActionKey, key: string): void {
+function setKeybind(action: ActionKey, key: string): void {
   keyMap[action] = key.toLowerCase();
   try { localStorage.setItem('warzone_keybinds', JSON.stringify(keyMap)); } catch { /* ignore */ }
 }
@@ -225,10 +226,10 @@ export function onShoot(): void {
   }
 
   applyPlayerRecoil(pWeaponId);
-  (gameState as any)._lastShotTime = gameState.worldElapsed;
 
   fireViewmodel();
   flashCrosshairFire();
+  shakeOnShot(wep.damage / 100);
   gameState.pAmmo--;
   gameState.pShotsFired++;
   updateBRAmmoAfterShot();
@@ -241,7 +242,9 @@ export function onShoot(): void {
 
 function startCookGrenade(): void {
   if (gameState.pDead) return;
-  if (gameState.pGrenades <= 0) return;
+  const gType = gameState.pGrenadeType;
+  const available = gType === 'smoke' ? gameState.pSmokes : gType === 'flash' ? gameState.pFlashbangs : gameState.pGrenades;
+  if (available <= 0) return;
   if (gameState.pGrenadeCooldown > 0) return;
   if (gameState.pCookingGrenade) return;
   if (isPlayerInAir()) return;
@@ -265,7 +268,7 @@ export function releaseGrenade(): void {
   else if (gType === 'flash') gameState.pFlashbangs--;
   else gameState.pGrenades--;
   syncInventoryFromCombat();
-  gameState.pGrenadeCooldown = 1.0;
+  gameState.pGrenadeCooldown = GRENADE_CONFIG.cooldown;
   gameState.pCookTimer = 0;
   updateHUD();
 }

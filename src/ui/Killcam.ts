@@ -1,7 +1,6 @@
 import * as THREE from 'three';
 import { gameState } from '@/core/GameState';
 import type { TDMAgent } from '@/entities/TDMAgent';
-import { dom } from './DOMElements';
 
 interface CamSnapshot {
   pos: THREE.Vector3;
@@ -18,9 +17,6 @@ let killcamStart = 0;
 let killcamDuration = 3.2;
 let killcamTarget: TDMAgent | null = null;
 let killcamEl: HTMLDivElement | null = null;
-
-let savedCamPos = new THREE.Vector3();
-let savedCamRot = new THREE.Euler();
 
 function ensureUI(): HTMLDivElement {
   if (killcamEl) return killcamEl;
@@ -85,9 +81,6 @@ export function startKillcam(killer: TDMAgent | null): void {
   const nameEl = document.getElementById('kcKiller');
   if (nameEl) nameEl.textContent = `KILLED BY ${killer.name.toUpperCase()}`;
 
-  // Save current camera state to restore later
-  savedCamPos.copy(gameState.camera.position);
-  savedCamRot.copy(gameState.camera.rotation);
 }
 
 export function stopKillcam(): void {

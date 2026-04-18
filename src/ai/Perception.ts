@@ -104,7 +104,7 @@ export function decayEnemyMemory(ag: TDMAgent, dt: number): void {
  * Legacy broadcast — kept as a fallback but AIController now uses queueCallout
  * from TeamIntel.ts. This function still exists for any code that imports it.
  */
-export function broadcastEnemyPosition(spotter: TDMAgent, enemy: TDMAgent): void {
+function broadcastEnemyPosition(spotter: TDMAgent, enemy: TDMAgent): void {
   // Delegation preserved for compatibility but AIController queues via TeamIntel directly.
   // We still update spotter's own memory from visual source.
   updateEnemyMemory(spotter, enemy, 'visual');

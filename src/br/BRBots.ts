@@ -53,7 +53,7 @@ import { buildingGrid, getBRMapData } from './BRMap';
 import { findCoverFrom, pushOutOfWall } from '@/ai/CoverSystem';
 import {
   findNearbyFight, decideEngagement, shouldHealUp, doHealUp,
-  findEndgameHold, winProbability,
+  findEndgameHold,
 } from './BRBrain';
 
 export const botGrid = new SpatialGrid<TDMAgent>();

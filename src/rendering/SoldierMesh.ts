@@ -10,7 +10,7 @@ export function buildSoldierMesh(color: number, botClass: BotClass, team: TeamId
   const g = new THREE.Group();
   const teamDark = team === TEAM_BLUE ? 0x0a2a4a : 0x3a0a0a;
   const mat = new THREE.MeshStandardMaterial({
-    color, roughness: 0.3, metalness: 0.3, emissive: color, emissiveIntensity: 0.15,
+    color, roughness: 0.3, metalness: 0.3, emissive: color,
   });
   const darkMat = new THREE.MeshStandardMaterial({ color: teamDark, roughness: 0.6, metalness: 0.2 });
   const isEnemy = team !== TEAM_BLUE;

@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { gameState } from '@/core/GameState';
 import {
   TEAM_BLUE, TEAM_RED, TEAM_COLORS,
-  RESPAWN_TIME, BLUE_SPAWNS, RED_SPAWNS,
+  RESPAWN_TIME,
 } from '@/config/constants';
 import { spawnDamageNumber } from '@/ui/FloatingDamage';
 import { onPlayerKill, onPlayerDeath } from '@/ui/Medals';
@@ -34,12 +34,14 @@ import { getPostFX } from '@/rendering/PostProcess.Bridge';
 import { setViewmodelWeapon, playViewmodelHit } from '@/rendering/WeaponViewmodel';
 import { isPlayerInAir } from '@/br/DropPlane';
 import { onBRDeath } from '@/br/BRController';
-import { playHitTaken, playHeal, playKillConfirmed } from '@/audio/SoundHooks';
+import { playHitTaken, playKillConfirmed } from '@/audio/SoundHooks';
 import { startKillcam, clearKillcamSnapshots } from '@/ui/Killcam';
 import { checkStreakReward, clearStreaks } from './Streaks';
 import { resetHitscanState } from './Hitscan';
+import { clearFootstepTimers } from '@/ai/AIController';
 import { movement } from '@/movement/MovementController';
 import { applyRandomWeather } from '@/world/Lights';
+import { shakeOnHit, shakeOnDeath, clearAllShake } from '@/movement/CameraShake';
 
 const STREAK_NAMES: Record<number, string> = {
   3: 'KILLING SPREE',
@@ -103,7 +105,7 @@ function trackPotgKill(killer: TDMAgent): void {
 }
 
 export function getPotgAgent(): TDMAgent | null { return gameState.potgBestAgent; }
-export function getPotgTime(): number { return gameState.potgBestTime; }
+function getPotgTime(): number { return gameState.potgBestTime; }
 export function resetPotg(): void { potgKillTimes.clear(); gameState.potgBestScore = 0; gameState.potgBestAgent = null; gameState.potgBestTime = 0; }
 
 function showStreakBanner(streak: number): void {
@@ -117,7 +119,7 @@ function showStreakBanner(streak: number): void {
   _streakTimeout = window.setTimeout(() => el.classList.remove('on'), 2500);
 }
 
-function applyWeaponToAgent(ag: TDMAgent, weaponId: WeaponId): void {
+export function applyWeaponToAgent(ag: TDMAgent, weaponId: WeaponId): void {
   const def = WEAPONS[weaponId];
   ag.weaponId = weaponId;
   ag.damage = def.damage;
@@ -206,6 +208,7 @@ if (attacker) {
   }
   getPostFX()?.triggerHit(Math.min(1, dmg / 30) * 0.7);
   gameState.pLastDamageTime = gameState.worldElapsed;
+  shakeOnHit(dmg / 100);
 
   // Aim punch — camera kick proportional to damage
   const punchScale = Math.min(1, dmg / 60);
@@ -236,6 +239,7 @@ function playerDied(attacker: TDMAgent | null): void {
   gameState.pDead = true;
   gameState.pDBNO = false;
   gameState.deathTime = gameState.worldElapsed;
+  shakeOnDeath();
   flushAssists(gameState.player, attacker);
   if (attacker && gameState.mode !== 'br') {
     startKillcam(attacker);
@@ -529,6 +533,7 @@ function checkEliminationEnd(): void {
 
 function startEliminationRound(): void {
   gameState.eliminationRound++;
+  clearAllShake();
 
   if (gameState.pDead) {
     gameState.pDead = false;
@@ -544,6 +549,8 @@ function startEliminationRound(): void {
   gameState.player.hp = 100;
   applyPlayerLoadoutForMode();
   gameState.pGrenades = 2;
+  gameState.pSmokes = 1;
+  gameState.pFlashbangs = 1;
   gameState.pReloading = false;
   dom.reloadBar.classList.remove('on');
   dom.reloadText.classList.remove('on');
@@ -586,7 +593,6 @@ function checkGameEnd(): void {
           .map(a => ({ name: a.name, kills: a.kills, isPlayer: false })),
       ];
       all.sort((a, b) => b.kills - a.kills);
-      gameState.winnerText = all[0].isPlayer ? 'VICTORY' : `WINNER: ${all[0].name}`;
       setTimeout(() => showRoundSummary(TEAM_BLUE), 800);
     } else {
       const winner = gameState.teamScores[TEAM_BLUE] >= gameState.scoreLimit ? TEAM_BLUE : TEAM_RED;
@@ -627,6 +633,8 @@ export function resetMatch(mode = gameState.mode): void {
   clearTeamIntel();
   clearMatchMemory();
   resetHitscanState();
+  clearFootstepTimers();
+  clearAllShake();
 
   if (gameState.pDead) {
     gameState.pDead = false;
@@ -645,6 +653,8 @@ export function resetMatch(mode = gameState.mode): void {
   gameState.pAssists = 0;
   applyPlayerLoadoutForMode();
   gameState.pGrenades = defaults.playerStartsArmed ? 2 : 0;
+  gameState.pSmokes = defaults.playerStartsArmed ? 1 : 0;
+  gameState.pFlashbangs = defaults.playerStartsArmed ? 1 : 0;
   gameState.pReloading = false;
   dom.reloadBar.classList.remove('on');
   dom.reloadText.classList.remove('on');

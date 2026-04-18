@@ -126,7 +126,6 @@ export class EngageCombatGoal extends YUKA.Goal<TDMAgent> {
     const ag = this.owner;
     ag.stateName = 'ENGAGE';
     ag.stateTime = 0;
-    ag.combatMoveTimer = 0;
     this.status = YUKA.Goal.STATUS.ACTIVE;
   }
 

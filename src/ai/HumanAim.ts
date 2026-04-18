@@ -265,7 +265,7 @@ export function getAimDirection(ag: TDMAgent): {
  * Check if the simulated crosshair is close enough to the target to shoot.
  * Used as a soft gate (callers may ignore).
  */
-export function isAimOnTarget(ag: TDMAgent, target: TDMAgent, tolerance = 0.3): boolean {
+function isAimOnTarget(ag: TDMAgent, target: TDMAgent, tolerance = 0.3): boolean {
   if (!ag.aim || !ag.aim.initialized) return true; // don't block on uninit
 
   const aim = ag.aim;

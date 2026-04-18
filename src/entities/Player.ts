@@ -194,6 +194,7 @@ export function updatePlayer(dt: number): void {
   if (gameState.pReloading && !isUnarmed) {
     if (movement.isSprinting || movement.isTacSprinting) {
       gameState.pReloading = false;
+      gameState.pReloadTimer = 0;
       dom.reloadBar.classList.remove('on');
       dom.reloadText.classList.remove('on');
     }
@@ -320,22 +321,25 @@ export function updatePlayer(dt: number): void {
   }
 
   // HP regen near spawn
+  let regenApplied = false;
   if (player.position.distanceTo(player.spawnPos) < 8) {
     gameState.pHP = Math.min(100, gameState.pHP + dt * 10);
     player.hp = gameState.pHP;
-    updateHUD();
+    regenApplied = true;
   }
 
   // Passive health regen after 5s without taking damage (CoD-style)
-  if (!gameState.pDead && gameState.pHP < 100 && gameState.pHP > 0) {
+  if (!regenApplied && !gameState.pDead && gameState.pHP < 100 && gameState.pHP > 0) {
     const timeSinceDmg = gameState.worldElapsed - gameState.pLastDamageTime;
     if (timeSinceDmg > 5) {
       const regenRate = 8 + Math.min(12, (timeSinceDmg - 5) * 4);
       gameState.pHP = Math.min(100, gameState.pHP + dt * regenRate);
       player.hp = gameState.pHP;
-      updateHUD();
+      regenApplied = true;
     }
   }
+
+  if (regenApplied) updateHUD();
 
   // Auto-fire: keep shooting while mouse held (only if armed)
   if (gameState.mouseHeld && gameState.mouseLocked && !isUnarmed) {

@@ -1,7 +1,6 @@
 /** Arena and game constants */
 export const ARENA_HALF = 58;
 export const ARENA_MARGIN = ARENA_HALF - 1.5;
-export const SCORE_LIMIT = 10;
 export const RESPAWN_TIME = 3;
 
 /** Team identifiers */

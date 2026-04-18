@@ -137,7 +137,7 @@ export function shouldBotHesitate(ag: TDMAgent, target: TDMAgent): number {
 
   // Low ammo → hesitation to reload vs push
   if (ag.ammo / Math.max(1, ag.magSize) < 0.25) {
-    hesitation += 0.1 * (1 - p.aggressionBias + 0.3);
+    hesitation += 0.1 * Math.max(0, 1 - (p.aggressionBias + 0.3));
   }
 
   // David vs Goliath: we're hurt, they're healthy

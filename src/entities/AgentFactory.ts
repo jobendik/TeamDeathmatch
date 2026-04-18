@@ -20,10 +20,6 @@ import {
   attachBlueSwatCharacter, attachEnemyCharacter,
 } from '@/rendering/AgentAnimations';
 import {
-  PatrolState, EngageState, InvestigateState, RetreatState,
-  CoverState, FlankState, SeekPickupState, TeamPushState, PeekState, HoldAngleState,
-} from '@/ai/states';
-import {
   AttackEvaluator, SurviveEvaluator, ReloadEvaluator,
   SeekHealthEvaluator, GetWeaponEvaluator, HuntEvaluator, PatrolEvaluator,
   HoldAngleEvaluator,
@@ -96,20 +92,6 @@ function mkAgent(
   ag.seekB.weight = 0;
   ag.fleeB.weight = 0;
   ag.pursuitB.weight = 0;
-
-  // State machine (animation state only)
-  ag.stateMachine = new YUKA.StateMachine(ag);
-  ag.stateMachine.add('PATROL', new PatrolState());
-  ag.stateMachine.add('ENGAGE', new EngageState());
-  ag.stateMachine.add('INVESTIGATE', new InvestigateState());
-  ag.stateMachine.add('RETREAT', new RetreatState());
-  ag.stateMachine.add('COVER', new CoverState());
-  ag.stateMachine.add('FLANK', new FlankState());
-  ag.stateMachine.add('SEEK_PICKUP', new SeekPickupState());
-  ag.stateMachine.add('TEAM_PUSH', new TeamPushState());
-  ag.stateMachine.add('PEEK', new PeekState());
-  ag.stateMachine.add('HOLD_ANGLE', new HoldAngleState());
-  ag.stateMachine.changeTo('PATROL');
 
   // Evaluator biases — combine class base with personality bias
   const classAggr =

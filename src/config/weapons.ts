@@ -27,8 +27,6 @@ export interface WeaponDef {
   pellets: number;
   /** Viewmodel color */
   color: number;
-  /** Whether this weapon can fire at all */
-  canFire: boolean;
   /** Draw speed multiplier when switching to this weapon (higher = faster) */
   drawSpeed: number;
 }
@@ -41,7 +39,7 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
     isHitscan: true, projectileSpeed: 0, splashRadius: 0,
     headshotMult: 1.0, movePenalty: 1.0,
     desirability: 0, pellets: 0, color: 0x444444,
-    canFire: false, drawSpeed: 8,
+    drawSpeed: 8,
   },
   knife: {
     id: 'knife', name: 'KNIFE',
@@ -50,7 +48,7 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
     isHitscan: true, projectileSpeed: 0, splashRadius: 0,
     headshotMult: 1.5, movePenalty: 1.0,
     desirability: 5, pellets: 1, color: 0x888888,
-    canFire: true, drawSpeed: 8,
+    drawSpeed: 8,
   },
   pistol: {
     id: 'pistol', name: 'PISTOL',
@@ -59,7 +57,7 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
     isHitscan: true, projectileSpeed: 0, splashRadius: 0,
     headshotMult: 2.0, movePenalty: 1.1,
     desirability: 20, pellets: 1, color: 0x888888,
-    canFire: true, drawSpeed: 7,
+    drawSpeed: 7,
   },
   smg: {
     id: 'smg', name: 'SMG',
@@ -68,7 +66,7 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
     isHitscan: true, projectileSpeed: 0, splashRadius: 0,
     headshotMult: 1.5, movePenalty: 1.05,
     desirability: 50, pellets: 1, color: 0x445566,
-    canFire: true, drawSpeed: 6,
+    drawSpeed: 6,
   },
   assault_rifle: {
     id: 'assault_rifle', name: 'ASSAULT RIFLE',
@@ -77,7 +75,7 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
     isHitscan: true, projectileSpeed: 0, splashRadius: 0,
     headshotMult: 1.8, movePenalty: 1.15,
     desirability: 70, pellets: 1, color: 0x334455,
-    canFire: true, drawSpeed: 5,
+    drawSpeed: 5,
   },
   shotgun: {
     id: 'shotgun', name: 'SHOTGUN',
@@ -86,7 +84,7 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
     isHitscan: true, projectileSpeed: 0, splashRadius: 0,
     headshotMult: 1.5, movePenalty: 1.0,
     desirability: 55, pellets: 8, color: 0x664422,
-    canFire: true, drawSpeed: 4.5,
+    drawSpeed: 4.5,
   },
   sniper_rifle: {
     id: 'sniper_rifle', name: 'SNIPER',
@@ -95,7 +93,7 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
     isHitscan: true, projectileSpeed: 0, splashRadius: 0,
     headshotMult: 2.5, movePenalty: 1.5,
     desirability: 65, pellets: 1, color: 0x223344,
-    canFire: true, drawSpeed: 3.5,
+    drawSpeed: 3.5,
   },
   rocket_launcher: {
     id: 'rocket_launcher', name: 'ROCKET',
@@ -104,7 +102,7 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
     isHitscan: false, projectileSpeed: 25, splashRadius: 5,
     headshotMult: 1.0, movePenalty: 1.3,
     desirability: 80, pellets: 1, color: 0x556633,
-    canFire: true, drawSpeed: 3,
+    drawSpeed: 3,
   },
 };
 
@@ -118,10 +116,10 @@ export const CLASS_DEFAULT_WEAPON: Record<string, WeaponId> = {
 
 /** Grenade configuration */
 export const GRENADE_CONFIG = {
-  maxGrenades: 2,
+  maxGrenades: 3,
   damage: 60,
   splashRadius: 6,
   fuseTime: 2.5,
   throwSpeed: 18,
-  cooldown: 8,
+  cooldown: 1.0,
 };

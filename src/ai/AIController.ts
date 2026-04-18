@@ -19,6 +19,9 @@ import { WEAPONS, CLASS_DEFAULT_WEAPON, type WeaponId } from '@/config/weapons';
 
 // Bot footstep timers (keyed by agent name)
 const _footstepTimers = new Map<string, number>();
+
+/** Clear footstep timers (call on match reset). */
+export function clearFootstepTimers(): void { _footstepTimers.clear(); }
 import { deliverPendingCallouts, queueCallout } from './TeamIntel';
 import { shouldBotHesitate, getGlanceDirection } from './ContextualPerception';
 import type { TeamIntent } from './AITypes';
@@ -178,7 +181,7 @@ function botTryWeaponSwap(ag: TDMAgent, dist: number): void {
     ag.burstDelay = def.burstDelay;
     ag.reloadTime = def.reloadTime;
     ag.magSize = def.magSize;
-    ag.ammo = def.magSize;
+    ag.ammo = Math.ceil(def.magSize * 0.5);
     ag.aimError = def.aimError;
     ag.weaponSwapCooldown = 3;
     ag.shootTimer = 0.5;

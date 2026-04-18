@@ -115,8 +115,8 @@ export function playFootstep(pos: THREE.Vector3, fromPlayer = false, sprintMul =
   if (fromPlayer) {
     // Sprint footsteps are louder + lower pitch; walk footsteps are quieter
     const vol = 0.35 + 0.25 * sprintMul;
-    const pitch = sprintMul > 0.7 ? -0.06 : 0.04; // deeper for sprint, lighter for walk
-    Audio.play(id, { volume: vol, pitchJitter: 0.08 + pitch });
+    const basePitch = sprintMul > 0.7 ? 0.94 : 1.04; // deeper for sprint, lighter for walk
+    Audio.play(id, { volume: vol, pitch: basePitch, pitchJitter: 0.08 });
   } else {
     Audio.play(id, { pos, pitchJitter: 0.08 });
   }

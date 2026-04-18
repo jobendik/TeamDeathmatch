@@ -870,6 +870,9 @@ function clearCurrentWeaponMesh(): void {
 
   if (currentViewmodelMixer) {
     currentViewmodelMixer.stopAllAction();
+    if (currentWeaponMesh) {
+      currentViewmodelMixer.uncacheRoot(currentWeaponMesh);
+    }
     currentViewmodelMixer = null;
   }
 }
@@ -1343,9 +1346,6 @@ export function initViewmodel(): void {
   vmMuzzleSprite.scale.set(0.08, 0.08, 1);
   vmGroup.add(vmMuzzleSprite);
 
-  gameState.vmScene = vmScene;
-  gameState.vmCamera = vmCamera;
-
   if (M16_DEBUG_TUNER.enabled) {
     ensureM16DebugOverlay();
     window.addEventListener('keydown', onM16DebugKeyDown);
@@ -1459,9 +1459,6 @@ export function updateViewmodel(dt: number): void {
       }
     }
   }
-
-  gameState.mouseDeltaX = 0;
-  gameState.mouseDeltaY = 0;
 
   if (pDead || vmHidden) {
     vmGroup.visible = false;

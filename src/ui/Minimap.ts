@@ -79,6 +79,7 @@ export function drawMinimap(): void {
   }
 
   // Agents
+  _spotFrame++;
   for (const ag of agents) {
     if (ag.isDead) continue;
     const x = toX(ag.position.x);
@@ -118,7 +119,7 @@ export function drawMinimap(): void {
       if (!isAlly) {
         // Only show spotted enemies (or all if UAV active)
         if (!isUAVActive()) {
-          if (_spotFrame++ % 6 === 0) {
+          if (_spotFrame % 6 === 0) {
             _spottedCache.clear();
             for (const e of agents) {
               if (e.team === TEAM_BLUE || e.isDead) continue;

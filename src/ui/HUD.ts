@@ -12,7 +12,6 @@ const xhEl = (): HTMLElement => document.getElementById('xh')!;
 
 // Cache to avoid innerHTML churn for icons
 const lastSlotIcons: (WeaponId | null)[] = [null, null, null];
-let lastActiveSlot = -1;
 
 export function updateHUD(): void {
   // ── Health ──
@@ -39,14 +38,14 @@ export function updateHUD(): void {
   const isUnarmed = gameState.pWeaponId === 'unarmed';
   const isKnife = gameState.pWeaponId === 'knife';
 
+  dom.weaponName.textContent = wep.name;
+
   if (isUnarmed || isKnife) {
     dom.ammoTxt.textContent = '—';
     dom.ammoMax.textContent = '';
-    dom.weaponName.textContent = wep.name;
   } else {
     dom.ammoTxt.textContent = String(gameState.pAmmo);
     dom.ammoMax.textContent = '/ ' + wep.magSize + ' [' + gameState.pAmmoReserve + ']';
-    dom.weaponName.textContent = wep.name;
   }
 
   // Low-ammo pulse
@@ -93,7 +92,6 @@ export function updateHUD(): void {
       }
     }
   }
-  lastActiveSlot = gameState.pActiveSlot;
 
   // ── Grenades ──
   dom.grenadeTxt.textContent = String(gameState.pGrenades);

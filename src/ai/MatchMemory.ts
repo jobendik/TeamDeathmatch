@@ -46,7 +46,7 @@ export function registerDeath(team: TeamId, x: number, z: number): void {
 }
 
 /** Register the player firing — used by bots to triangulate where you like to camp. */
-export function registerPlayerEngagement(x: number, z: number): void {
+function registerPlayerEngagement(x: number, z: number): void {
   const zone = getZone(x, z);
   zone.playerEngagements++;
   zone.lastActivity = gameState.worldElapsed;
@@ -65,7 +65,7 @@ export function getZoneDanger(team: TeamId, x: number, z: number): number {
 }
 
 /** Zone likelihood that the player is currently nearby. */
-export function getPlayerHotZone(x: number, z: number): number {
+function getPlayerHotZone(x: number, z: number): number {
   const zone = getZone(x, z);
   const timeSince = gameState.worldElapsed - zone.lastActivity;
   const recency = Math.max(0, 1 - timeSince / 30);

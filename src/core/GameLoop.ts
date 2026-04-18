@@ -45,6 +45,7 @@ import { updatePlayerRecoilRecovery } from '@/combat/Recoil';
 import { updateSuppression } from '@/combat/Suppression';
 import { updateHitReactions } from '@/combat/HitReactions';
 import { updateDynamicMusic } from '@/audio/DynamicMusic';
+import { updateCameraShake, updateLowHpShake } from '@/movement/CameraShake';
 import * as brModule from '@/br/BRController';
 import * as brHudModule from '@/br/BRHUD';
 import * as brInvModule from '@/br/InventoryUI';
@@ -78,7 +79,7 @@ function ensureWarmupEl(): HTMLDivElement {
 }
 
 let _rafId = 0;
-export function stopLoop(): void { cancelAnimationFrame(_rafId); }
+function stopLoop(): void { cancelAnimationFrame(_rafId); }
 
 export function animate(): void {
   _rafId = requestAnimationFrame(animate);
@@ -156,6 +157,8 @@ export function animate(): void {
     updateParticles(dt);
     updateAmbientDust(dt);
     updateScreenShake(dt);
+    updateCameraShake(dt);
+    updateLowHpShake(gameState.pHP / 100);
 
     if (!isBR) updatePickups();
 
@@ -239,6 +242,10 @@ export function animate(): void {
   }
 
   renderViewmodel();
+
+  // Clear per-frame mouse delta after all systems have consumed it
+  gameState.mouseDeltaX = 0;
+  gameState.mouseDeltaY = 0;
 
   // ── FPS counter ──
   _fpsFrames++;

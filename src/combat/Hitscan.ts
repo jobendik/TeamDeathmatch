@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { gameState } from '@/core/GameState';
-import { spawnImpact, spawnWallSparks, spawnTracer, spawnMuzzleFlash, spawnExplosion, spawnRocketTrail, spawnBulletHole, spawnBloodSplatter } from './Particles';
+import { spawnImpact, spawnWallSparks, spawnTracer, spawnExplosion, spawnRocketTrail, spawnBulletHole, spawnBloodSplatter } from './Particles';
 import { dealDmgPlayer, dealDmgAgent } from './Combat';
 import { TEAM_BLUE, BODY_HIT_RADIUS, HEAD_HIT_RADIUS } from '@/config/constants';
 import { GRENADE_CONFIG, WEAPONS, type WeaponId } from '@/config/weapons';

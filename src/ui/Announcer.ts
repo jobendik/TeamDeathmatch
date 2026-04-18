@@ -1,5 +1,3 @@
-import { dom } from './DOMElements';
-import { gameState } from '@/core/GameState';
 
 export type AnnouncementTier = 'small' | 'medium' | 'large' | 'epic';
 

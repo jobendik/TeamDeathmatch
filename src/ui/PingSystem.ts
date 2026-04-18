@@ -67,7 +67,7 @@ export function fireDeferredPing(): void {
   for (const ag of gameState.agents) {
     if (ag === gameState.player || ag.isDead) continue;
     if (ag.team === gameState.player.team) continue;
-    const toAg = new THREE.Vector3(ag.position.x - cam.position.x, 1 - cam.position.y, ag.position.z - cam.position.z);
+    const toAg = new THREE.Vector3(ag.position.x - cam.position.x, ag.position.y - cam.position.y, ag.position.z - cam.position.z);
     const dist = toAg.length();
     toAg.normalize();
     const angle = forward.dot(toAg);

@@ -96,7 +96,6 @@ export class TDMAgent extends YUKA.Vehicle {
   teamCalloutTime: number;
   seekingPickup: boolean;
   seekPickupPos: YUKA.Vector3 | null;
-  combatMoveTimer: number;
   confidence: number;
   nearbyAllies: number;
   allyCheckTimer: number;
@@ -232,7 +231,6 @@ export class TDMAgent extends YUKA.Vehicle {
     this.teamCalloutTime = -10;
     this.seekingPickup = false;
     this.seekPickupPos = null;
-    this.combatMoveTimer = 0;
     this.confidence = 50;
     this.nearbyAllies = 0;
     this.allyCheckTimer = 0;
@@ -324,14 +322,12 @@ export class TDMAgent extends YUKA.Vehicle {
     this.seekingPickup = false;
     this.seekPickupPos = null;
     this.isPeeking = false;
-    this.peekTimer = 0;
     this.teamCallout = null;
     this.currentCover = null;
     this.huntTimer = Math.random() * 2;
     this.stuckTime = 0;
     this.lastStuckCheckPos.copy(this.position);
     this.decisionTimer = 0;
-    this.combatMoveTimer = 0;
     this.fuzzyAggr = 50;
     this.confidence = 50;
     this.enemyMemory.clear();
