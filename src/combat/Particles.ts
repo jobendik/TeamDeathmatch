@@ -1,6 +1,14 @@
 import * as THREE from 'three';
 import { gameState } from '@/core/GameState';
 
+// ── Particle mesh pool ──
+// Pre-allocate meshes to avoid GC spikes from frequent new THREE.Mesh() calls.
+const POOL_SIZE = 128;
+
+interface PoolEntry { mesh: THREE.Mesh; inUse: boolean; }
+const _impactPool: PoolEntry[] = [];
+const _sparkPool: PoolEntry[] = [];
+
 // Shared geometry/material for impact particles to avoid per-spawn allocations
 const _impactGeo = new THREE.SphereGeometry(0.06, 4, 4);
 const _sparkGeo = new THREE.SphereGeometry(0.03, 3, 3);
@@ -15,15 +23,59 @@ function getImpactMat(col: number): THREE.MeshBasicMaterial {
   return mat;
 }
 
+/** Borrow a mesh from a pool, or create a new one if pool empty. */
+function borrowMesh(pool: PoolEntry[], geo: THREE.BufferGeometry, mat: THREE.MeshBasicMaterial): THREE.Mesh {
+  for (const entry of pool) {
+    if (!entry.inUse) {
+      entry.inUse = true;
+      const m = entry.mesh;
+      (m.material as THREE.MeshBasicMaterial).copy(mat);
+      m.visible = true;
+      m.scale.setScalar(1);
+      return m;
+    }
+  }
+  // Pool exhausted — create new mesh (will be collected normally)
+  return new THREE.Mesh(geo, mat.clone());
+}
+
+/** Return a mesh to its pool. */
+function returnMesh(pool: PoolEntry[], mesh: THREE.Mesh): boolean {
+  for (const entry of pool) {
+    if (entry.mesh === mesh) {
+      entry.inUse = false;
+      mesh.visible = false;
+      return true;
+    }
+  }
+  return false; // not from pool — scene.remove as before
+}
+
+/** Initialize mesh pools. Call once after scene is ready. */
+export function initParticlePools(): void {
+  const defaultMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true });
+  for (let i = 0; i < POOL_SIZE; i++) {
+    const im = new THREE.Mesh(_impactGeo, defaultMat.clone());
+    im.visible = false;
+    gameState.scene.add(im);
+    _impactPool.push({ mesh: im, inUse: false });
+
+    const sm = new THREE.Mesh(_sparkGeo, defaultMat.clone());
+    sm.visible = false;
+    gameState.scene.add(sm);
+    _sparkPool.push({ mesh: sm, inUse: false });
+  }
+}
+
 /**
  * Spawn impact particles at a position.
  */
 export function spawnImpact(pos: THREE.Vector3, col: number, n = 6): void {
   const baseMat = getImpactMat(col);
   for (let i = 0; i < n; i++) {
-    const m = new THREE.Mesh(_impactGeo, baseMat.clone());
+    const m = borrowMesh(_impactPool, _impactGeo, baseMat);
+    if (!m.parent) gameState.scene.add(m);
     m.position.copy(pos);
-    gameState.scene.add(m);
     gameState.particles.push({
       mesh: m,
       vel: new THREE.Vector3(
@@ -33,21 +85,29 @@ export function spawnImpact(pos: THREE.Vector3, col: number, n = 6): void {
       ),
       life: 0.4,
       mL: 0.4,
+      _pool: _impactPool,
     });
   }
 }
 
 /**
  * Spawn wall hit sparks — brighter, faster, more directional.
+ * Surface type controls color palette.
  */
-export function spawnWallSparks(pos: THREE.Vector3, normal: THREE.Vector3 | null, n = 8): void {
-  const sparkMat = getImpactMat(0xffcc66);
-  const dimMat = getImpactMat(0x556688);
+export function spawnWallSparks(pos: THREE.Vector3, normal: THREE.Vector3 | null, n = 8, surface: 'metal' | 'wood' | 'concrete' = 'concrete'): void {
+  const palettes = {
+    metal:    { bright: 0xffeebb, dim: 0x8899aa },
+    wood:     { bright: 0xcc9944, dim: 0x664422 },
+    concrete: { bright: 0xffcc66, dim: 0x556688 },
+  };
+  const pal = palettes[surface];
+  const sparkMat = getImpactMat(pal.bright);
+  const dimMat = getImpactMat(pal.dim);
   for (let i = 0; i < n; i++) {
     const isBright = i < n * 0.6;
-    const m = new THREE.Mesh(_sparkGeo, (isBright ? sparkMat : dimMat).clone());
+    const m = borrowMesh(_sparkPool, _sparkGeo, isBright ? sparkMat : dimMat);
+    if (!m.parent) gameState.scene.add(m);
     m.position.copy(pos);
-    gameState.scene.add(m);
     const vel = new THREE.Vector3(
       (Math.random() - 0.5) * 8,
       Math.random() * 4 + 2,
@@ -63,8 +123,35 @@ export function spawnWallSparks(pos: THREE.Vector3, normal: THREE.Vector3 | null
       mesh: m, vel,
       life: 0.15 + Math.random() * 0.2,
       mL: 0.35,
+      _pool: _sparkPool,
     });
   }
+}
+
+// ═══════════════════════════════════════════
+//  SHELL CASINGS
+// ═══════════════════════════════════════════
+const _shellGeo = new THREE.CylinderGeometry(0.008, 0.008, 0.03, 4, 1);
+const _shellMat = new THREE.MeshBasicMaterial({ color: 0xccaa44 });
+
+/**
+ * Spawn a shell casing particle ejected to the right of the camera.
+ */
+export function spawnShellCasing(origin: THREE.Vector3, rightDir: THREE.Vector3): void {
+  const m = new THREE.Mesh(_shellGeo, _shellMat.clone());
+  m.position.copy(origin);
+  m.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, 0);
+  gameState.scene.add(m);
+  gameState.particles.push({
+    mesh: m,
+    vel: new THREE.Vector3(
+      rightDir.x * 3 + (Math.random() - 0.5) * 1.5,
+      2 + Math.random() * 2,
+      rightDir.z * 3 + (Math.random() - 0.5) * 1.5,
+    ),
+    life: 0.6 + Math.random() * 0.3,
+    mL: 0.9,
+  });
 }
 
 /**
@@ -371,6 +458,62 @@ export function updateScreenShake(dt: number): void {
   }
 }
 
+// ═══════════════════════════════════════════
+//  BLOOD SPLATTER
+// ═══════════════════════════════════════════
+const _bloodGeo = new THREE.SphereGeometry(0.04, 4, 4);
+const _bloodDecalGeo = new THREE.PlaneGeometry(0.2, 0.2);
+
+/**
+ * Spawn blood splatter particles and wall decal when an agent is hit.
+ */
+export function spawnBloodSplatter(pos: THREE.Vector3, dir: THREE.Vector3): void {
+  const bloodCol = 0x880000;
+  const bloodMat = getImpactMat(bloodCol);
+  // Directional blood particles
+  for (let i = 0; i < 5; i++) {
+    const m = new THREE.Mesh(_bloodGeo, bloodMat.clone());
+    m.position.copy(pos);
+    gameState.scene.add(m);
+    gameState.particles.push({
+      mesh: m,
+      vel: new THREE.Vector3(
+        dir.x * 4 + (Math.random() - 0.5) * 3,
+        Math.random() * 2 + 1,
+        dir.z * 4 + (Math.random() - 0.5) * 3,
+      ),
+      life: 0.3 + Math.random() * 0.2,
+      mL: 0.5,
+    });
+  }
+  // Raycast behind hit to place blood decal on wall
+  const rc = gameState.raycaster;
+  rc.set(pos, dir);
+  rc.near = 0;
+  rc.far = 3;
+  const wallHits = rc.intersectObjects(gameState.wallMeshes, false);
+  if (wallHits.length > 0) {
+    const hp = wallHits[0].point;
+    const n = wallHits[0].face?.normal?.clone().transformDirection(wallHits[0].object.matrixWorld) ?? null;
+    const decal = new THREE.Mesh(
+      _bloodDecalGeo,
+      new THREE.MeshBasicMaterial({
+        color: 0x440000, transparent: true, opacity: 0.6,
+        depthWrite: false, side: THREE.DoubleSide,
+        polygonOffset: true, polygonOffsetFactor: -1,
+      }),
+    );
+    decal.position.copy(hp);
+    if (n) {
+      decal.position.addScaledVector(n, 0.01);
+      decal.lookAt(hp.clone().add(n));
+    }
+    gameState.scene.add(decal);
+    // Fade out as particle
+    gameState.particles.push({ mesh: decal, vel: new THREE.Vector3(), life: 4, mL: 4 });
+  }
+}
+
 /**
  * Update all particles each frame (gravity, fade, scale).
  */
@@ -382,7 +525,11 @@ export function updateParticles(dt: number): void {
     p.life -= dt;
 
     if (p.life <= 0) {
-      scene.remove(p.mesh);
+      if ((p as any)._pool) {
+        returnMesh((p as any)._pool, p.mesh) || scene.remove(p.mesh);
+      } else {
+        scene.remove(p.mesh);
+      }
       if (p.light) scene.remove(p.light);
       particles.splice(i, 1);
       continue;

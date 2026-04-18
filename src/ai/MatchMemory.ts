@@ -74,4 +74,32 @@ export function getPlayerHotZone(x: number, z: number): number {
 
 export function clearMatchMemory(): void {
   zones.clear();
+  _teamKillTimes[0].length = 0;
+  _teamKillTimes[1].length = 0;
+}
+
+// ═══════════════════════════════════════════
+//  TEAM MOMENTUM — recent kill/death tempo
+// ═══════════════════════════════════════════
+
+/** Timestamps of recent kills per team */
+const _teamKillTimes: [number[], number[]] = [[], []];
+
+/** Register a kill for momentum tracking */
+export function registerTeamKill(team: TeamId): void {
+  _teamKillTimes[team].push(gameState.worldElapsed);
+}
+
+/**
+ * Get team momentum: positive = team is on a roll, negative = losing momentum.
+ * Range roughly -1..+1. Compares own recent kills vs enemy recent kills.
+ */
+export function getTeamMomentum(team: TeamId): number {
+  const now = gameState.worldElapsed;
+  const window = 15; // seconds
+  const enemy = team === TEAM_BLUE ? TEAM_RED : TEAM_BLUE;
+  const ownRecent = _teamKillTimes[team].filter(t => now - t < window).length;
+  const enemyRecent = _teamKillTimes[enemy].filter(t => now - t < window).length;
+  const diff = ownRecent - enemyRecent;
+  return Math.max(-1, Math.min(1, diff * 0.25));
 }

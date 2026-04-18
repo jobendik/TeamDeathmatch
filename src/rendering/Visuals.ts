@@ -7,6 +7,7 @@ import { TEAM_BLUE } from '@/config/constants';
  */
 export function updateVisuals(): void {
   const { agents, player, camera } = gameState;
+  const camPos = camera.position;
 
   for (const ag of agents) {
     if (ag === player) continue;
@@ -16,6 +17,17 @@ export function updateVisuals(): void {
 
     ag.hpBarGroup.visible = !ag.isDead;
     if (!ag.hpBarGroup.visible) continue;
+
+    const dx = ag.position.x - camPos.x;
+    const dz = ag.position.z - camPos.z;
+    const distSq = dx * dx + dz * dz;
+
+    // LOD: skip HP bar color updates for very distant agents (>60m)
+    if (distSq > 3600) {
+      ag.hpBarGroup.visible = false;
+      if (ag.nameTag) ag.nameTag.visible = false;
+      continue;
+    }
 
     ag.hpBarGroup.quaternion.copy(camera.quaternion);
 

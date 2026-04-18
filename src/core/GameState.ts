@@ -42,6 +42,7 @@ export interface Bullet {
   isRocket?: boolean;
   isGrenade?: boolean;
   splashRadius?: number;
+  grenadeType?: 'frag' | 'smoke' | 'flash';
 }
 
 export interface Particle {
@@ -52,6 +53,7 @@ export interface Particle {
   isRing?: boolean;
   isSmoke?: boolean;
   light?: THREE.PointLight;
+  _pool?: any;
 }
 
 export interface Pickup {
@@ -72,7 +74,10 @@ export interface KillfeedEntry {
   victimTeam: number;
   time: number;
   weaponName?: string;
+  weaponId?: string;
   headshot?: boolean;
+  isAssist?: boolean;
+  isWallbang?: boolean;
 }
 
 export interface FlagState {
@@ -176,6 +181,11 @@ export const gameState = {
   pShotsHit: 0,
   pHeadshots: 0,
   pDead: false,
+  pDBNO: false,
+  pDBNOTimer: 0,
+  deathTime: 0,
+  pLastDamageTime: -10,
+  lastPlayerKillTime: -10,
   respTimer: 0,
   pReloading: false,
   pReloadTimer: 0,
@@ -187,8 +197,14 @@ export const gameState = {
   pWeaponId: 'assault_rifle' as WeaponId,
   pWeaponSlots: ['assault_rifle', 'pistol'] as WeaponId[],
   pActiveSlot: 0,
+  pLastSlot: 0,
   pGrenades: 2,
+  pSmokes: 1,
+  pFlashbangs: 1,
+  pGrenadeType: 'frag' as 'frag' | 'smoke' | 'flash',
   pGrenadeCooldown: 0,
+  pCookingGrenade: false,
+  pCookTimer: 0,
   pShootTimer: 0,
   pBurstCount: 0,
   pBurstTimer: 0,
@@ -224,6 +240,8 @@ export const gameState = {
   // Scores
   teamScores: [0, 0] as [number, number],
   roundOver: false,
+  overtime: false,
+  warmupTimer: 0,
   killfeedEntries: [] as KillfeedEntry[],
   winnerText: '',
 
@@ -235,6 +253,34 @@ export const gameState = {
 
   // Perception stagger — rotates which agents get full perception each frame
   perceptionFrame: 0,
+
+  // Assists (damage contributors)
+  pAssists: 0,
+
+  // Spawn protection
+  pSpawnProtectUntil: 0,
+
+  // Bot difficulty (0..1 maps to easy..hard)
+  botDifficulty: 0.5,
+
+  // Colorblind mode
+  colorblindMode: 'off' as 'off' | 'deuteranopia' | 'protanopia' | 'tritanopia',
+
+  // Crosshair settings
+  crosshairColor: '#f0faff' as string,
+  crosshairSize: 1.0,
+  crosshairDot: true,
+
+  // FPS display
+  showFPS: false,
+
+  // Subtitle display
+  showSubtitles: true,
+
+  // POTG tracking
+  potgBestScore: 0,
+  potgBestAgent: null as TDMAgent | null,
+  potgBestTime: 0,
 
   // NavMesh (optional)
   navMesh: null as any,

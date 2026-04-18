@@ -75,6 +75,7 @@ export interface DamagePopupOpts {
   isHeadshot?: boolean;
   isKill?: boolean;
   isArmor?: boolean;
+  isFalloff?: boolean;
 }
 
 export function spawnDamageNumber(worldPos: THREE.Vector3, opts: DamagePopupOpts): void {
@@ -108,6 +109,12 @@ export function spawnDamageNumber(worldPos: THREE.Vector3, opts: DamagePopupOpts
     glow = '#1e6bff';
     fontSize = 42;
     scaleBase = 1.3;
+  } else if (opts.isFalloff) {
+    text = `${Math.round(opts.amount)}`;
+    color = '#aaaaaa';
+    glow = '#666666';
+    fontSize = 36;
+    scaleBase = 1.0;
   } else {
     text = `${Math.round(opts.amount)}`;
     color = '#fff3d6';

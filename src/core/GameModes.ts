@@ -34,12 +34,33 @@ export function getSpawnPoints(team: TeamId): [number, number, number][] {
 
 export function getSpawnForAgent(ag: TDMAgent): [number, number, number] {
   const spawns = getSpawnPoints(ag.team);
-  return spawns[Math.floor(Math.random() * spawns.length)];
+  return pickSafestSpawn(spawns, ag);
 }
 
 export function getPlayerSpawn(): [number, number, number] {
   const spawns = gameState.mode === 'ffa' ? [...BLUE_SPAWNS, ...RED_SPAWNS] : BLUE_SPAWNS;
-  return spawns[0];
+  return pickSafestSpawn(spawns, gameState.player);
+}
+
+/** Score spawns by distance from enemies — pick the safest one with some randomness. */
+function pickSafestSpawn(spawns: [number, number, number][], self: TDMAgent): [number, number, number] {
+  if (spawns.length <= 1) return spawns[0];
+  const scored = spawns.map(sp => {
+    let minDist = Infinity;
+    for (const ag of gameState.agents) {
+      if (ag === self || ag.isDead || !ag.active) continue;
+      if (gameState.mode !== 'ffa' && gameState.mode !== 'br' && ag.team === self.team) continue;
+      const dx = ag.position.x - sp[0];
+      const dz = ag.position.z - sp[2];
+      const d = Math.sqrt(dx * dx + dz * dz);
+      if (d < minDist) minDist = d;
+    }
+    return { sp, score: minDist };
+  });
+  // Sort by distance (farthest from enemies = safest) and pick from top 3 with randomness
+  scored.sort((a, b) => b.score - a.score);
+  const topN = Math.min(3, scored.length);
+  return scored[Math.floor(Math.random() * topN)].sp;
 }
 
 export function getFacingYawTowardsArena(x: number, z: number): number {

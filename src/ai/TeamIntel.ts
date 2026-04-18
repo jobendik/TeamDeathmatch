@@ -124,7 +124,8 @@ export function deliverPendingCallouts(): void {
       if (!playedSpottedCallout && ally !== gameState.player) {
         const distToPlayer = ally.position.distanceTo(gameState.player.position);
         if (distToPlayer < 30 && Math.random() < 0.4) {
-          playBotCallout('spotted', new THREE.Vector3(ally.position.x, 1.6, ally.position.z));
+          const pitchBase = ally.personality ? 0.85 + ally.personality.aggressionBias * 0.3 : 1;
+          playBotCallout('spotted', new THREE.Vector3(ally.position.x, 1.6, ally.position.z), pitchBase);
           playedSpottedCallout = true;
         }
       }

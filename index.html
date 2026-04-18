@@ -10,6 +10,16 @@
   <style>body { opacity: 0; } body.ready { opacity: 1; }</style>
 </head>
 <body>
+  <!-- Loading screen -->
+  <div id="loadingScreen" class="on">
+    <div class="ls-inner">
+      <div class="ls-logo">◆</div>
+      <h1 class="ls-title">WARZONE</h1>
+      <div class="ls-bar"><div class="ls-fill" id="lsFill"></div></div>
+      <div class="ls-text" id="lsText">Loading assets…</div>
+    </div>
+  </div>
+
   <div id="cw"></div>
   <div id="dmg"></div>
   <div id="hlf"></div>
@@ -52,6 +62,12 @@
       <div class="compass-indicator"></div>
     </div>
   </div>
+
+  <!-- FPS counter -->
+  <div id="fpsCounter" class="hidden"></div>
+
+  <!-- Subtitle overlay -->
+  <div id="subtitleOverlay"></div>
 
   <!-- Top-right: match info + killfeed -->
   <div id="matchInfo">
@@ -143,6 +159,49 @@
         <input type="range" id="setMusicVol" min="0" max="1" step="0.05" value="0.5">
         <span class="settings-val" id="valMusicVol">50%</span>
       </div>
+      <div class="settings-group">
+        <label class="settings-label">Head Bob</label>
+        <input type="range" id="setHeadBob" min="0" max="1" step="0.05" value="1">
+        <span class="settings-val" id="valHeadBob">100%</span>
+      </div>
+      <div class="settings-divider"></div>
+      <div class="settings-group">
+        <label class="settings-label">Crosshair Color</label>
+        <input type="color" id="setCrosshairColor" value="#f0faff">
+        <span class="settings-val" id="valCrosshairColor">#f0faff</span>
+      </div>
+      <div class="settings-group">
+        <label class="settings-label">Crosshair Size</label>
+        <input type="range" id="setCrosshairSize" min="0.5" max="2" step="0.1" value="1">
+        <span class="settings-val" id="valCrosshairSize">1.0</span>
+      </div>
+      <div class="settings-group">
+        <label class="settings-label">Crosshair Center Dot</label>
+        <input type="checkbox" id="setCrosshairDot" checked>
+      </div>
+      <div class="settings-divider"></div>
+      <div class="settings-group">
+        <label class="settings-label">Bot Difficulty</label>
+        <input type="range" id="setBotDifficulty" min="0" max="1" step="0.1" value="0.5">
+        <span class="settings-val" id="valBotDifficulty">50%</span>
+      </div>
+      <div class="settings-group">
+        <label class="settings-label">Colorblind Mode</label>
+        <select id="setColorblind" class="menu-select-sm">
+          <option value="off">Off</option>
+          <option value="deuteranopia">Deuteranopia</option>
+          <option value="protanopia">Protanopia</option>
+          <option value="tritanopia">Tritanopia</option>
+        </select>
+      </div>
+      <div class="settings-group">
+        <label class="settings-label">Show FPS</label>
+        <input type="checkbox" id="setShowFPS">
+      </div>
+      <div class="settings-group">
+        <label class="settings-label">Show Subtitles</label>
+        <input type="checkbox" id="setShowSubtitles" checked>
+      </div>
       <button id="settingsBack" class="menu-btn menu-btn-primary">BACK</button>
     </div>
   </div>
@@ -157,6 +216,7 @@
       <span class="kbd">R</span>
       <span class="kbd">G</span>
       <span class="kbd">1/2/3</span>
+      <span class="kbd">V</span>
       <span class="kbd">TAB</span>
     </div>
   </div>
@@ -252,7 +312,7 @@
   <div id="tabboard">
     <div class="tb-inner">
       <div class="tb-title">◈ SCOREBOARD ◈</div>
-      <div class="tb-header"><span>OPERATOR</span><span>KILLS</span><span>DEATHS</span><span>SCORE</span></div>
+      <div class="tb-header"><span>OPERATOR</span><span>KILLS</span><span>DEATHS</span><span>ASSISTS</span><span>K/D</span><span>SCORE</span></div>
       <div id="tbBody"></div>
     </div>
   </div>

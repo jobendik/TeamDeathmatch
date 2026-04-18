@@ -118,8 +118,12 @@ export function updateCrosshair(): void {
   const moveKick = isRunning ? 10 : isMoving ? 5 : 0;
   const airKick = airborne ? 7 : 0;
   const fireKick = Math.min(10, gameState.pShootTimer * 55);
+  // ADS bloom — brief crosshair expansion during ADS transition
+  const adsBloom = gameState.adsAmount !== undefined
+    ? Math.sin(Math.min(1, Math.abs(gameState.adsAmount - (gameState.isADS ? 1 : 0)) * 4) * Math.PI) * 6
+    : 0;
   const adsMul = gameState.isADS ? (pWeaponId === 'sniper_rifle' ? 0.2 : 0.55) : 1;
-  const gap = (baseGap + moveKick + airKick + fireKick) * adsMul;
+  const gap = (baseGap + moveKick + airKick + fireKick + adsBloom) * adsMul;
 
   el.style.setProperty('--xh-gap', `${gap.toFixed(1)}px`);
   el.style.setProperty('--xh-len', `${lineLen}px`);
@@ -147,14 +151,40 @@ export function flashCrosshairFire(): void {
   }, 80);
 }
 
-export function flashDmg(): void {
-  dom.dmg.style.opacity = '.6';
+export function flashDmg(dmg: number = 20): void {
+  const intensity = 0.3 + Math.min(0.7, dmg / 40);
+  dom.dmg.style.opacity = String(intensity);
   clearTimeout(dmgTO);
-  dmgTO = setTimeout(() => { dom.dmg.style.opacity = '0'; }, 150);
+  dmgTO = setTimeout(() => { dom.dmg.style.opacity = '0'; }, 120 + dmg * 2);
 }
 
 export function flashHeal(): void {
   dom.hlf.style.opacity = '1';
   clearTimeout(hlfTO);
   hlfTO = setTimeout(() => { dom.hlf.style.opacity = '0'; }, 300);
+}
+
+// ── Grenade cook timer HUD ──
+let cookEl: HTMLDivElement | null = null;
+function ensureCookEl(): HTMLDivElement {
+  if (!cookEl) {
+    cookEl = document.createElement('div');
+    cookEl.id = 'cookTimer';
+    document.getElementById('cw')?.appendChild(cookEl);
+  }
+  return cookEl;
+}
+
+export function updateCookTimer(): void {
+  const el = ensureCookEl();
+  if (!gameState.pCookingGrenade) {
+    el.classList.remove('on');
+    return;
+  }
+  const pct = Math.min(1, gameState.pCookTimer / 2.5);
+  el.classList.add('on');
+  el.textContent = (2.5 - gameState.pCookTimer).toFixed(1) + 's';
+  el.style.setProperty('--cook-pct', String(pct));
+  if (pct > 0.8) el.classList.add('danger');
+  else el.classList.remove('danger');
 }

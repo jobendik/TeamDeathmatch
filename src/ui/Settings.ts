@@ -2,6 +2,7 @@ import { FP } from '@/config/player';
 import { dom } from './DOMElements';
 import { Audio } from '@/audio/AudioManager';
 import { movement } from '@/movement/MovementController';
+import { gameState } from '@/core/GameState';
 
 const STORAGE_KEY = 'warzone_settings';
 
@@ -11,6 +12,14 @@ interface GameSettings {
   masterVol: number;
   sfxVol: number;
   musicVol: number;
+  headBobScale: number;
+  crosshairColor: string;
+  crosshairSize: number;
+  crosshairDot: boolean;
+  botDifficulty: number;
+  colorblindMode: string;
+  showFPS: boolean;
+  showSubtitles: boolean;
 }
 
 const defaults: GameSettings = {
@@ -19,6 +28,14 @@ const defaults: GameSettings = {
   masterVol: 0.7,
   sfxVol: 1,
   musicVol: 0.5,
+  headBobScale: 1,
+  crosshairColor: '#f0faff',
+  crosshairSize: 1,
+  crosshairDot: true,
+  botDifficulty: 0.5,
+  colorblindMode: 'off',
+  showFPS: false,
+  showSubtitles: true,
 };
 
 let current: GameSettings = { ...defaults };
@@ -45,9 +62,40 @@ function applySettings(): void {
   movement.fovBase = current.fov;
   movement.fovTarget = current.fov;
   movement.fovCurrent = current.fov;
+  movement.headBobScale = current.headBobScale;
   Audio.setMaster(current.masterVol);
   Audio.setSfx(current.sfxVol);
   Audio.setMusic(current.musicVol);
+
+  // Crosshair settings
+  gameState.crosshairColor = current.crosshairColor;
+  gameState.crosshairSize = current.crosshairSize;
+  gameState.crosshairDot = current.crosshairDot;
+  const xh = document.getElementById('xh');
+  if (xh) {
+    xh.style.setProperty('--xh-color', current.crosshairColor);
+    xh.style.transform = `scale(${current.crosshairSize})`;
+    const dot = xh.querySelector('.xh-dot') as HTMLElement | null;
+    if (dot) dot.style.display = current.crosshairDot ? '' : 'none';
+  }
+
+  // Bot difficulty
+  gameState.botDifficulty = current.botDifficulty;
+
+  // Colorblind mode
+  gameState.colorblindMode = current.colorblindMode as any;
+  document.body.classList.remove('cb-deuteranopia', 'cb-protanopia', 'cb-tritanopia');
+  if (current.colorblindMode !== 'off') {
+    document.body.classList.add(`cb-${current.colorblindMode}`);
+  }
+
+  // FPS counter
+  gameState.showFPS = current.showFPS;
+  const fpsEl = dom.fpsCounter;
+  if (fpsEl) fpsEl.classList.toggle('hidden', !current.showFPS);
+
+  // Subtitles
+  gameState.showSubtitles = current.showSubtitles;
 }
 
 export function initSettings(): void {
@@ -64,6 +112,8 @@ export function initSettings(): void {
   dom.valSfxVol.textContent = Math.round(current.sfxVol * 100) + '%';
   dom.setMusicVol.value = String(current.musicVol);
   dom.valMusicVol.textContent = Math.round(current.musicVol * 100) + '%';
+  dom.setHeadBob.value = String(current.headBobScale);
+  dom.valHeadBob.textContent = Math.round(current.headBobScale * 100) + '%';
 
   // Bind sliders
   dom.setSensitivity.oninput = () => {
@@ -93,6 +143,72 @@ export function initSettings(): void {
   dom.setMusicVol.oninput = () => {
     current.musicVol = parseFloat(dom.setMusicVol.value);
     dom.valMusicVol.textContent = Math.round(current.musicVol * 100) + '%';
+    applySettings();
+    saveSettings();
+  };
+  dom.setHeadBob.oninput = () => {
+    current.headBobScale = parseFloat(dom.setHeadBob.value);
+    dom.valHeadBob.textContent = Math.round(current.headBobScale * 100) + '%';
+    applySettings();
+    saveSettings();
+  };
+
+  // ── Crosshair settings ──
+  dom.setCrosshairColor.value = current.crosshairColor;
+  dom.valCrosshairColor.textContent = current.crosshairColor;
+  dom.setCrosshairColor.oninput = () => {
+    current.crosshairColor = dom.setCrosshairColor.value;
+    dom.valCrosshairColor.textContent = current.crosshairColor;
+    applySettings();
+    saveSettings();
+  };
+
+  dom.setCrosshairSize.value = String(current.crosshairSize);
+  dom.valCrosshairSize.textContent = current.crosshairSize.toFixed(1);
+  dom.setCrosshairSize.oninput = () => {
+    current.crosshairSize = parseFloat(dom.setCrosshairSize.value);
+    dom.valCrosshairSize.textContent = current.crosshairSize.toFixed(1);
+    applySettings();
+    saveSettings();
+  };
+
+  dom.setCrosshairDot.checked = current.crosshairDot;
+  dom.setCrosshairDot.onchange = () => {
+    current.crosshairDot = dom.setCrosshairDot.checked;
+    applySettings();
+    saveSettings();
+  };
+
+  // ── Bot difficulty ──
+  dom.setBotDifficulty.value = String(current.botDifficulty);
+  dom.valBotDifficulty.textContent = Math.round(current.botDifficulty * 100) + '%';
+  dom.setBotDifficulty.oninput = () => {
+    current.botDifficulty = parseFloat(dom.setBotDifficulty.value);
+    dom.valBotDifficulty.textContent = Math.round(current.botDifficulty * 100) + '%';
+    applySettings();
+    saveSettings();
+  };
+
+  // ── Colorblind mode ──
+  dom.setColorblind.value = current.colorblindMode;
+  dom.setColorblind.onchange = () => {
+    current.colorblindMode = dom.setColorblind.value;
+    applySettings();
+    saveSettings();
+  };
+
+  // ── Show FPS ──
+  dom.setShowFPS.checked = current.showFPS;
+  dom.setShowFPS.onchange = () => {
+    current.showFPS = dom.setShowFPS.checked;
+    applySettings();
+    saveSettings();
+  };
+
+  // ── Show Subtitles ──
+  dom.setShowSubtitles.checked = current.showSubtitles;
+  dom.setShowSubtitles.onchange = () => {
+    current.showSubtitles = dom.setShowSubtitles.checked;
     applySettings();
     saveSettings();
   };

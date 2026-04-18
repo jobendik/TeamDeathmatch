@@ -21,11 +21,12 @@ import {
 } from '@/rendering/AgentAnimations';
 import {
   PatrolState, EngageState, InvestigateState, RetreatState,
-  CoverState, FlankState, SeekPickupState, TeamPushState, PeekState,
+  CoverState, FlankState, SeekPickupState, TeamPushState, PeekState, HoldAngleState,
 } from '@/ai/states';
 import {
   AttackEvaluator, SurviveEvaluator, ReloadEvaluator,
   SeekHealthEvaluator, GetWeaponEvaluator, HuntEvaluator, PatrolEvaluator,
+  HoldAngleEvaluator,
 } from '@/ai/goals/Evaluators';
 
 /** Sync callback for YUKA render component — lets YUKA drive position + rotation. */
@@ -107,6 +108,7 @@ function mkAgent(
   ag.stateMachine.add('SEEK_PICKUP', new SeekPickupState());
   ag.stateMachine.add('TEAM_PUSH', new TeamPushState());
   ag.stateMachine.add('PEEK', new PeekState());
+  ag.stateMachine.add('HOLD_ANGLE', new HoldAngleState());
   ag.stateMachine.changeTo('PATROL');
 
   // Evaluator biases — combine class base with personality bias
@@ -128,6 +130,7 @@ function mkAgent(
   ag.brain.addEvaluator(new SeekHealthEvaluator(Math.max(0.5, 1.0 + personality.cautionBias * 0.3)));
   ag.brain.addEvaluator(new GetWeaponEvaluator(0.9 + (Math.random() - 0.5) * 0.1));
   ag.brain.addEvaluator(new HuntEvaluator(Math.max(0.3, aggrBias * 0.95 + personality.egoismBias * 0.3)));
+  ag.brain.addEvaluator(new HoldAngleEvaluator(Math.max(0.3, 1.0 + personality.patienceBias * 0.5)));
   ag.brain.addEvaluator(new PatrolEvaluator(1.0));
 
   setupFuzzy(ag);

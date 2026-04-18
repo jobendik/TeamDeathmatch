@@ -1,12 +1,15 @@
 import * as THREE from 'three';
 import { gameState } from '@/core/GameState';
-import { spawnImpact, spawnWallSparks, spawnTracer, spawnMuzzleFlash, spawnExplosion, spawnRocketTrail, spawnBulletHole } from './Particles';
+import { spawnImpact, spawnWallSparks, spawnTracer, spawnMuzzleFlash, spawnExplosion, spawnRocketTrail, spawnBulletHole, spawnBloodSplatter } from './Particles';
 import { dealDmgPlayer, dealDmgAgent } from './Combat';
 import { TEAM_BLUE } from '@/config/constants';
 import { WEAPONS, type WeaponId } from '@/config/weapons';
 import type { TDMAgent } from '@/entities/TDMAgent';
 import { isEnemy } from '@/core/GameModes';
-import { playShot, playImpact, playExplosion } from '@/audio/SoundHooks';
+import { playShot, playImpact, playExplosion, playBulletWhiz, playFriendlyFireBuzz } from '@/audio/SoundHooks';
+import { movement } from '@/movement/MovementController';
+import { showHitMarker } from '@/ui/HitMarkers';
+import { checkSuppressionFromShot } from './Suppression';
 
 export function hitscanShot(
   origin: THREE.Vector3,
@@ -55,11 +58,47 @@ export function hitscanShot(
     }
   }
 
+  // Friendly fire detection — warn if player shot would have hit a teammate
+  if (ownerType === 'player' && !hitAgent) {
+    const pAgent = gameState.player;
+    for (const ag of agents) {
+      if (ag.isDead || ag === pAgent) continue;
+      if (isEnemy(pAgent, ag)) continue;
+      const agPos = new THREE.Vector3(ag.position.x, 1.0, ag.position.z);
+      const toAgent = agPos.clone().sub(origin);
+      const nDir = dir.clone().normalize();
+      const proj = toAgent.dot(nDir);
+      if (proj < 0 || proj > wallDist) continue;
+      const closest = origin.clone().add(nDir.multiplyScalar(proj));
+      if (closest.distanceTo(agPos) < 0.55) {
+        flashFriendlyFireWarning();
+        break;
+      }
+    }
+  }
+
   const endPoint = origin.clone().add(dir.clone().normalize().multiplyScalar(hitDist));
+  checkSuppressionFromShot(origin, dir, hitDist, ownerType);
   spawnTracer(origin, endPoint, col);
   if (playShotAudio) {
     const isPlayerShot = ownerType === 'player';
     playShot(weaponId, isPlayerShot ? undefined : new THREE.Vector3(origin.x, origin.y, origin.z), isPlayerShot);
+  }
+
+  // Bullet whiz — near-miss sound for AI shots passing close to player
+  if (ownerType === 'ai' && hitAgent !== gameState.player) {
+    const p = gameState.player;
+    const pPos = new THREE.Vector3(p.position.x, 1.0, p.position.z);
+    const toP = pPos.clone().sub(origin);
+    const dirN = dir.clone().normalize();
+    const proj = toP.dot(dirN);
+    if (proj > 0 && proj < hitDist) {
+      const closest = origin.clone().add(dirN.multiplyScalar(proj));
+      const passDist = closest.distanceTo(pPos);
+      if (passDist < 3 && passDist > 0.3) {
+        playBulletWhiz(closest);
+      }
+    }
   }
 
   if (hitAgent) {
@@ -78,6 +117,9 @@ export function hitscanShot(
         // Smooth falloff: 100% at 40% range → 50% at max range
         const t = (rangeFrac - 0.4) / 0.6;
         dmg *= 1 - t * 0.5;
+        (hitAgent as any)._lastHitWasFalloff = true;
+      } else {
+        (hitAgent as any)._lastHitWasFalloff = false;
       }
     }
 
@@ -89,6 +131,7 @@ export function hitscanShot(
 
     const hitCol = hitAgent.team === TEAM_BLUE ? 0x38bdf8 : 0xef4444;
     spawnImpact(endPoint, hitCol, isHeadshot ? 12 : 6);
+    spawnBloodSplatter(endPoint, dir.clone().normalize());
     playImpact(endPoint, isHeadshot ? 'headshot' : 'body');
     return true;
   }
@@ -96,9 +139,56 @@ export function hitscanShot(
   if (wallHits.length > 0) {
     const normal = wallHits[0].face?.normal || null;
     const worldNormal = normal ? normal.clone().transformDirection(wallHits[0].object.matrixWorld) : null;
-    spawnWallSparks(endPoint, worldNormal, 6);
+    // Detect surface from mesh name or material for material-aware VFX
+    const meshName = (wallHits[0].object.name || '').toLowerCase();
+    const surfaceType: 'metal' | 'wood' | 'concrete' = meshName.includes('metal') ? 'metal'
+      : meshName.includes('wood') ? 'wood' : 'concrete';
+    spawnWallSparks(endPoint, worldNormal, 6, surfaceType);
     spawnBulletHole(endPoint, worldNormal);
     playImpact(endPoint, 'wall');
+
+    // Bullet penetration — high-power hitscan weapons pierce thin walls
+    if (wep.isHitscan && wep.damage >= 18 && wallHits[0].distance < wep.range * 0.7) {
+      const penOrigin = endPoint.clone().add(dir.clone().normalize().multiplyScalar(0.3));
+      const remainRange = wep.range - wallHits[0].distance - 0.3;
+      if (remainRange > 2) {
+        const penRc = gameState.raycaster;
+        penRc.set(penOrigin, dir.clone().normalize());
+        penRc.far = remainRange;
+        // Check for agents behind the wall
+        for (const ag of agents) {
+          if (ag.isDead) continue;
+          if (ownerAgent && ag === ownerAgent) continue;
+          if (ownerAgent && !isEnemy(ownerAgent, ag)) continue;
+          const agPos = new THREE.Vector3(ag.position.x, 1.0, ag.position.z);
+          const toAgent = agPos.clone().sub(penOrigin);
+          const proj = toAgent.dot(dir.clone().normalize());
+          if (proj < 0 || proj > remainRange) continue;
+          // Check no second wall blocks
+          const penWalls = penRc.intersectObjects(wallMeshes, false);
+          if (penWalls.length > 0 && penWalls[0].distance < proj) continue;
+          const closest = penOrigin.clone().add(dir.clone().normalize().multiplyScalar(proj));
+          const bodyDist = closest.distanceTo(agPos);
+          if (bodyDist < 0.55) {
+            // Wallbang: 30% damage
+            const penDmg = wep.damage * 0.3;
+            if (ag === gameState.player) {
+              dealDmgPlayer(penDmg, ownerAgent);
+            } else {
+              dealDmgAgent(ag, penDmg, ownerAgent);
+            }
+            // Wallbang hit marker for player
+            if (ownerType === 'player') showHitMarker(false, true);
+            const penEnd = closest.clone();
+            spawnTracer(endPoint, penEnd, col);
+            const hitCol = ag.team === TEAM_BLUE ? 0x38bdf8 : 0xef4444;
+            spawnImpact(penEnd, hitCol, 4);
+            playImpact(penEnd, 'body');
+            return true;
+          }
+        }
+      }
+    }
   }
 
   return false;
@@ -155,27 +245,37 @@ export function spawnRocket(
   });
 }
 
+export type GrenadeType = 'frag' | 'smoke' | 'flash';
+
 export function spawnGrenade(
   origin: THREE.Vector3,
   dir: THREE.Vector3,
   ownerType: 'player' | 'ai',
   ownerTeam: number,
   ownerAgent: TDMAgent | null = ownerType === 'player' ? gameState.player : null,
+  life = 2.5,
+  grenadeType: GrenadeType = 'frag',
 ): void {
+  const colors: Record<GrenadeType, number> = {
+    frag: 0x445500,
+    smoke: 0x888888,
+    flash: 0xffffaa,
+  };
   const mesh = new THREE.Mesh(
     new THREE.SphereGeometry(0.1, 8, 8),
-    new THREE.MeshStandardMaterial({ color: 0x445500, emissive: 0x334400, emissiveIntensity: 0.5 }),
+    new THREE.MeshStandardMaterial({ color: colors[grenadeType], emissive: colors[grenadeType], emissiveIntensity: 0.5 }),
   );
   mesh.position.copy(origin);
   gameState.scene.add(mesh);
 
-  const light = new THREE.PointLight(0x88aa00, 0.5, 3);
+  const light = new THREE.PointLight(grenadeType === 'flash' ? 0xffffff : 0x88aa00, 0.5, 3);
   mesh.add(light);
 
   gameState.bullets.push({
     mesh, pl: light, dir: new THREE.Vector3(dir.x * 18, 6, dir.z * 18),
-    ownerType, ownerTeam, ownerAgent, dmg: 60, spd: 1, life: 2.5,
+    ownerType, ownerTeam, ownerAgent, dmg: grenadeType === 'frag' ? 60 : 0, spd: 1, life,
     isGrenade: true, splashRadius: 6,
+    grenadeType,
   });
 }
 
@@ -200,7 +300,14 @@ export function updateProjectiles(dt: number): void {
       }
 
       if (b.life <= 0) {
-        explode(b.mesh.position.clone(), b.splashRadius!, b.dmg, b.ownerAgent ?? null);
+        const gType = (b as any).grenadeType as GrenadeType | undefined;
+        if (gType === 'smoke') {
+          spawnSmokeCloud(b.mesh.position.clone());
+        } else if (gType === 'flash') {
+          triggerFlashbang(b.mesh.position.clone());
+        } else {
+          explode(b.mesh.position.clone(), b.splashRadius!, b.dmg, b.ownerAgent ?? null);
+        }
         scene.remove(b.mesh);
         bullets.splice(i, 1);
       }
@@ -275,6 +382,187 @@ function explode(pos: THREE.Vector3, radius: number, damage: number, ownerAgent:
       const dmg = Math.round(damage * falloff);
       if (ag === gameState.player) dealDmgPlayer(dmg, ownerAgent);
       else dealDmgAgent(ag, dmg, ownerAgent);
+
+      // Explosion knockback — push away from blast centre
+      const pushDir = agPos.clone().sub(pos);
+      pushDir.y = 0;
+      if (pushDir.lengthSq() > 0.001) pushDir.normalize();
+      const knockForce = falloff * 12;
+      if (ag === gameState.player) {
+        // Push player via movement velocity
+        movement.velocity.x += pushDir.x * knockForce;
+        movement.velocity.z += pushDir.z * knockForce;
+        gameState.pVelY = Math.max(gameState.pVelY, falloff * 4);
+      } else {
+        // Push bot via YUKA velocity
+        ag.velocity.x += pushDir.x * knockForce;
+        ag.velocity.z += pushDir.z * knockForce;
+      }
     }
   }
+}
+
+// ── Smoke grenade cloud ──
+const _smokeClouds: { pos: THREE.Vector3; mesh: THREE.Mesh; life: number }[] = [];
+const SMOKE_DURATION = 8;
+const SMOKE_RADIUS = 5;
+
+function spawnSmokeCloud(pos: THREE.Vector3): void {
+  const geo = new THREE.SphereGeometry(SMOKE_RADIUS, 12, 12);
+  const mat = new THREE.MeshBasicMaterial({
+    color: 0xcccccc, transparent: true, opacity: 0.45,
+    depthWrite: false, side: THREE.DoubleSide,
+  });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.position.copy(pos);
+  mesh.position.y = 1.5;
+  mesh.scale.setScalar(0.1);
+  gameState.scene.add(mesh);
+  _smokeClouds.push({ pos: pos.clone(), mesh, life: SMOKE_DURATION });
+}
+
+/** Returns true if a position is obscured by any active smoke cloud. */
+export function isInSmoke(pos: THREE.Vector3): boolean {
+  for (const s of _smokeClouds) {
+    if (s.life <= 0) continue;
+    const dx = pos.x - s.pos.x;
+    const dz = pos.z - s.pos.z;
+    if (dx * dx + dz * dz < SMOKE_RADIUS * SMOKE_RADIUS) return true;
+  }
+  return false;
+}
+
+export function updateSmokeClouds(dt: number): void {
+  for (let i = _smokeClouds.length - 1; i >= 0; i--) {
+    const s = _smokeClouds[i];
+    s.life -= dt;
+    if (s.life <= 0) {
+      gameState.scene.remove(s.mesh);
+      s.mesh.geometry.dispose();
+      (s.mesh.material as THREE.Material).dispose();
+      _smokeClouds.splice(i, 1);
+      continue;
+    }
+    // Fade in/out
+    const mat = s.mesh.material as THREE.MeshBasicMaterial;
+    if (s.life > SMOKE_DURATION - 1) {
+      const t = (SMOKE_DURATION - s.life);
+      s.mesh.scale.setScalar(0.1 + t * 0.9);
+      mat.opacity = t * 0.45;
+    } else if (s.life < 2) {
+      mat.opacity = (s.life / 2) * 0.45;
+    }
+  }
+}
+
+// ── Flashbang grenade ──
+let _flashOverlay: HTMLDivElement | null = null;
+let _flashTimer = 0;
+const FLASH_DURATION = 3;
+
+function ensureFlashOverlay(): HTMLDivElement {
+  if (!_flashOverlay) {
+    _flashOverlay = document.createElement('div');
+    _flashOverlay.id = 'flashOverlay';
+    _flashOverlay.style.cssText = 'position:fixed;inset:0;background:#fff;pointer-events:none;z-index:900;opacity:0;transition:opacity 0.1s;';
+    document.body.appendChild(_flashOverlay);
+  }
+  return _flashOverlay;
+}
+
+function triggerFlashbang(pos: THREE.Vector3): void {
+  const cam = gameState.camera.position;
+  const dist = cam.distanceTo(pos);
+  if (dist > 15) return; // out of range
+
+  // Check if player is facing the flash
+  const toFlash = new THREE.Vector3().subVectors(pos, cam).normalize();
+  const camDir = new THREE.Vector3();
+  gameState.camera.getWorldDirection(camDir);
+  const dot = camDir.dot(toFlash);
+
+  // Even if not facing, close flashbangs still partially blind
+  const intensity = Math.max(0, 1 - dist / 15) * (dot > 0 ? 1 : 0.3);
+  if (intensity < 0.1) return;
+
+  _flashTimer = FLASH_DURATION * intensity;
+  const el = ensureFlashOverlay();
+  el.style.opacity = String(Math.min(1, intensity));
+  playExplosion(pos); // reuse explosion sound
+}
+
+export function updateFlashEffect(dt: number): void {
+  if (_flashTimer <= 0) return;
+  _flashTimer -= dt;
+  const el = ensureFlashOverlay();
+  if (_flashTimer <= 0) {
+    el.style.opacity = '0';
+  } else {
+    el.style.opacity = String(Math.min(1, _flashTimer / FLASH_DURATION));
+  }
+}
+
+// ── Grenade proximity warning ────────────────
+const GRENADE_WARN_DIST = 10;
+let grenadeWarnEl: HTMLDivElement | null = null;
+
+function ensureGrenadeWarnEl(): HTMLDivElement {
+  if (!grenadeWarnEl) {
+    grenadeWarnEl = document.createElement('div');
+    grenadeWarnEl.id = 'grenadeWarn';
+    document.getElementById('cw')?.appendChild(grenadeWarnEl);
+  }
+  return grenadeWarnEl;
+}
+
+export function updateGrenadeWarning(): void {
+  const { bullets, player, cameraYaw } = gameState;
+  let closest: { dx: number; dz: number; dist: number } | null = null;
+
+  for (const b of bullets) {
+    if (!b.isGrenade) continue;
+    if (b.ownerAgent && !isEnemy(b.ownerAgent, player)) continue;
+    const dx = b.mesh.position.x - player.position.x;
+    const dz = b.mesh.position.z - player.position.z;
+    const dist = Math.sqrt(dx * dx + dz * dz);
+    if (dist < GRENADE_WARN_DIST && (!closest || dist < closest.dist)) {
+      closest = { dx, dz, dist };
+    }
+  }
+
+  const el = ensureGrenadeWarnEl();
+  if (!closest) {
+    el.classList.remove('on');
+    return;
+  }
+
+  const angle = Math.atan2(-closest.dx, -closest.dz);
+  const rel = angle - cameraYaw;
+  const deg = (rel * 180 / Math.PI);
+  const opacity = 0.5 + 0.5 * (1 - closest.dist / GRENADE_WARN_DIST);
+  el.classList.add('on');
+  el.style.transform = `translate(-50%,-50%) rotate(${deg}deg)`;
+  el.style.opacity = String(opacity);
+}
+
+// ── Friendly fire warning ────────────────
+let ffWarnEl: HTMLDivElement | null = null;
+let ffTimeout = 0;
+
+function ensureFFWarnEl(): HTMLDivElement {
+  if (!ffWarnEl) {
+    ffWarnEl = document.createElement('div');
+    ffWarnEl.id = 'ffWarn';
+    ffWarnEl.textContent = 'FRIENDLY FIRE';
+    document.getElementById('cw')?.appendChild(ffWarnEl);
+  }
+  return ffWarnEl;
+}
+
+function flashFriendlyFireWarning(): void {
+  const el = ensureFFWarnEl();
+  el.classList.add('on');
+  playFriendlyFireBuzz();
+  clearTimeout(ffTimeout);
+  ffTimeout = window.setTimeout(() => { el.classList.remove('on'); }, 600);
 }

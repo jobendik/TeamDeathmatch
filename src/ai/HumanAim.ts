@@ -176,7 +176,8 @@ export function updateAim(ag: TDMAgent, dt: number): void {
   aim.yaw = normAngle(aim.yaw);
 
   // Micro-jitter
-  const jitterScale = p.microJitter * (1 + ag.pressureLevel * 1.5);
+  const recentDmg = Math.max(0, 1 - (gameState.worldElapsed - ag.lastDamageTime) * 2);
+  const jitterScale = p.microJitter * (1 + ag.pressureLevel * 1.5 + recentDmg * 2);
   aim.yaw += (Math.random() - 0.5) * jitterScale;
   aim.pitch += (Math.random() - 0.5) * jitterScale * 0.6;
 

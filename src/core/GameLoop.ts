@@ -15,17 +15,17 @@
 import * as THREE from 'three';
 import { gameState } from './GameState';
 import { Audio } from '@/audio/AudioManager';
-import { updateHeartbeat } from '@/audio/SoundHooks';
+import { updateHeartbeat, updateSubtitles } from '@/audio/SoundHooks';
 import { updatePlayer, keepInside } from '@/entities/Player';
 import { updateAI } from '@/ai/AIController';
-import { updateProjectiles } from '@/combat/Hitscan';
+import { updateProjectiles, updateGrenadeWarning, updateSmokeClouds, updateFlashEffect } from '@/combat/Hitscan';
 import { updateParticles, updateScreenShake, initAmbientDust, updateAmbientDust } from '@/combat/Particles';
 import { updatePickups } from '@/combat/Pickups';
 import { updateRespawns } from '@/combat/Combat';
 import { updateObjectives } from '@/combat/Objectives';
 import { updateVisuals } from '@/rendering/Visuals';
 import { updateAgentAnimations } from '@/rendering/AgentAnimations';
-import { updateHUD, updateCrosshair } from '@/ui/HUD';
+import { updateHUD, updateCrosshair, updateCookTimer } from '@/ui/HUD';
 import { drawMinimap } from '@/ui/Minimap';
 import { updateTabboard, updateScoreboard } from '@/ui/Scoreboard';
 import { updateViewmodel, renderViewmodel } from '@/rendering/WeaponViewmodel';
@@ -41,6 +41,10 @@ import { updateWaypoints } from '@/ui/Waypoints';
 import { recordKillcamSnapshot } from '@/ui/Killcam';
 import { getPostFX } from '@/rendering/PostProcess.Bridge';
 import { updateStreaks } from '@/combat/Streaks';
+import { updatePlayerRecoilRecovery } from '@/combat/Recoil';
+import { updateSuppression } from '@/combat/Suppression';
+import { updateHitReactions } from '@/combat/HitReactions';
+import { updateDynamicMusic } from '@/audio/DynamicMusic';
 
 // Lazy imports — keep BR modules out of the initial bundle cost.
 let brModule: typeof import('@/br/BRController') | null = null;
@@ -56,12 +60,45 @@ async function ensureBR() {
 let _hudThrottle = 0;
 let _minimapThrottle = 0;
 
+// ── FPS counter ──
+let _fpsFrames = 0;
+let _fpsLastTime = 0;
+let _fpsDisplay = 0;
+
+// ── Warmup countdown state ──
+let warmupEl: HTMLDivElement | null = null;
+let lastWarmupSec = -1;
+
+function ensureWarmupEl(): HTMLDivElement {
+  if (!warmupEl) {
+    warmupEl = document.createElement('div');
+    warmupEl.id = 'warmupCountdown';
+    warmupEl.style.cssText = `
+      position:fixed; top:35%; left:50%; transform:translate(-50%,-50%);
+      font-family:var(--hud-font,'monospace'); font-size:72px; font-weight:900;
+      color:#ffcc33; text-shadow:0 0 30px rgba(255,200,50,0.6), 0 0 60px rgba(255,150,0,0.3);
+      z-index:80; pointer-events:none; opacity:0; transition:opacity 0.15s;
+      letter-spacing:0.1em;
+    `;
+    document.body.appendChild(warmupEl);
+  }
+  return warmupEl;
+}
+
 export function animate(): void {
   requestAnimationFrame(animate);
 
   const rawDt = Math.min(gameState.time.update().getDelta(), 0.05);
   const frozen = !!gameState.paused;
-  const dt = frozen ? 0 : rawDt;
+  // Death slow-mo: 30% speed for 0.4s on player death
+  // Post-kill zoom: 60% speed for 0.2s after player scores a kill
+  let slowMo = 1;
+  if (gameState.pDead && (gameState.worldElapsed - (gameState.deathTime ?? 0)) < 0.4) {
+    slowMo = 0.3;
+  } else if (!gameState.pDead && (gameState.worldElapsed - gameState.lastPlayerKillTime) < 0.2) {
+    slowMo = 0.6;
+  }
+  const dt = frozen ? 0 : rawDt * slowMo;
   const isBR = gameState.mode === 'br';
 
   if (gameState.floorMat?.uniforms?.uTime) {
@@ -70,7 +107,29 @@ export function animate(): void {
 
   if (!frozen && dt > 0) {
     gameState.worldElapsed += dt;
-    gameState.matchTimeRemaining = Math.max(0, gameState.matchTimeRemaining - dt);
+
+    // ── Warmup countdown ──
+    if (gameState.warmupTimer > 0) {
+      gameState.warmupTimer = Math.max(0, gameState.warmupTimer - dt);
+      const sec = Math.ceil(gameState.warmupTimer);
+      const el = ensureWarmupEl();
+      if (gameState.warmupTimer <= 0) {
+        // GO!
+        el.textContent = 'FIGHT';
+        el.style.opacity = '1';
+        el.style.color = '#ff4444';
+        lastWarmupSec = -1;
+        setTimeout(() => { el.style.opacity = '0'; }, 800);
+      } else if (sec !== lastWarmupSec) {
+        lastWarmupSec = sec;
+        el.textContent = String(sec);
+        el.style.opacity = '1';
+        el.style.color = '#ffcc33';
+      }
+      // During warmup, don't count down match time
+    } else {
+      gameState.matchTimeRemaining = Math.max(0, gameState.matchTimeRemaining - dt);
+    }
     gameState.perceptionFrame++;
 
     updatePlayer(dt);
@@ -86,12 +145,15 @@ export function animate(): void {
 
     recordKillcamSnapshot();
     updateHeartbeat(dt);
+    updateSubtitles(dt);
 
     const camFwd = new THREE.Vector3();
     gameState.camera.getWorldDirection(camFwd);
     Audio.updateListener(gameState.camera.position, camFwd);
 
     updateProjectiles(dt);
+    updateSmokeClouds(dt);
+    updateFlashEffect(dt);
     updateParticles(dt);
     updateAmbientDust(dt);
     updateScreenShake(dt);
@@ -99,7 +161,7 @@ export function animate(): void {
     if (!isBR) updatePickups();
 
     updateObjectives();
-    updateRespawns();
+    updateRespawns(dt);
 
     // In BR we want to skip heavy per-agent work for the entire time the
     // player is airborne, not just the 'airdrop' phase. Otherwise the
@@ -134,6 +196,11 @@ export function animate(): void {
       }
     }
 
+    updateSuppression(dt);
+    updateHitReactions(dt);
+    updatePlayerRecoilRecovery(dt);
+    updateDynamicMusic(dt);
+
     if (brOnPlane) {
       // Plane window: nothing agent-related runs. Bots are inactive,
       // visuals not needed.
@@ -146,6 +213,7 @@ export function animate(): void {
     }
 
     updateDamageArcs(dt);
+    updateGrenadeWarning();
     updateFloatingDamage(dt);
     updateAnnouncer(dt);
     updatePings(dt);
@@ -157,6 +225,7 @@ export function animate(): void {
 
   updateHUD();
   updateCrosshair();
+  updateCookTimer();
 
   _minimapThrottle++;
   if (!isBR || _minimapThrottle % 2 === 0) drawMinimap();
@@ -186,6 +255,19 @@ export function animate(): void {
   }
 
   renderViewmodel();
+
+  // ── FPS counter ──
+  _fpsFrames++;
+  const now = performance.now();
+  if (now - _fpsLastTime >= 1000) {
+    _fpsDisplay = _fpsFrames;
+    _fpsFrames = 0;
+    _fpsLastTime = now;
+  }
+  if (gameState.showFPS) {
+    const fpsEl = document.getElementById('fpsCounter');
+    if (fpsEl) fpsEl.textContent = `${_fpsDisplay} FPS`;
+  }
 }
 
 /**

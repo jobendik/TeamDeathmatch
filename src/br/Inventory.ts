@@ -1,5 +1,6 @@
 import type { WeaponId } from '@/config/weapons';
 import type { Rarity, AttachmentSlot } from './BRConfig';
+import { ATTACHMENTS } from './BRConfig';
 
 export type ItemCategory = 'weapon' | 'ammo' | 'heal' | 'shield' | 'armor' | 'grenade' | 'attachment';
 
@@ -213,4 +214,20 @@ export function consumeShield(inv: PlayerInventory, big: boolean): boolean {
   if (big && inv.bigShields > 0) { inv.bigShields--; return true; }
   if (!big && inv.smallShields > 0) { inv.smallShields--; return true; }
   return false;
+}
+
+/** Get combined attachment modifiers for the active weapon. */
+export function getAttachmentModifiers(inv: PlayerInventory): { spreadMul: number; magMul: number; reloadMul: number } {
+  const result = { spreadMul: 1, magMul: 1, reloadMul: 1 };
+  const weapon = getActiveWeapon(inv);
+  if (!weapon?.attachments) return result;
+  for (const attId of Object.values(weapon.attachments)) {
+    if (!attId) continue;
+    const def = ATTACHMENTS.find(a => a.id === attId);
+    if (!def) continue;
+    if (def.spreadMul) result.spreadMul *= def.spreadMul;
+    if (def.magMul) result.magMul *= def.magMul;
+    if (def.reloadMul) result.reloadMul *= def.reloadMul;
+  }
+  return result;
 }

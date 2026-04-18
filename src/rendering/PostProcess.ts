@@ -18,6 +18,7 @@ const CinematicShader = {
     uVignette: { value: 0.55 },       // 0 = none, 1 = heavy (0.3–0.5 is FPS-standard)
     uHitPulse: { value: 0 },          // 0..1 — spikes red when hit
     uLowHpPulse: { value: 0 },        // 0..1 — desaturate + red edges when low hp
+    uKillPulse: { value: 0 },         // 0..1 — brief saturation+contrast boost on kill
   },
   vertexShader: /* glsl */`
     varying vec2 vUv;
@@ -32,6 +33,7 @@ const CinematicShader = {
     uniform float uVignette;
     uniform float uHitPulse;
     uniform float uLowHpPulse;
+    uniform float uKillPulse;
     varying vec2 vUv;
 
     void main() {
@@ -61,6 +63,15 @@ const CinematicShader = {
         col.r += uLowHpPulse * edgeMask * 0.35 * (0.7 + 0.3 * sin(uTime * 6.0));
       }
 
+      // Kill pulse — brief saturation + contrast boost
+      if (uKillPulse > 0.001) {
+        float lum = dot(col, vec3(0.299, 0.587, 0.114));
+        // Boost saturation by pushing away from grey
+        col = mix(vec3(lum), col, 1.0 + uKillPulse * 0.35);
+        // Slight contrast push
+        col = mix(vec3(0.5), col, 1.0 + uKillPulse * 0.12);
+      }
+
       gl_FragColor = vec4(col, 1.0);
     }
   `,
@@ -72,6 +83,7 @@ export interface PostFX {
   cinematic: ShaderPass;
   fxaa: ShaderPass;
   triggerHit: (intensity?: number) => void;
+  triggerKill: () => void;
   setLowHp: (t: number) => void;
   update: (dt: number) => void;
   resize: () => void;
@@ -112,20 +124,26 @@ export function initPostProcess(): PostFX {
 
   let hitPulse = 0;
   let lowHp = 0;
+  let killPulse = 0;
 
   return {
     composer, bloom, cinematic, fxaa,
     triggerHit(intensity = 0.55) {
       hitPulse = Math.max(hitPulse, intensity);
     },
+    triggerKill() {
+      killPulse = 0.4;
+    },
     setLowHp(t: number) {
       lowHp = t;
     },
     update(dt: number) {
       hitPulse = Math.max(0, hitPulse - dt * 2.5);
+      killPulse = Math.max(0, killPulse - dt * 3);
       cinematic.uniforms.uTime.value += dt;
       cinematic.uniforms.uHitPulse.value = hitPulse;
       cinematic.uniforms.uLowHpPulse.value = lowHp;
+      cinematic.uniforms.uKillPulse.value = killPulse;
     },
     resize() {
       const w = innerWidth, h = innerHeight;

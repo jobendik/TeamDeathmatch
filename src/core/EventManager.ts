@@ -10,11 +10,51 @@ import { fireViewmodel, setViewmodelWeapon, resizeViewmodel } from '@/rendering/
 import { togglePause } from '@/ui/Menus';
 import { isPlayerInAir } from '@/br/DropPlane';
 import { getPlayerInventory, setBRActiveSlotByOrder, syncInventoryFromCombat } from '@/br/InventoryUI';
-import { getAmmoPool } from '@/br/Inventory';
-import { requestJump, toggleCrouch, setCrouch, setLean, attemptSlide } from '@/movement/MovementController';
+import { getAmmoPool, getAttachmentModifiers } from '@/br/Inventory';
+import { requestJump, toggleCrouch, setCrouch, setLean, attemptSlide, movement } from '@/movement/MovementController';
 import { Audio } from '@/audio/AudioManager';
 import { playEmptyClick, playWeaponSwap } from '@/audio/SoundHooks';
+import { applyPlayerRecoil } from '@/combat/Recoil';
+import { getSuppressionSpreadMul } from '@/combat/Suppression';
 
+let lastShiftPressTime = 0;
+
+// ── Keybind remapping system ──
+export type ActionKey = 'forward' | 'left' | 'back' | 'right' | 'reload' | 'sprint'
+  | 'grenade' | 'weapon1' | 'weapon2' | 'weapon3' | 'lastWeapon' | 'jump'
+  | 'crouch' | 'leanLeft' | 'leanRight' | 'ping' | 'interact' | 'melee' | 'cycleGrenade';
+
+const defaultKeyMap: Record<ActionKey, string> = {
+  forward: 'w', left: 'a', back: 's', right: 'd',
+  reload: 'r', sprint: 'shift', grenade: 'g',
+  weapon1: '1', weapon2: '2', weapon3: '3', lastWeapon: 'v',
+  jump: ' ', crouch: 'c', leanLeft: 'q', leanRight: 'e',
+  ping: 'x', interact: 'e', melee: 'f', cycleGrenade: '4',
+};
+
+let keyMap: Record<ActionKey, string> = { ...defaultKeyMap };
+
+/** Get the current key mapping */
+export function getKeyMap(): Record<ActionKey, string> { return { ...keyMap }; }
+
+/** Set a keybind */
+export function setKeybind(action: ActionKey, key: string): void {
+  keyMap[action] = key.toLowerCase();
+  try { localStorage.setItem('warzone_keybinds', JSON.stringify(keyMap)); } catch { /* ignore */ }
+}
+
+/** Load keybinds from localStorage */
+function loadKeybinds(): void {
+  try {
+    const raw = localStorage.getItem('warzone_keybinds');
+    if (raw) keyMap = { ...defaultKeyMap, ...JSON.parse(raw) };
+  } catch { /* ignore */ }
+}
+
+/** Check if a pressed key matches an action */
+function isAction(key: string, action: ActionKey): boolean {
+  return key === keyMap[action];
+}
 
 function getCameraForward(): THREE.Vector3 {
   const { cameraYaw, cameraPitch } = gameState;
@@ -66,7 +106,14 @@ function startReload(): void {
   const wep = WEAPONS[gameState.pWeaponId];
   gameState.pReloading = true;
   gameState.pReloadTimer = 0;
-  gameState.pReloadDuration = wep.reloadTime;
+  // Tactical reload (mag not empty) is 25% faster than empty reload
+  const tacMul = gameState.pAmmo > 0 ? 0.75 : 1.0;
+  let reloadMul = 1;
+  if (gameState.mode === 'br') {
+    const inv = getPlayerInventory();
+    if (inv) reloadMul = getAttachmentModifiers(inv).reloadMul;
+  }
+  gameState.pReloadDuration = wep.reloadTime * tacMul * reloadMul;
   dom.reloadBar.classList.add('on');
   dom.reloadText.classList.add('on');
 }
@@ -80,14 +127,18 @@ function switchWeapon(slot: number): void {
     dom.reloadText.classList.remove('on');
   }
 
+  const prevSlot = gameState.pActiveSlot;
+
   if (gameState.mode === 'br') {
     if (!setBRActiveSlotByOrder(slot)) return;
+    gameState.pLastSlot = prevSlot;
     gameState.pShootTimer = 0;
     gameState.pBurstCount = 0;
     playWeaponSwap();
     return;
   }
 
+  gameState.pLastSlot = prevSlot;
   gameState.pActiveSlot = slot;
   gameState.pWeaponId = gameState.pWeaponSlots[slot];
 
@@ -108,6 +159,9 @@ export function onShoot(): void {
   if (gameState.pWeaponId === 'unarmed') return; // can't shoot unarmed
   if (gameState.pShootTimer > 0) return;
   if (isPlayerInAir()) return; // no shooting during BR drop
+  // Sprint-to-fire delay — can't shoot while sprinting or within 150ms of stopping
+  if (movement.isSprinting) return;
+  if (movement.sprintT > 0.3) return; // sprintT decays at dt*8, ~150ms to drop below 0.3
 
   const { player, pWeaponId } = gameState;
   const wep = WEAPONS[pWeaponId];
@@ -119,6 +173,10 @@ export function onShoot(): void {
     hitscanShot(o, fwd, 'player', player.team, pWeaponId, 0x60a5fa, player);
     fireViewmodel();
     gameState.pShootTimer = wep.fireRate;
+    // Melee lunge — forward velocity burst
+    const lungeSpeed = 8;
+    movement.velocity.x += fwd.x * lungeSpeed;
+    movement.velocity.z += fwd.z * lungeSpeed;
     updateHUD();
     return;
   }
@@ -136,7 +194,14 @@ export function onShoot(): void {
   const errMul = gameState.isADS ? 0.35 : gameState.keys.shift ? 1.35 : 1.0;
   const firstShotBonus = (gameState.pAmmo === gameState.pMaxAmmo || gameState.pFirstShotReady) ? 0.5 : 1;
   const spreadAccum = gameState.pSpreadAccum;
-  const err = wep.aimError * errMul * firstShotBonus + spreadAccum * 0.012;
+  const suppressMul = getSuppressionSpreadMul();
+  // BR attachment spread bonus
+  let attachMul = 1;
+  if (gameState.mode === 'br') {
+    const inv = getPlayerInventory();
+    if (inv) attachMul = getAttachmentModifiers(inv).spreadMul;
+  }
+  const err = wep.aimError * errMul * firstShotBonus * suppressMul * attachMul + spreadAccum * 0.012;
   if (err > 0) {
     dir.x += (Math.random() - 0.5) * err;
     dir.y += (Math.random() - 0.5) * err * 0.5;
@@ -154,6 +219,9 @@ export function onShoot(): void {
     hitscanShot(o, dir, 'player', player.team, pWeaponId, 0x60a5fa, player);
   }
 
+  applyPlayerRecoil(pWeaponId);
+  (gameState as any)._lastShotTime = gameState.worldElapsed;
+
   fireViewmodel();
   flashCrosshairFire();
   gameState.pAmmo--;
@@ -166,20 +234,34 @@ export function onShoot(): void {
   if (gameState.pAmmo <= 0) startReload();
 }
 
-function throwGrenade(): void {
+function startCookGrenade(): void {
   if (gameState.pDead) return;
   if (gameState.pGrenades <= 0) return;
   if (gameState.pGrenadeCooldown > 0) return;
-  if (isPlayerInAir()) return; // no grenades during BR drop
+  if (gameState.pCookingGrenade) return;
+  if (isPlayerInAir()) return;
+
+  gameState.pCookingGrenade = true;
+  gameState.pCookTimer = 0;
+}
+
+export function releaseGrenade(): void {
+  if (!gameState.pCookingGrenade) return;
+  gameState.pCookingGrenade = false;
 
   const { player } = gameState;
   const dir = getCameraForward();
   const o = getShotOrigin('grenade');
+  const life = Math.max(0.3, 2.5 - gameState.pCookTimer);
+  const gType = gameState.pGrenadeType;
 
-  spawnGrenade(o, dir, 'player', player.team, player);
-  gameState.pGrenades--;
+  spawnGrenade(o, dir, 'player', player.team, player, life, gType);
+  if (gType === 'smoke') gameState.pSmokes--;
+  else if (gType === 'flash') gameState.pFlashbangs--;
+  else gameState.pGrenades--;
   syncInventoryFromCombat();
   gameState.pGrenadeCooldown = 1.0;
+  gameState.pCookTimer = 0;
   updateHUD();
 }
 
@@ -205,17 +287,28 @@ function onMouseMove(e: MouseEvent): void {
 
 export function bindEvents(): void {
   const { keys } = gameState;
+  loadKeybinds();
 
   window.addEventListener('keydown', async (e) => {
     const k = e.key.toLowerCase();
-    if (k in keys) { (keys as any)[k] = true; e.preventDefault(); }
+    // Map remappable keys to the key state object
+    if (isAction(k, 'forward'))  { keys.w = true; e.preventDefault(); }
+    if (isAction(k, 'left'))     { keys.a = true; e.preventDefault(); }
+    if (isAction(k, 'back'))     { keys.s = true; e.preventDefault(); }
+    if (isAction(k, 'right'))    { keys.d = true; e.preventDefault(); }
+    if (isAction(k, 'reload'))   { keys.r = true; e.preventDefault(); }
+    if (isAction(k, 'sprint'))   { keys.shift = true; e.preventDefault(); }
+    if (isAction(k, 'grenade'))  { keys.g = true; e.preventDefault(); }
+    if (isAction(k, 'weapon1'))  { keys['1'] = true; e.preventDefault(); }
+    if (isAction(k, 'weapon2'))  { keys['2'] = true; e.preventDefault(); }
+    if (isAction(k, 'weapon3'))  { keys['3'] = true; e.preventDefault(); }
     if (k === 'tab') { e.preventDefault(); keys.tab = true; }
 
-    if (k === 'r' && !gameState.pDead && !gameState.pReloading && gameState.pWeaponId !== 'unarmed' && gameState.pAmmo < gameState.pMaxAmmo && (gameState.mode === 'br' || gameState.pAmmoReserve > 0)) {
+    if (isAction(k, 'reload') && !gameState.pDead && !gameState.pReloading && gameState.pWeaponId !== 'unarmed' && gameState.pAmmo < gameState.pMaxAmmo && (gameState.mode === 'br' || gameState.pAmmoReserve > 0)) {
       startReload();
     }
 
-    if (k === 'g') throwGrenade();
+    if (isAction(k, 'grenade')) startCookGrenade();
 
     if (k === 'enter' && gameState.mode === 'br' && gameState.pDead) {
       const br = await import('@/br/BRController');
@@ -223,9 +316,10 @@ export function bindEvents(): void {
       return;
     }
 
-    if (k === '1') switchWeapon(0);
-    if (k === '2') switchWeapon(1);
-    if (k === '3') switchWeapon(2);
+    if (isAction(k, 'weapon1')) switchWeapon(0);
+    if (isAction(k, 'weapon2')) switchWeapon(1);
+    if (isAction(k, 'weapon3')) switchWeapon(2);
+    if (isAction(k, 'lastWeapon')) switchWeapon(gameState.pLastSlot);
 
     // BR keys
     if (gameState.mode === 'br') {
@@ -256,23 +350,37 @@ export function bindEvents(): void {
     }
 
     // Movement keys
-    if (k === ' ' && !gameState.pDead) {
+    if (isAction(k, 'jump') && !gameState.pDead) {
       requestJump();
     }
-    if (k === 'c') {
+    if (isAction(k, 'crouch')) {
       toggleCrouch();
       if (keys.shift && (keys.w || keys.a || keys.s || keys.d)) attemptSlide();
     }
-    if (k === 'q') setLean(-1);
-    if (k === 'e') setLean(1);
-    if (k === 'shift' && (keys.w || keys.a || keys.s || keys.d)) {
+    if (isAction(k, 'leanLeft')) setLean(-1);
+    if (isAction(k, 'leanRight')) setLean(1);
+    if (isAction(k, 'sprint') && (keys.w || keys.a || keys.s || keys.d)) {
       // First press of shift while moving — try slide if already at speed
       // (real slide is auto when sprint+crouch, but C+Shift triggers it)
       attemptSlide();
+      // Double-tap shift → tactical sprint
+      const now = performance.now();
+      if (now - lastShiftPressTime < 350 && movement.tacSprintCooldown <= 0 && !movement.isTacSprinting) {
+        movement.isTacSprinting = true;
+        movement.tacSprintTimer = 3;
+      }
+      lastShiftPressTime = now;
     }
-    if (k === 'x') {
+    if (isAction(k, 'ping')) {
       const { fireDeferredPing } = await import('@/ui/PingSystem');
       fireDeferredPing();
+    }
+
+    if (isAction(k, 'cycleGrenade')) {
+      const seq: ('frag' | 'smoke' | 'flash')[] = ['frag', 'smoke', 'flash'];
+      const idx = seq.indexOf(gameState.pGrenadeType);
+      gameState.pGrenadeType = seq[(idx + 1) % seq.length];
+      updateHUD();
     }
 
     if (k === 'escape') {
@@ -288,10 +396,21 @@ export function bindEvents(): void {
 
   window.addEventListener('keyup', (e) => {
     const k = e.key.toLowerCase();
-    if (k in keys) (keys as any)[k] = false;
+    // Reverse-map keys
+    if (isAction(k, 'forward'))  keys.w = false;
+    if (isAction(k, 'left'))     keys.a = false;
+    if (isAction(k, 'back'))     keys.s = false;
+    if (isAction(k, 'right'))    keys.d = false;
+    if (isAction(k, 'reload'))   keys.r = false;
+    if (isAction(k, 'sprint'))   keys.shift = false;
+    if (isAction(k, 'grenade'))  keys.g = false;
+    if (isAction(k, 'weapon1'))  keys['1'] = false;
+    if (isAction(k, 'weapon2'))  keys['2'] = false;
+    if (isAction(k, 'weapon3'))  keys['3'] = false;
     if (k === 'tab') keys.tab = false;
-    if (k === 'q' || k === 'e') setLean(0);
-    if (k === 'c') {
+    if (isAction(k, 'leanLeft') || isAction(k, 'leanRight')) setLean(0);
+    if (isAction(k, 'grenade')) releaseGrenade();
+    if (isAction(k, 'crouch')) {
       // Hold-to-crouch: uncomment to make crouch hold-only instead of toggle
       // setCrouch(false);
     }

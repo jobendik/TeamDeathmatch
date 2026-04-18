@@ -1,6 +1,7 @@
 import { gameState } from '@/core/GameState';
 import { announce } from './Announcer';
 import { fireChallengeEvent } from './Challenges';
+import { playMedalSound } from '@/audio/SoundHooks';
 import type { TDMAgent } from '@/entities/TDMAgent';
 import { WEAPONS } from '@/config/weapons';
 
@@ -23,7 +24,7 @@ export const MEDALS: Record<MedalId, MedalDef> = {
   headshot:     { name: 'HEADSHOT',     xp: 50,  color: '#ffcc33', tier: 'silver', icon: '🎯' },
   long_shot:    { name: 'LONG SHOT',    xp: 75,  color: '#60a5fa', tier: 'silver', icon: '🔭' },
   point_blank:  { name: 'POINT BLANK',  xp: 40,  color: '#f97316', tier: 'bronze', icon: '💥' },
-  revenge:      { name: 'REVENGE',      xp: 60,  color: '#a855f7', tier: 'silver', icon: '⚔' },
+  revenge:      { name: 'REVENGE',      xp: 60,  color: '#a855f7', tier: 'gold', icon: '⚔' },
   clutch:       { name: 'CLUTCH',       xp: 150, color: '#eab308', tier: 'epic',   icon: '💎' },
   savior:       { name: 'SAVIOR',       xp: 80,  color: '#22d66a', tier: 'silver', icon: '🛡' },
   multi_kill:   { name: 'DOUBLE KILL',  xp: 100, color: '#f59e0b', tier: 'silver', icon: '2×' },
@@ -68,6 +69,7 @@ export function awardMedal(id: MedalId): void {
   matchState.playerXP += def.xp;
   matchState.medalsEarned.push({ medal: id, at: gameState.worldElapsed });
   fireChallengeEvent({ type: 'medal', id });
+  playMedalSound(def.tier);
 
   const ticker = ensureTicker();
   const item = document.createElement('div');

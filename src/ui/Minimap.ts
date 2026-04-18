@@ -169,6 +169,36 @@ export function drawMinimap(): void {
     ctx.restore();
   }
 
+  // ── Damage direction arrow ──
+  const dmgAge = gameState.worldElapsed - (gameState.pLastDamageTime ?? -999);
+  if (dmgAge < 2 && (gameState as any).pLastAttackerX != null) {
+    const ax = (gameState as any).pLastAttackerX as number;
+    const az = (gameState as any).pLastAttackerZ as number;
+    const dx = ax - player.position.x;
+    const dz = az - player.position.z;
+    const angle = Math.atan2(dx, dz);
+    const arrowDist = Math.min(w * 0.42, Math.hypot(dx, dz) * scale);
+    const arrowX = cx + Math.sin(angle) * arrowDist;
+    const arrowY = cy + Math.cos(angle) * arrowDist;
+    const alpha = Math.max(0, 1 - dmgAge / 2);
+
+    ctx.save();
+    ctx.translate(arrowX, arrowY);
+    ctx.rotate(-angle);
+    ctx.globalAlpha = alpha * 0.85;
+    ctx.fillStyle = '#ff4444';
+    ctx.shadowColor = '#ff0000';
+    ctx.shadowBlur = 8;
+    ctx.beginPath();
+    ctx.moveTo(0, -6);
+    ctx.lineTo(-4, 4);
+    ctx.lineTo(0, 2);
+    ctx.lineTo(4, 4);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+
   // Coords readout
   if (dom.mmCoords) {
     const px = Math.round(player.position.x);

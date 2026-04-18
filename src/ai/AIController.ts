@@ -20,6 +20,7 @@ import { WEAPONS, CLASS_DEFAULT_WEAPON, type WeaponId } from '@/config/weapons';
 // Bot footstep timers (keyed by agent name)
 const _footstepTimers = new Map<string, number>();
 import { deliverPendingCallouts, queueCallout } from './TeamIntel';
+import { shouldBotHesitate, getGlanceDirection } from './ContextualPerception';
 import type { TeamIntent } from './AITypes';
 
 // ═══════════════════════════════════════════
@@ -46,6 +47,25 @@ function updateTeamBoard(teamId: number): void {
   const allies = gameState.agents.filter(a => a.team === teamId && !a.isDead && a !== gameState.player);
   const enemies = gameState.agents.filter(a => a.team !== teamId && !a.isDead);
   if (allies.length === 0) return;
+
+  // ── Trade-frag coordination ──
+  // For each bot engaging a target, nearby allies get a hint to approach from a different angle
+  for (const ally of allies) {
+    (ally as any)._tradeAngleOffset = 0;
+  }
+  for (const ally of allies) {
+    if (!ally.currentTarget || ally.currentTarget.isDead) continue;
+    const tgtPos = ally.currentTarget.position;
+    const allyAngle = Math.atan2(ally.position.x - tgtPos.x, ally.position.z - tgtPos.z);
+
+    for (const nearby of allies) {
+      if (nearby === ally) continue;
+      if (nearby.position.distanceTo(ally.position) > 25) continue;
+      // Give nearby bots a perpendicular offset angle relative to the engaging ally's angle
+      const side = nearby.strafeDir > 0 ? 1 : -1;
+      (nearby as any)._tradeAngleOffset = allyAngle + side * (Math.PI * 0.4 + Math.random() * 0.3);
+    }
+  }
 
   // Calculate team health and pressure
   const avgHP = allies.reduce((s, a) => s + a.hp / a.maxHP, 0) / allies.length;
@@ -85,14 +105,30 @@ function updateTeamBoard(teamId: number): void {
   }
 
   // Apply team intent to agents' aggression
-  for (const ally of allies) {
+  for (let i = 0; i < allies.length; i++) {
+    const ally = allies[i];
     switch (board.intent) {
       case 'hunt':
+        ally.fuzzyAggr = Math.min(100, ally.fuzzyAggr + 10);
+        break;
       case 'collapse':
         ally.fuzzyAggr = Math.min(100, ally.fuzzyAggr + 10);
+        // Assign unique approach angle for coordinated pinch
+        if (board.focusPos) {
+          const angleStep = (Math.PI * 2) / allies.length;
+          const angle = angleStep * i;
+          const pinchDist = 8;
+          const px = board.focusPos.x + Math.cos(angle) * pinchDist;
+          const pz = board.focusPos.z + Math.sin(angle) * pinchDist;
+          (ally as any)._pinchTarget = new YUKA.Vector3(px, 0, pz);
+        }
         break;
       case 'reset':
         ally.fuzzyAggr = Math.max(0, ally.fuzzyAggr - 15);
+        (ally as any)._pinchTarget = null;
+        break;
+      default:
+        (ally as any)._pinchTarget = null;
         break;
     }
   }
@@ -352,6 +388,16 @@ export function updateAI(ag: TDMAgent, dt: number): void {
 
   checkAudioAwareness(ag);
 
+  // Check-your-six: idle bots periodically glance around
+  if (!ag.hasTarget) {
+    const glance = getGlanceDirection(ag);
+    if (glance) {
+      const gd = glance.clone().multiplyScalar(10);
+      ag.lastKnownPos.set(ag.position.x + gd.x, 0, ag.position.z + gd.z);
+      ag.hasLastKnown = true;
+    }
+  }
+
   // Pre-aim: if we have enemy memory, aim toward most likely threat direction
   if (!ag.hasTarget && ag.personality && ag.personality.preAimBias > 0.2) {
     let bestConf = 0;
@@ -405,6 +451,8 @@ export function updateAI(ag: TDMAgent, dt: number): void {
       const skillMod = p ? (1.3 - p.skill * 0.6) : 1.0;
       const tiltMod = 1 + ag.tiltLevel * 0.4;
       ag.reactionTimer = ag.reactionTime * skillMod * tiltMod * (0.7 + Math.random() * 0.6);
+      // Contextual hesitation: surprise, low ammo, health disadvantage
+      ag.reactionTimer += shouldBotHesitate(ag, target);
       ag.hasTarget = true;
     }
     ag.reactionTimer = Math.max(0, ag.reactionTimer - dt);
@@ -459,9 +507,13 @@ export function updateAI(ag: TDMAgent, dt: number): void {
         if (ag.team === gameState.player.team) {
           const distToPlayer = ag.position.distanceTo(gameState.player.position);
           if (distToPlayer < 25 && Math.random() < 0.3) {
-            import('@/audio/SoundHooks').then(s =>
-              s.playBotCallout('reload', new THREE.Vector3(ag.position.x, 1.6, ag.position.z))
-            );
+            import('@/audio/SoundHooks').then(s => {
+              s.playBotCallout('reload', new THREE.Vector3(ag.position.x, 1.6, ag.position.z), ag.personality ? 0.85 + ag.personality.aggressionBias * 0.3 : 1);
+              // Low-HP help callout
+              if (ag.hp / ag.maxHP < 0.3 && ag.hasTarget && Math.random() < 0.15) {
+                s.playBotCallout('help', new THREE.Vector3(ag.position.x, 1.6, ag.position.z), ag.personality ? 0.85 + ag.personality.aggressionBias * 0.3 : 1);
+              }
+            });
           }
         }
         if (ag.stateName !== 'COVER' && ag.stateName !== 'RETREAT') {

@@ -13,7 +13,10 @@ function formatTime(sec: number): string {
 export function updateScoreboard(): void {
   // New top-center panel
   if (dom.miMode) dom.miMode.textContent = getModeLabel();
-  if (dom.miTime) dom.miTime.textContent = formatTime(gameState.matchTimeRemaining);
+  if (dom.miTime) {
+    dom.miTime.textContent = formatTime(gameState.matchTimeRemaining);
+    dom.miTime.classList.toggle('urgent', gameState.matchTimeRemaining <= 30 && gameState.matchTimeRemaining > 0);
+  }
 
   if (gameState.mode === 'ffa') {
     const leader = Math.max(
@@ -54,11 +57,13 @@ export function updateTabboard(): void {
     const rows = agents.map((a) => ({
       a, kills: a === player ? gameState.pKills : a.kills,
       deaths: a === player ? gameState.pDeaths : a.deaths,
+      assists: a === player ? gameState.pAssists : ((a as any).assists ?? 0),
     })).sort((x, y) => y.kills - x.kills);
     html += `<div class="tb-section" style="color:#ffaa33">FREE FOR ALL</div>`;
     for (const row of rows) {
       const me = row.a === player ? ' me' : '';
-      html += `<div class="tb-row${me}"><span>${row.a.name}</span><span>${row.kills}</span><span>${row.deaths}</span><span>${row.kills * 100}</span></div>`;
+      const kd = row.deaths > 0 ? (row.kills / row.deaths).toFixed(2) : row.kills.toFixed(2);
+      html += `<div class="tb-row${me}"><span>${row.a.name}</span><span>${row.kills}</span><span>${row.deaths}</span><span>${row.assists}</span><span>${kd}</span><span>${row.kills * 100}</span></div>`;
     }
   } else {
     const blueTeam = agents.filter((a) => a.team === TEAM_BLUE).sort((a, b) => b.kills - a.kills);
@@ -70,14 +75,18 @@ export function updateTabboard(): void {
       const me = a === player ? ' me' : '';
       const k = a === player ? gameState.pKills : a.kills;
       const d = a === player ? gameState.pDeaths : a.deaths;
+      const ast = a === player ? gameState.pAssists : ((a as any).assists ?? 0);
       const aliveTag = a.isDead ? ' ☠' : '';
-      html += `<div class="tb-row${me}"><span style="color:#4aa8ff">${a.name}${aliveTag}</span><span>${k}</span><span>${d}</span><span>${k * 100}</span></div>`;
+      const kd = d > 0 ? (k / d).toFixed(2) : k.toFixed(2);
+      html += `<div class="tb-row${me}"><span style="color:#4aa8ff">${a.name}${aliveTag}</span><span>${k}</span><span>${d}</span><span>${ast}</span><span>${kd}</span><span>${k * 100}</span></div>`;
     }
 
     html += `<div class="tb-section" style="color:#ff5c5c">RED TEAM ${modeTag} — ${teamScores[TEAM_RED]}</div>`;
     for (const a of redTeam) {
       const aliveTag = a.isDead ? ' ☠' : '';
-      html += `<div class="tb-row"><span style="color:#ff5c5c">${a.name}${aliveTag}</span><span>${a.kills}</span><span>${a.deaths}</span><span>${a.kills * 100}</span></div>`;
+      const ast = (a as any).assists ?? 0;
+      const rkd = a.deaths > 0 ? (a.kills / a.deaths).toFixed(2) : a.kills.toFixed(2);
+      html += `<div class="tb-row"><span style="color:#ff5c5c">${a.name}${aliveTag}</span><span>${a.kills}</span><span>${a.deaths}</span><span>${ast}</span><span>${rkd}</span><span>${a.kills * 100}</span></div>`;
     }
   }
 

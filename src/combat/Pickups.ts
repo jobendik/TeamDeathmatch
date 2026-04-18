@@ -205,6 +205,16 @@ export function updatePickups(): void {
       p.mesh.position.y = 0.5 + Math.sin(worldElapsed * 2 + p.x) * 0.1;
       p.mesh.rotation.y += 0.02;
       (p.ring.material as THREE.MeshBasicMaterial).opacity = 0.25 + Math.sin(worldElapsed * 2.5 + p.z) * 0.1;
+      // Emissive glow pulse on pickup mesh
+      p.mesh.traverse((child: THREE.Object3D) => {
+        if ((child as THREE.Mesh).isMesh) {
+          const mat = (child as THREE.Mesh).material as THREE.MeshStandardMaterial;
+          if (mat.emissive) {
+            const pulse = 0.3 + Math.sin(worldElapsed * 3 + p.x * 2) * 0.25;
+            mat.emissiveIntensity = pulse;
+          }
+        }
+      });
     }
 
     for (const ag of agents) {

@@ -13,9 +13,13 @@ export function buildSoldierMesh(color: number, botClass: BotClass, team: TeamId
     color, roughness: 0.3, metalness: 0.3, emissive: color, emissiveIntensity: 0.15,
   });
   const darkMat = new THREE.MeshStandardMaterial({ color: teamDark, roughness: 0.6, metalness: 0.2 });
+  const isEnemy = team !== TEAM_BLUE;
+  const rimIntensity = isEnemy ? 0.6 : 0.25;
   const accentMat = new THREE.MeshStandardMaterial({
-    color, roughness: 0.2, metalness: 0.5, emissive: color, emissiveIntensity: 0.4,
+    color, roughness: 0.2, metalness: 0.5, emissive: color, emissiveIntensity: rimIntensity,
   });
+  // Body gets subtle team rim glow for at-a-glance identification
+  mat.emissiveIntensity = isEnemy ? 0.3 : 0.1;
 
   // Legs with knee pads
   const legL = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.12, 0.7, 6), darkMat);

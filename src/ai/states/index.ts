@@ -297,3 +297,23 @@ export class PeekState extends YUKA.State<TDMAgent> {
     ag.isPeeking = false;
   }
 }
+
+// ────────────────────────────────────────
+//  HoldAngleState — stake out a chokepoint
+// ────────────────────────────────────────
+export class HoldAngleState extends YUKA.State<TDMAgent> {
+  enter(ag: TDMAgent): void {
+    ag.stateName = 'HOLD_ANGLE';
+    ag.stateTime = 0;
+    ag.isBotCrouching = true;
+  }
+  execute(ag: TDMAgent): void {
+    if (ag.wanderB) ag.wanderB.weight = 0;
+    if (ag.pursuitB) ag.pursuitB.weight = 0;
+    if (ag.fleeB) ag.fleeB.weight = 0;
+    if (ag.seekB) ag.seekB.weight = 0;
+  }
+  exit(ag: TDMAgent): void {
+    ag.isBotCrouching = false;
+  }
+}

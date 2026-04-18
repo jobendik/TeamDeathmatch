@@ -1,4 +1,5 @@
 import type { BotClass } from '@/config/classes';
+import { gameState } from '@/core/GameState';
 
 /**
  * Per-bot personality — overlays on top of class config to create
@@ -189,7 +190,13 @@ export function makePersonality(botClass: BotClass): Personality {
   // Skill distribution: roughly normal around 0.55, range 0.3–0.92
   // Mixed lobby feels right.
   const skillRoll = (Math.random() + Math.random() + Math.random()) / 3;
-  const skill = 0.3 + skillRoll * 0.62;
+  let skill = 0.3 + skillRoll * 0.62;
+
+  // Apply bot difficulty scaling from settings
+  // difficulty 0 → skill*0.6, difficulty 0.5 → skill*1.0, difficulty 1 → skill*1.3
+  const diff = gameState?.botDifficulty ?? 0.5;
+  const diffMul = 0.6 + diff * 0.7;
+  skill = clamp01(skill * diffMul);
 
   // Lower skill → slower reactions
   const reactionModifier = (1 - skill) * 0.25 + (Math.random() - 0.5) * 0.08;

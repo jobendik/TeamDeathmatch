@@ -3,6 +3,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { clone as skeletonClone } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { gameState } from '@/core/GameState';
 import { WEAPONS, type WeaponId } from '@/config/weapons';
+import { spawnShellCasing } from '@/combat/Particles';
 
 let vmScene: THREE.Scene;
 let vmCamera: THREE.PerspectiveCamera;
@@ -35,17 +36,19 @@ interface VMLayout {
   recoilRot: number;
   /** Per-shot vertical climb multiplier during sustained fire (0 = no climb) */
   climbPerShot: number;
+  /** Bob intensity multiplier — heavier weapons bob more (default 1.0) */
+  bobMul: number;
 }
 
 const VM_LAYOUTS: Record<WeaponId, VMLayout> = {
-  unarmed:         { pos: [0.14, -0.25, -0.15], rot: [0, 0, 0], scale: 1.0, muzzleOffset: [0, 0, 0], recoilZ: 0, recoilUp: 0, recoilRot: 0, climbPerShot: 0 },
-  knife:           { pos: [0.14, -0.12, -0.18], rot: [0, 0, 0], scale: 1.0, muzzleOffset: [0, 0, 0], recoilZ: 0, recoilUp: 0, recoilRot: 0, climbPerShot: 0 },
-  pistol:          { pos: [0.14, -0.12, -0.20], rot: [0, 0, 0], scale: 1.4, muzzleOffset: [0, 0.008, -0.10], recoilZ: 0.025, recoilUp: 0.012, recoilRot: 0.08, climbPerShot: 0.008 },
-  smg:             { pos: [0.12, -0.11, -0.22], rot: [0, 0, 0], scale: 1.3, muzzleOffset: [0, 0.008, -0.14], recoilZ: 0.012, recoilUp: 0.006, recoilRot: 0.04, climbPerShot: 0.003 },
-  assault_rifle:   { pos: [0.11, -0.10, -0.24], rot: [0, 0, 0], scale: 1.2, muzzleOffset: [0, 0.010, -0.18], recoilZ: 0.018, recoilUp: 0.008, recoilRot: 0.06, climbPerShot: 0.005 },
-  shotgun:         { pos: [0.12, -0.11, -0.22], rot: [0, 0, 0], scale: 1.2, muzzleOffset: [0, 0.012, -0.20], recoilZ: 0.040, recoilUp: 0.025, recoilRot: 0.14, climbPerShot: 0 },
-  sniper_rifle:    { pos: [0.10, -0.10, -0.26], rot: [0, 0, 0], scale: 1.1, muzzleOffset: [0, 0.010, -0.26], recoilZ: 0.035, recoilUp: 0.018, recoilRot: 0.10, climbPerShot: 0 },
-  rocket_launcher: { pos: [0.14, -0.13, -0.20], rot: [0, 0, 0], scale: 1.2, muzzleOffset: [0, 0.000, -0.18], recoilZ: 0.050, recoilUp: 0.030, recoilRot: 0.12, climbPerShot: 0 },
+  unarmed:         { pos: [0.14, -0.25, -0.15], rot: [0, 0, 0], scale: 1.0, muzzleOffset: [0, 0, 0], recoilZ: 0, recoilUp: 0, recoilRot: 0, climbPerShot: 0, bobMul: 0.6 },
+  knife:           { pos: [0.14, -0.12, -0.18], rot: [0, 0, 0], scale: 1.0, muzzleOffset: [0, 0, 0], recoilZ: 0, recoilUp: 0, recoilRot: 0, climbPerShot: 0, bobMul: 0.5 },
+  pistol:          { pos: [0.14, -0.12, -0.20], rot: [0, 0, 0], scale: 1.4, muzzleOffset: [0, 0.008, -0.10], recoilZ: 0.025, recoilUp: 0.012, recoilRot: 0.08, climbPerShot: 0.008, bobMul: 0.7 },
+  smg:             { pos: [0.12, -0.11, -0.22], rot: [0, 0, 0], scale: 1.3, muzzleOffset: [0, 0.008, -0.14], recoilZ: 0.012, recoilUp: 0.006, recoilRot: 0.04, climbPerShot: 0.003, bobMul: 0.85 },
+  assault_rifle:   { pos: [0.11, -0.10, -0.24], rot: [0, 0, 0], scale: 1.2, muzzleOffset: [0, 0.010, -0.18], recoilZ: 0.018, recoilUp: 0.008, recoilRot: 0.06, climbPerShot: 0.005, bobMul: 1.0 },
+  shotgun:         { pos: [0.12, -0.11, -0.22], rot: [0, 0, 0], scale: 1.2, muzzleOffset: [0, 0.012, -0.20], recoilZ: 0.040, recoilUp: 0.025, recoilRot: 0.14, climbPerShot: 0, bobMul: 1.15 },
+  sniper_rifle:    { pos: [0.10, -0.10, -0.26], rot: [0, 0, 0], scale: 1.1, muzzleOffset: [0, 0.010, -0.26], recoilZ: 0.035, recoilUp: 0.018, recoilRot: 0.10, climbPerShot: 0, bobMul: 1.3 },
+  rocket_launcher: { pos: [0.14, -0.13, -0.20], rot: [0, 0, 0], scale: 1.2, muzzleOffset: [0, 0.000, -0.18], recoilZ: 0.050, recoilUp: 0.030, recoilRot: 0.12, climbPerShot: 0, bobMul: 1.4 },
 };
 
 const ADS_LAYOUTS: Partial<Record<WeaponId, VMLayout>> = {
@@ -66,6 +69,12 @@ let climbResetTimer = 0;
 let switchDir: 'down' | 'up' = 'up';
 let pendingWeaponId: WeaponId | null = null;
 let reloadLerp = 0;
+let boltLockLerp = 0;
+
+// ── Weapon inspect idle animation ──
+let lastActivityTime = 0;
+let inspectPhase = 0; // 0 = inactive, >0 = animating (0..1 in, 1..3 hold, 3..4 out)
+const INSPECT_DELAY = 5; // seconds of inactivity before inspect starts
 
 const BASE_URL = import.meta.env.BASE_URL;
 const M16_GLB_URL = `${BASE_URL}models/weapons/m16a2.glb`;
@@ -1374,6 +1383,16 @@ export function fireViewmodel(): void {
   vmMuzzleSprite.scale.set(0.12, 0.12, 1);
   vmMuzzleSprite.material.rotation = Math.random() * Math.PI * 2;
 
+  // Shell casing ejection (hitscan weapons only — not rockets)
+  if (currentWeaponId !== 'rocket_launcher') {
+    const cam = gameState.camera;
+    const right = new THREE.Vector3();
+    cam.getWorldDirection(right);
+    right.cross(cam.up).normalize();
+    const ejectionPt = cam.position.clone().add(right.clone().multiplyScalar(0.15)).add(new THREE.Vector3(0, -0.05, 0));
+    spawnShellCasing(ejectionPt, right);
+  }
+
   const kickUp = layout.recoilRot * 0.4 + Math.random() * layout.recoilRot * 0.15
     + climbShots * layout.climbPerShot;
   const kickSide = (Math.random() - 0.5) * layout.recoilRot * 0.15;
@@ -1383,6 +1402,8 @@ export function fireViewmodel(): void {
   gameState.recoilRecoveryYaw += kickSide;
   climbShots++;
   climbResetTimer = 0.25; // reset climb if no shot within 250ms
+  lastActivityTime = gameState.worldElapsed;
+  inspectPhase = 0;
 
   if (isAnimatedWeapon(currentWeaponId) && currentViewmodelMixer) {
     playAnimatedRange(currentWeaponId, 'shoot', 1.0);
@@ -1458,7 +1479,8 @@ export function updateViewmodel(dt: number): void {
       switchDir = 'up';
     }
   } else if (switchDir === 'up' && switchProgress < 1) {
-    switchProgress = Math.min(1, switchProgress + dt * 5);
+    const drawSpd = WEAPONS[currentWeaponId]?.drawSpeed ?? 5;
+    switchProgress = Math.min(1, switchProgress + dt * drawSpd);
   }
 
   if (isMoving) {
@@ -1467,7 +1489,8 @@ export function updateViewmodel(dt: number): void {
     bobPhase += dt * 1.8;
   }
 
-  const bobAmt = isMoving ? (isSprinting ? 0.008 : 0.004) : 0.0012;
+  const baseBob = isMoving ? (isSprinting ? 0.008 : 0.004) : 0.0012;
+  const bobAmt = baseBob * layout.bobMul;
   const bobX = Math.sin(bobPhase) * bobAmt;
   const bobY = Math.abs(Math.cos(bobPhase * 2)) * bobAmt * 0.7;
 
@@ -1511,6 +1534,15 @@ export function updateViewmodel(dt: number): void {
   const reloadDrop = reloadLerp * 0.08;
   const reloadTilt = reloadLerp * 0.6;
 
+  // ── Empty magazine bolt-lock visual ──
+  const magEmpty = gameState.pAmmo <= 0 && !pReloading && !pDead
+    && currentWeaponId !== 'unarmed' && currentWeaponId !== 'knife'
+    && currentWeaponId !== 'rocket_launcher';
+  const boltLockTarget = magEmpty ? 1 : 0;
+  boltLockLerp += (boltLockTarget - boltLockLerp) * Math.min(1, dt * 10);
+  const boltLockTilt = boltLockLerp * 0.15;   // slight upward tilt
+  const boltLockSlide = boltLockLerp * 0.008;  // bolt slides back
+
   // ── ADS interpolation ──
   const adsTarget = gameState.isADS ? 1 : 0;
   gameState.adsAmount = gameState.adsAmount ?? 0;
@@ -1523,15 +1555,61 @@ export function updateViewmodel(dt: number): void {
   const finalPosY = THREE.MathUtils.lerp(layout.pos[1], adsLayout.pos[1] ?? -0.05, adsLerp);
   const finalPosZ = THREE.MathUtils.lerp(layout.pos[2], adsLayout.pos[2] ?? -0.30, adsLerp);
 
+  // ── ADS breathing sway (subtle figure-8, enhanced for sniper) ──
+  const isSniper = currentWeaponId === 'sniper_rifle';
+  const breathSpeed = isSniper ? 0.9 : 1.4;
+  let breathAmpX = isSniper ? 0.0025 : 0.0008;
+  let breathAmpY = isSniper ? 0.0018 : 0.0005;
+  // Breath-hold: hold shift while ADS with sniper to steady the scope
+  if (isSniper && gameState.isADS && gameState.keys.shift) {
+    breathAmpX *= 0.1;
+    breathAmpY *= 0.1;
+  }
+  const breathPhase = gameState.worldElapsed * breathSpeed;
+  const breathX = Math.sin(breathPhase) * breathAmpX * adsLerp;
+  const breathY = Math.sin(breathPhase * 2.03) * breathAmpY * adsLerp;
+
+  // ── Weapon inspect idle animation ──
+  // Reset activity on any player action
+  if (isMoving || isSprinting || pReloading || gameState.isADS) {
+    lastActivityTime = gameState.worldElapsed;
+    inspectPhase = 0;
+  }
+  const idleDuration = gameState.worldElapsed - lastActivityTime;
+  let inspectRotY = 0;
+  let inspectRotX = 0;
+  let inspectOffY = 0;
+  if (idleDuration > INSPECT_DELAY && !pDead && currentWeaponId !== 'unarmed') {
+    if (inspectPhase === 0) inspectPhase = 0.001; // start
+    inspectPhase = Math.min(4, inspectPhase + dt * 0.8);
+    let t: number;
+    if (inspectPhase < 1) {
+      // Ease in
+      t = inspectPhase;
+    } else if (inspectPhase < 3) {
+      // Hold
+      t = 1;
+    } else {
+      // Ease out
+      t = 1 - (inspectPhase - 3);
+    }
+    const ease = t * t * (3 - 2 * t); // smoothstep
+    inspectRotY = ease * 0.7;
+    inspectRotX = ease * 0.25;
+    inspectOffY = ease * 0.02;
+    // Reset cycle
+    if (inspectPhase >= 4) inspectPhase = 0;
+  }
+
   vmGroup.position.set(
-    finalPosX + bobX * (1 - adsLerp) + swayX * (1 - adsLerp * 0.7) + sprintLerp * 0.04,
-    finalPosY + bobY * (1 - adsLerp) + swayY * (1 - adsLerp * 0.7) + recoilUp - switchDrop - reloadDrop,
+    finalPosX + bobX * (1 - adsLerp) + swayX * (1 - adsLerp * 0.7) + sprintLerp * 0.04 + breathX,
+    finalPosY + bobY * (1 - adsLerp) + swayY * (1 - adsLerp * 0.7) + recoilUp - switchDrop - reloadDrop + breathY + inspectOffY + boltLockSlide,
     finalPosZ + recoilZ + switchDrop * 0.5,
   );
 
   vmGroup.rotation.set(
-    layout.rot[0] - recoilRot + reloadTilt,
-    layout.rot[1] + sprintLerp * 0.35,
+    layout.rot[0] - recoilRot + reloadTilt + inspectRotX - boltLockTilt,
+    layout.rot[1] + sprintLerp * 0.35 + inspectRotY,
     layout.rot[2] - sprintLerp * 0.25 + reloadLerp * 0.3,
   );
 

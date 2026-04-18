@@ -5,32 +5,55 @@ import { gameState } from '@/core/GameState';
  * AAA-style lighting: bright key sun, cool ambient fill, warm rim on team bases,
  * visible but atmospheric. Scene is readable during combat.
  */
+
+// ── Weather presets ──
+interface WeatherPreset {
+  name: string;
+  sunColor: number; sunIntensity: number;
+  ambientColor: number; ambientIntensity: number;
+  hemiSky: number; hemiGround: number; hemiIntensity: number;
+  fogColor: number; fogDensity: number;
+  bgColor: number;
+}
+
+const WEATHER_PRESETS: WeatherPreset[] = [
+  { name: 'clear',    sunColor: 0xffe8c4, sunIntensity: 2.2, ambientColor: 0x9bb4dd, ambientIntensity: 0.55, hemiSky: 0x88a8d8, hemiGround: 0x20283a, hemiIntensity: 0.75, fogColor: 0x1a2438, fogDensity: 0.003, bgColor: 0x0c1220 },
+  { name: 'foggy',    sunColor: 0xc8c0b0, sunIntensity: 1.2, ambientColor: 0x8899aa, ambientIntensity: 0.7,  hemiSky: 0x7788a0, hemiGround: 0x2a3040, hemiIntensity: 0.65, fogColor: 0x2a3348, fogDensity: 0.008, bgColor: 0x151c28 },
+  { name: 'overcast', sunColor: 0xd0d0d0, sunIntensity: 1.5, ambientColor: 0x9090a8, ambientIntensity: 0.65, hemiSky: 0x8090a8, hemiGround: 0x252a32, hemiIntensity: 0.7,  fogColor: 0x202838, fogDensity: 0.004, bgColor: 0x101820 },
+  { name: 'dusk',     sunColor: 0xff8844, sunIntensity: 1.8, ambientColor: 0x6644aa, ambientIntensity: 0.45, hemiSky: 0x553388, hemiGround: 0x1a1028, hemiIntensity: 0.6,  fogColor: 0x1a1030, fogDensity: 0.005, bgColor: 0x0a0818 },
+];
+
+let _sun: THREE.DirectionalLight;
+let _ambient: THREE.AmbientLight;
+let _hemi: THREE.HemisphereLight;
+
 export function buildLights(): void {
   const { scene } = gameState;
 
   // ── AMBIENT + HEMI (much brighter for readability) ──
-  scene.add(new THREE.AmbientLight(0x9bb4dd, 0.55));
+  _ambient = new THREE.AmbientLight(0x9bb4dd, 0.55);
+  scene.add(_ambient);
 
-  const hemi = new THREE.HemisphereLight(0x88a8d8, 0x20283a, 0.75);
-  hemi.position.set(0, 50, 0);
-  scene.add(hemi);
+  _hemi = new THREE.HemisphereLight(0x88a8d8, 0x20283a, 0.75);
+  _hemi.position.set(0, 50, 0);
+  scene.add(_hemi);
 
   // ── KEY LIGHT (SUN) — warm, directional ──
-  const sun = new THREE.DirectionalLight(0xffe8c4, 2.2);
-  sun.position.set(45, 80, 30);
-  sun.castShadow = true;
-  sun.shadow.mapSize.width = 2048;
-  sun.shadow.mapSize.height = 2048;
-  sun.shadow.camera.left = -70;
-  sun.shadow.camera.right = 70;
-  sun.shadow.camera.top = 70;
-  sun.shadow.camera.bottom = -70;
-  sun.shadow.camera.near = 0.5;
-  sun.shadow.camera.far = 200;
-  sun.shadow.bias = -0.0005;
-  sun.shadow.normalBias = 0.04;
-  sun.shadow.radius = 4;
-  scene.add(sun);
+  _sun = new THREE.DirectionalLight(0xffe8c4, 2.2);
+  _sun.position.set(45, 80, 30);
+  _sun.castShadow = true;
+  _sun.shadow.mapSize.width = 2048;
+  _sun.shadow.mapSize.height = 2048;
+  _sun.shadow.camera.left = -70;
+  _sun.shadow.camera.right = 70;
+  _sun.shadow.camera.top = 70;
+  _sun.shadow.camera.bottom = -70;
+  _sun.shadow.camera.near = 0.5;
+  _sun.shadow.camera.far = 200;
+  _sun.shadow.bias = -0.0005;
+  _sun.shadow.normalBias = 0.04;
+  _sun.shadow.radius = 4;
+  scene.add(_sun);
 
   // ── FILL LIGHT — cool, opposite side ──
   const fill = new THREE.DirectionalLight(0x6080c0, 0.55);
@@ -71,4 +94,18 @@ export function buildLights(): void {
   // ── SOFTER ATMOSPHERIC FOG — fog-of-mood not fog-of-war ──
   scene.fog = new THREE.FogExp2(0x1a2438, 0.003);
   scene.background = new THREE.Color(0x0c1220);
+}
+
+export function applyRandomWeather(): void {
+  const preset = WEATHER_PRESETS[Math.floor(Math.random() * WEATHER_PRESETS.length)];
+  applyWeather(preset);
+}
+
+function applyWeather(p: WeatherPreset): void {
+  const { scene } = gameState;
+  if (_sun) { _sun.color.set(p.sunColor); _sun.intensity = p.sunIntensity; }
+  if (_ambient) { _ambient.color.set(p.ambientColor); _ambient.intensity = p.ambientIntensity; }
+  if (_hemi) { _hemi.color.set(p.hemiSky); _hemi.groundColor.set(p.hemiGround); _hemi.intensity = p.hemiIntensity; }
+  if (scene.fog instanceof THREE.FogExp2) { scene.fog.color.set(p.fogColor); scene.fog.density = p.fogDensity; }
+  if (scene.background instanceof THREE.Color) scene.background.set(p.bgColor);
 }

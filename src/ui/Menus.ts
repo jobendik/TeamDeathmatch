@@ -40,7 +40,9 @@ export async function startMatchFromMenu(): Promise<void> {
   const { rebuildWaypoints } = await import('@/ui/Waypoints');
   rebuildWaypoints();
 
-  Audio.startAmbientMusic();
+  const { startDynamicMusic } = await import('@/audio/DynamicMusic');
+  startDynamicMusic();
+  Audio.startEnvironmentAmbience();
 
   setTimeout(() => {
     gameState.renderer?.domElement?.requestPointerLock();

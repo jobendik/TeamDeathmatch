@@ -4,7 +4,7 @@ import { gameState } from '@/core/GameState';
 import { TEAM_BLUE } from '@/config/constants';
 import { WEAPONS } from '@/config/weapons';
 import { findNearestPickup } from '@/ai/CoverSystem';
-import { getZoneDanger } from '@/ai/MatchMemory';
+import { getZoneDanger, getTeamMomentum } from '@/ai/MatchMemory';
 import {
   AttackTargetGoal,
   SurviveGoal,
@@ -14,6 +14,7 @@ import {
   SeekPickupGoal,
   PatrolGoal,
   MoveToPositionGoal,
+  HoldAngleGoal,
 } from './Goals';
 
 // ═══════════════════════════════════════════
@@ -48,6 +49,10 @@ export class AttackEvaluator extends YUKA.GoalEvaluator<TDMAgent> {
     // Zone danger — reduce aggression in areas where team keeps dying
     const zoneDanger = getZoneDanger(ag.team, ag.position.x, ag.position.z);
     desire -= zoneDanger * 0.25;
+
+    // Team momentum — push harder when on a roll, pull back when losing
+    const momentum = getTeamMomentum(ag.team);
+    desire += momentum * 0.15;
 
     // Personality
     const p = ag.personality;
@@ -92,6 +97,10 @@ export class SurviveEvaluator extends YUKA.GoalEvaluator<TDMAgent> {
     // Zone danger — urgently retreat from death zones
     const zoneDanger = getZoneDanger(ag.team, ag.position.x, ag.position.z);
     desire += zoneDanger * 0.3;
+
+    // Negative momentum — retreat more when team is losing fights
+    const momentum = getTeamMomentum(ag.team);
+    if (momentum < 0) desire -= momentum * 0.2; // negative momentum adds to survive desire
 
     const p = ag.personality;
     if (p) {
@@ -303,6 +312,43 @@ export class PatrolEvaluator extends YUKA.GoalEvaluator<TDMAgent> {
     if (!hasGoalType(brain, PatrolGoal)) {
       brain.clearSubgoals();
       brain.addSubgoal(new PatrolGoal(ag));
+    }
+  }
+}
+
+// ═══════════════════════════════════════════
+//  HOLD ANGLE — patient chokepoint control
+// ═══════════════════════════════════════════
+export class HoldAngleEvaluator extends YUKA.GoalEvaluator<TDMAgent> {
+  calculateDesirability(ag: TDMAgent): number {
+    // Only when no target and in good shape
+    if (ag.currentTarget) return 0;
+    if (ag.weaponId === 'unarmed') return 0;
+    if (ag.hp / ag.maxHP < 0.5) return 0;
+    if (ag.ammo / ag.magSize < 0.3) return 0;
+
+    const p = ag.personality;
+    if (!p) return 0;
+
+    // Only Anchor, Picker, and patient archetypes should want this
+    const isHolder = p.archetype === 'Anchor' || p.archetype === 'Picker' || p.archetype === 'Veteran';
+    if (!isHolder && p.patienceBias < 0.2) return 0;
+
+    let desire = 0.15 + p.patienceBias * 0.35;
+    desire += p.preAimBias * 0.15;
+    desire -= p.aggressionBias * 0.2;
+    if (isHolder) desire += 0.15;
+    if (ag.botClass === 'sniper') desire += 0.1;
+    if (ag.nearbyAllies >= 1) desire += 0.05; // more comfortable holding with backup
+
+    return Math.max(0, Math.min(0.6, desire)) * this.characterBias;
+  }
+
+  setGoal(ag: TDMAgent): void {
+    const brain = ag.brain;
+    if (!hasGoalType(brain, HoldAngleGoal)) {
+      brain.clearSubgoals();
+      brain.addSubgoal(new HoldAngleGoal(ag));
     }
   }
 }

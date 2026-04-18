@@ -7,7 +7,7 @@ import { allowsRespawn, getFacingYawTowardsArena, getModeDefaults, getPlayerSpaw
 import { setViewmodelWeapon } from '@/rendering/WeaponViewmodel';
 import { updateHUD, flashHeal } from '@/ui/HUD';
 import { dom } from '@/ui/DOMElements';
-import { onShoot } from '@/core/EventManager';
+import { onShoot, releaseGrenade } from '@/core/EventManager';
 import type { TDMAgent } from './TDMAgent';
 import type { Collider } from '@/core/GameState';
 import { isPlayerInAir } from '@/br/DropPlane';
@@ -17,7 +17,7 @@ import { consumeAmmo } from '@/br/Inventory';
 import { BR_MAP_MARGIN } from '@/br/BRConfig';
 import { updateMovement, getCameraOffset, getCurrentPlayerHeight, requestJump, toggleCrouch, setLean, attemptSlide, movement } from '@/movement/MovementController';
 import { playHeal } from '@/audio/SoundHooks';
-import { isKillcamActive, updateKillcam } from '@/ui/Killcam';
+import { isKillcamActive, updateKillcam, isPotgActive, updatePotgReplay } from '@/ui/Killcam';
 
 export function getFloorY(x: number, z: number): number {
   let floorY = 0;
@@ -90,6 +90,12 @@ export function keepInside(ag: TDMAgent): void {
 export function updatePlayer(dt: number): void {
   const { player, keys, pickups } = gameState;
 
+  // POTG replay takes over camera
+  if (isPotgActive()) {
+    updatePotgReplay(dt);
+    return;
+  }
+
   if (gameState.pDead) {
     if (isKillcamActive()) {
       if (updateKillcam(dt)) return;
@@ -135,6 +141,7 @@ export function updatePlayer(dt: number): void {
       player.isDead = false;
       gameState.pHP = 100;
       player.hp = 100;
+      gameState.pSpawnProtectUntil = gameState.worldElapsed + 2; // 2s spawn protection
       const startsArmed = getModeDefaults(gameState.mode).playerStartsArmed;
       gameState.pWeaponSlots = startsArmed ? ['assault_rifle', 'pistol'] : ['knife'];
       gameState.pActiveSlot = 0;
@@ -185,8 +192,13 @@ export function updatePlayer(dt: number): void {
 
   const isUnarmed = gameState.pWeaponId === 'unarmed' || gameState.pWeaponId === 'knife';
 
-  // Reload (not when unarmed)
+  // Reload (not when unarmed) — sprint cancels reload
   if (gameState.pReloading && !isUnarmed) {
+    if (movement.isSprinting || movement.isTacSprinting) {
+      gameState.pReloading = false;
+      dom.reloadBar.classList.remove('on');
+      dom.reloadText.classList.remove('on');
+    }
     gameState.pReloadTimer += dt;
     const pct = Math.min(1, gameState.pReloadTimer / gameState.pReloadDuration) * 100;
     dom.reloadFill.style.width = pct + '%';
@@ -316,6 +328,17 @@ export function updatePlayer(dt: number): void {
     updateHUD();
   }
 
+  // Passive health regen after 5s without taking damage (CoD-style)
+  if (!gameState.pDead && gameState.pHP < 100 && gameState.pHP > 0) {
+    const timeSinceDmg = gameState.worldElapsed - gameState.pLastDamageTime;
+    if (timeSinceDmg > 5) {
+      const regenRate = 8 + Math.min(12, (timeSinceDmg - 5) * 4);
+      gameState.pHP = Math.min(100, gameState.pHP + dt * regenRate);
+      player.hp = gameState.pHP;
+      updateHUD();
+    }
+  }
+
   // Auto-fire: keep shooting while mouse held (only if armed)
   if (gameState.mouseHeld && gameState.mouseLocked && !isUnarmed) {
     onShoot();
@@ -324,6 +347,14 @@ export function updatePlayer(dt: number): void {
   // Grenade cooldown
   if (gameState.pGrenadeCooldown > 0) {
     gameState.pGrenadeCooldown -= dt;
+  }
+
+  // Grenade cook timer
+  if (gameState.pCookingGrenade) {
+    gameState.pCookTimer += dt;
+    if (gameState.pCookTimer >= 2.8) {
+      releaseGrenade();
+    }
   }
 
   // Camera

@@ -148,6 +148,11 @@ export class TDMAgent extends YUKA.Vehicle {
   preAimPos: YUKA.Vector3 | null;
   focusTime: number;
 
+  // ── DBNO (Down But Not Out) ──
+  isDBNO: boolean;
+  dbnoTimer: number;
+  dbnoReviver: TDMAgent | null;
+
   constructor(name: string, team: TeamId, botClass: BotClass) {
     super();
     this.name = name;
@@ -296,6 +301,11 @@ export class TDMAgent extends YUKA.Vehicle {
     this.grudgeExpiry = 0;
     this.preAimPos = null;
     this.focusTime = 0;
+
+    // DBNO
+    this.isDBNO = false;
+    this.dbnoTimer = 0;
+    this.dbnoReviver = null;
   }
 
   /**

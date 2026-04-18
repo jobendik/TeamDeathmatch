@@ -157,3 +157,103 @@ export function clearKillcamSnapshots(): void {
   active = false;
   target = null;
 }
+
+// ── Play of the Game replay ──
+let potgActive = false;
+let potgStart = 0;
+const POTG_DURATION = 5;
+let potgEl: HTMLDivElement | null = null;
+
+function ensurePotgUI(): HTMLDivElement {
+  if (potgEl) return potgEl;
+  potgEl = document.createElement('div');
+  potgEl.id = 'potg';
+  potgEl.innerHTML = `
+    <div class="potg-frame">
+      <div class="potg-label">PLAY OF THE GAME</div>
+      <div class="potg-name" id="potgName"></div>
+    </div>
+  `;
+  potgEl.style.cssText = 'position:fixed;inset:0;z-index:800;display:none;pointer-events:none;';
+  const frame = potgEl.querySelector('.potg-frame') as HTMLElement;
+  frame.style.cssText = 'position:absolute;top:8%;left:50%;transform:translateX(-50%);text-align:center;font-family:var(--font);';
+  const label = potgEl.querySelector('.potg-label') as HTMLElement;
+  label.style.cssText = 'font-size:28px;font-weight:900;letter-spacing:6px;color:#ffcc33;text-shadow:0 0 20px #ffcc3366;';
+  const name = potgEl.querySelector('.potg-name') as HTMLElement;
+  name.style.cssText = 'font-size:18px;color:#fff;margin-top:6px;letter-spacing:2px;';
+  document.body.appendChild(potgEl);
+  return potgEl;
+}
+
+/**
+ * Start the Play of the Game replay for a given agent.
+ * Should be called just before showing round summary when a POTG agent exists.
+ */
+export function startPotgReplay(agent: TDMAgent): void {
+  const arr = snapshots.get(agent);
+  if (!arr || arr.length < 5) return;
+
+  potgActive = true;
+  potgStart = gameState.worldElapsed;
+  target = agent;
+
+  const ui = ensurePotgUI();
+  ui.style.display = 'block';
+  const nameEl = document.getElementById('potgName');
+  if (nameEl) nameEl.textContent = agent === gameState.player ? 'YOU' : agent.name.toUpperCase();
+}
+
+export function isPotgActive(): boolean { return potgActive; }
+
+export function updatePotgReplay(dt: number): boolean {
+  if (!potgActive || !target) return false;
+
+  const elapsed = gameState.worldElapsed - potgStart;
+  if (elapsed >= POTG_DURATION) {
+    potgActive = false;
+    target = null;
+    if (potgEl) potgEl.style.display = 'none';
+    return false;
+  }
+
+  // Reuse killcam camera logic
+  const arr = snapshots.get(target);
+  if (!arr || arr.length === 0) {
+    potgActive = false;
+    if (potgEl) potgEl.style.display = 'none';
+    return false;
+  }
+
+  const t = elapsed / POTG_DURATION;
+  const targetTime = arr[arr.length - 1].time - HISTORY_DURATION + t * HISTORY_DURATION;
+
+  let prev = arr[0];
+  let next = arr[arr.length - 1];
+  for (let i = 0; i < arr.length - 1; i++) {
+    if (arr[i].time <= targetTime && arr[i + 1].time >= targetTime) {
+      prev = arr[i]; next = arr[i + 1]; break;
+    }
+  }
+  const segT = (targetTime - prev.time) / Math.max(0.001, next.time - prev.time);
+  const pos = new THREE.Vector3().lerpVectors(prev.pos, next.pos, Math.max(0, Math.min(1, segT)));
+  const yaw = THREE.MathUtils.lerp(prev.yaw, next.yaw, segT);
+
+  const offsetX = -Math.sin(yaw) * 1.5;
+  const offsetZ = -Math.cos(yaw) * 1.5;
+  gameState.camera.position.set(pos.x + offsetX, pos.y + 0.6, pos.z + offsetZ);
+
+  const lookTarget = new THREE.Vector3(
+    pos.x + Math.sin(yaw) * 5,
+    pos.y - 0.1,
+    pos.z + Math.cos(yaw) * 5,
+  );
+  gameState.camera.lookAt(lookTarget);
+
+  return true;
+}
+
+export function stopPotgReplay(): void {
+  potgActive = false;
+  target = null;
+  if (potgEl) potgEl.style.display = 'none';
+}

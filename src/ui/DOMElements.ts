@@ -107,6 +107,31 @@ export const dom = {
   get valMasterVol() { return getEl<HTMLSpanElement>('valMasterVol'); },
   get valSfxVol() { return getEl<HTMLSpanElement>('valSfxVol'); },
   get valMusicVol() { return getEl<HTMLSpanElement>('valMusicVol'); },
+  get setHeadBob() { return getEl<HTMLInputElement>('setHeadBob'); },
+  get valHeadBob() { return getEl<HTMLSpanElement>('valHeadBob'); },
+
+  // New settings
+  get setCrosshairColor() { return getEl<HTMLInputElement>('setCrosshairColor'); },
+  get valCrosshairColor() { return getEl<HTMLSpanElement>('valCrosshairColor'); },
+  get setCrosshairSize() { return getEl<HTMLInputElement>('setCrosshairSize'); },
+  get valCrosshairSize() { return getEl<HTMLSpanElement>('valCrosshairSize'); },
+  get setCrosshairDot() { return getEl<HTMLInputElement>('setCrosshairDot'); },
+  get setBotDifficulty() { return getEl<HTMLInputElement>('setBotDifficulty'); },
+  get valBotDifficulty() { return getEl<HTMLSpanElement>('valBotDifficulty'); },
+  get setColorblind() { return getEl<HTMLSelectElement>('setColorblind'); },
+  get setShowFPS() { return getEl<HTMLInputElement>('setShowFPS'); },
+  get setShowSubtitles() { return getEl<HTMLInputElement>('setShowSubtitles'); },
+
+  // FPS counter
+  get fpsCounter() { return maybeEl<HTMLDivElement>('fpsCounter'); },
+
+  // Loading screen
+  get loadingScreen() { return maybeEl<HTMLDivElement>('loadingScreen'); },
+  get lsFill() { return maybeEl<HTMLDivElement>('lsFill'); },
+  get lsText() { return maybeEl<HTMLDivElement>('lsText'); },
+
+  // Subtitle overlay
+  get subtitleOverlay() { return maybeEl<HTMLDivElement>('subtitleOverlay'); },
 
   // Killstreak
   get killstreak() { return getEl<HTMLDivElement>('killstreak'); },

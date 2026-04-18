@@ -3,6 +3,7 @@ import * as YUKA from 'yuka';
 import { gameState } from '@/core/GameState';
 import type { TDMAgent, EnemyMemoryEntry } from '@/entities/TDMAgent';
 import { isEnemy } from '@/core/GameModes';
+import { getContextualVisionMod, applySuppression, getHearingAttenuation } from './ContextualPerception';
 
 const _origin = new THREE.Vector3();
 const _target = new THREE.Vector3();
@@ -27,9 +28,11 @@ export function isOccluded(from: YUKA.Vector3, to: YUKA.Vector3): boolean {
 export function canSee(ag: TDMAgent, target: TDMAgent): boolean {
 if (ag.isDead || target.isDead) return false;
 if (!isEnemy(ag, target)) return false;
+// Contextual modifiers: reload, tunnel vision, pressure, alert, tilt
+const ctx = getContextualVisionMod(ag);
 // BR: bots see much farther. TDM values (28-55m) are useless on a 320m map.
-const rangeMul = gameState.mode === 'br' ? 3.2 : 1.0;
-const fovMul   = gameState.mode === 'br' ? 1.15 : 1.0;
+const rangeMul = (gameState.mode === 'br' ? 3.2 : 1.0) * ctx.rangeMul;
+const fovMul   = (gameState.mode === 'br' ? 1.15 : 1.0) * ctx.fovMul;
 const dist = ag.position.distanceTo(target.position);
 if (dist > ag.visionRange * rangeMul) return false;
 _toTarget.subVectors(target.position, ag.position).normalize();
@@ -38,6 +41,8 @@ const dot = _heading.dot(_toTarget);
 const tunnelPenalty = ag.personality ? ag.personality.tunnelVision * 0.15 : 0;
 const effectiveFOV = Math.min(Math.PI, ag.visionFOV * (1 - tunnelPenalty) * fovMul);
 if (dot < Math.cos(effectiveFOV * 0.5)) return false;
+// Miss chance: probabilistic failure to register a sighting
+if (ctx.missChance > 0 && Math.random() < ctx.missChance) return false;
 return !isOccluded(ag.position, target.position);
 }
 
@@ -134,6 +139,9 @@ export function checkAudioAwareness(ag: TDMAgent): void {
     const dz = ag.position.z - other.position.z;
     const distSq = dx * dx + dz * dz;
     if (distSq > footstepRangeSq) continue;
+    // Wall occlusion attenuates hearing
+    const att = getHearingAttenuation(ag.position, other.position);
+    if (att < 0.15) continue;
     // Only hear enemies who are moving fast (sprinting/running)
     const speed = other.velocity.length();
     if (speed < 3) continue;
@@ -193,7 +201,7 @@ export function checkAudioAwareness(ag: TDMAgent): void {
 
     // Near-miss suppression — flinch and delay shooting
     if (distSq < suppressRangeSq) {
-      ag.alertLevel = Math.min(100, ag.alertLevel + 25);
+      applySuppression(ag, Math.sqrt(distSq));
       ag.shootTimer = Math.max(ag.shootTimer, 0.3 + Math.random() * 0.2);
       if (!ag.hasTarget && !ag.hasLastKnown) {
         const noise = 4;

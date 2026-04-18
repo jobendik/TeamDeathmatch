@@ -23,16 +23,21 @@ import {
 } from '@/core/GameModes';
 import { updateObjectiveVisibility } from './Objectives';
 import { applyAimFlinch } from '@/ai/HumanAim';
-import { registerDeath } from '@/ai/MatchMemory';
+import { registerDeath, registerTeamKill } from '@/ai/MatchMemory';
 import { clearTeamIntel } from '@/ai/TeamIntel';
+import { applyHitReaction } from './HitReactions';
+import { resetPlayerRecoil } from './Recoil';
+import { resetSuppression } from './Suppression';
 import { showHitMarker, showKillMarker } from '@/ui/HitMarkers';
 import { showDamageArc } from '@/ui/DamageArcs';
 import { getPostFX } from '@/rendering/PostProcess.Bridge';
 import { setViewmodelWeapon, playViewmodelHit } from '@/rendering/WeaponViewmodel';
 import { isPlayerInAir } from '@/br/DropPlane';
-import { playHitTaken, playHeal } from '@/audio/SoundHooks';
+import { playHitTaken, playHeal, playKillConfirmed } from '@/audio/SoundHooks';
 import { startKillcam } from '@/ui/Killcam';
 import { checkStreakReward, clearStreaks } from './Streaks';
+import { movement } from '@/movement/MovementController';
+import { applyRandomWeather } from '@/world/Lights';
 
 const STREAK_NAMES: Record<number, string> = {
   3: 'KILLING SPREE',
@@ -42,6 +47,60 @@ const STREAK_NAMES: Record<number, string> = {
   15: 'GODLIKE',
 };
 let _streakTimeout = 0;
+
+// ── Assist tracking: per-agent damage contributors ──
+const damageContributors = new Map<TDMAgent, Map<TDMAgent, number>>();
+
+function logDamageContribution(victim: TDMAgent, attacker: TDMAgent, dmg: number): void {
+  let map = damageContributors.get(victim);
+  if (!map) { map = new Map(); damageContributors.set(victim, map); }
+  map.set(attacker, (map.get(attacker) ?? 0) + dmg);
+}
+
+function flushAssists(victim: TDMAgent, killer: TDMAgent | null): void {
+  const map = damageContributors.get(victim);
+  if (!map) return;
+  for (const [contributor, dmg] of map) {
+    if (contributor === killer || contributor === victim) continue;
+    if (contributor.isDead && contributor !== gameState.player) continue;
+    if (dmg < 20) continue; // must do 20+ damage to earn assist
+    // Award assist
+    if (contributor === gameState.player) {
+      gameState.pAssists++;
+    }
+    (contributor as any).assists = ((contributor as any).assists ?? 0) + 1;
+    addKillfeedEntry(
+      contributor.name, victim.name,
+      contributor.team, victim.team,
+      undefined, false, undefined, true,
+    );
+  }
+  damageContributors.delete(victim);
+}
+
+// ── Play of the Game (POTG) tracking ──
+const potgKillTimes = new Map<TDMAgent, number[]>();
+const POTG_WINDOW = 10; // seconds — kills within this window count as a sequence
+
+function trackPotgKill(killer: TDMAgent): void {
+  let times = potgKillTimes.get(killer);
+  if (!times) { times = []; potgKillTimes.set(killer, times); }
+  times.push(gameState.worldElapsed);
+
+  // Score: count kills within the POTG_WINDOW ending now
+  const cutoff = gameState.worldElapsed - POTG_WINDOW;
+  const recent = times.filter(t => t >= cutoff);
+  const score = recent.length;
+  if (score > gameState.potgBestScore) {
+    gameState.potgBestScore = score;
+    gameState.potgBestAgent = killer;
+    gameState.potgBestTime = recent[0]; // start of the best sequence
+  }
+}
+
+export function getPotgAgent(): TDMAgent | null { return gameState.potgBestAgent; }
+export function getPotgTime(): number { return gameState.potgBestTime; }
+export function resetPotg(): void { potgKillTimes.clear(); gameState.potgBestScore = 0; gameState.potgBestAgent = null; gameState.potgBestTime = 0; }
 
 function showStreakBanner(streak: number): void {
   const label = STREAK_NAMES[streak];
@@ -115,10 +174,12 @@ function clearDeadTargetReferences(deadTarget: TDMAgent): void {
 export function dealDmgPlayer(dmg: number, attacker: TDMAgent | null = null): void {
   if (gameState.pDead || gameState.roundOver) return;
   if (isPlayerInAir()) return; // invulnerable during BR drop
+  // Spawn protection — immune for brief window after respawn
+  if (gameState.worldElapsed < gameState.pSpawnProtectUntil) return;
   gameState.pHP = Math.max(0, gameState.pHP - dmg);
   gameState.player.hp = gameState.pHP;
   updateHUD();
-  flashDmg();
+  flashDmg(dmg);
   playHitTaken();
   
 if (attacker) {
@@ -129,7 +190,15 @@ if (attacker) {
   );
 }
   if (attacker) showDamageArc(attacker.position.x, attacker.position.z);
+  // Log damage for assist tracking
+  if (attacker) logDamageContribution(gameState.player, attacker, dmg);
+  // Store attacker position for minimap damage direction indicator
+  if (attacker) {
+    (gameState as any).pLastAttackerX = attacker.position.x;
+    (gameState as any).pLastAttackerZ = attacker.position.z;
+  }
   getPostFX()?.triggerHit(Math.min(1, dmg / 30) * 0.7);
+  gameState.pLastDamageTime = gameState.worldElapsed;
 
   // Aim punch — camera kick proportional to damage
   const punchScale = Math.min(1, dmg / 60);
@@ -137,11 +206,30 @@ if (attacker) {
   gameState.cameraYaw += (Math.random() - 0.5) * punchScale * 0.02;
   playViewmodelHit();
 
-  if (gameState.pHP <= 0) playerDied(attacker);
+  // Sprint cancel on significant damage
+  if (dmg >= 15) {
+    movement.isSprinting = false;
+  }
+
+  if (gameState.pHP <= 0) {
+    // DBNO for player in elimination
+    if (gameState.mode === 'elimination' && !gameState.pDBNO) {
+      gameState.pDBNO = true;
+      gameState.pDBNOTimer = 15;
+      gameState.pHP = 1;
+      gameState.player.hp = 1;
+      addKillfeedEntry(attacker?.name ?? 'Enemy', 'Player', attacker?.team ?? TEAM_RED, TEAM_BLUE, 'DOWNED');
+      return;
+    }
+    playerDied(attacker);
+  }
 }
 
 function playerDied(attacker: TDMAgent | null): void {
   gameState.pDead = true;
+  gameState.pDBNO = false;
+  gameState.deathTime = gameState.worldElapsed;
+  flushAssists(gameState.player, attacker);
   if (attacker && gameState.mode !== 'br') {
     startKillcam(attacker);
   }
@@ -178,47 +266,70 @@ function playerDied(attacker: TDMAgent | null): void {
     attacker.kills++;
   }
 onPlayerDeath(attacker);
+  if (attacker) trackPotgKill(attacker);
   addKillfeedEntry(
     attacker ? attacker.name : 'Enemy',
     'Player',
     attacker ? attacker.team : TEAM_RED,
     TEAM_BLUE,
     attacker ? WEAPONS[attacker.weaponId].name : undefined,
+    false,
+    attacker ? attacker.weaponId : undefined,
   );
   checkGameEnd();
 }
 
 export function dealDmgAgent(ag: TDMAgent, dmg: number, attacker: TDMAgent | null = null): void {
   if (ag.isDead || gameState.roundOver) return;
+  // Spawn protection for bots
+  if ((ag as any)._spawnProtectUntil && gameState.worldElapsed < (ag as any)._spawnProtectUntil) return;
   ag.hp = Math.max(0, ag.hp - dmg);
   ag.alertLevel = Math.min(100, ag.alertLevel + 30);
   ag.lastDamageTime = gameState.worldElapsed;
   ag.recentDamage += dmg;
-  if (attacker) ag.lastAttacker = attacker;
+  if (attacker) {
+    ag.lastAttacker = attacker;
+    logDamageContribution(ag, attacker, dmg);
+  }
+
+  // Visible body stagger
+  const attackerPos = attacker ? { x: attacker.position.x, z: attacker.position.z } : null;
+  const wasHS = Boolean((ag as any)._lastHitWasHeadshot);
+  applyHitReaction(ag, dmg, attackerPos, wasHS);
 
   // Aim flinch proportional to damage
   const dmgFrac = Math.min(1, dmg / ag.maxHP);
   applyAimFlinch(ag, dmgFrac);
 
   // Hit marker when the player scores a hit
-  const wasHS = Boolean((ag as any)._lastHitWasHeadshot);
   if (attacker === gameState.player) {
+    const wasHS = Boolean((ag as any)._lastHitWasHeadshot);
+    const isFalloff = Boolean((ag as any)._lastHitWasFalloff);
     showHitMarker(wasHS);
-  }
-  if (attacker === gameState.player) {
     spawnDamageNumber(
       new THREE.Vector3(ag.position.x, 1.5, ag.position.z),
-      { amount: dmg, isHeadshot: wasHS },
+      { amount: dmg, isHeadshot: wasHS, isFalloff },
     );
   }
 
-  if (ag.hp <= 0) killAgent(ag, attacker);
+  if (ag.hp <= 0) {
+    // DBNO: in elimination mode, enter downed state instead of instant death
+    if (gameState.mode === 'elimination' && !ag.isDBNO) {
+      ag.isDBNO = true;
+      ag.dbnoTimer = 15; // 15s bleedout
+      ag.hp = 1; // keep barely alive for finish-off
+      addKillfeedEntry(attacker?.name ?? 'Enemy', ag.name, attacker?.team ?? TEAM_RED, ag.team, 'DOWNED');
+      return;
+    }
+    killAgent(ag, attacker);
+  }
 }
 
 function killAgent(ag: TDMAgent, attacker: TDMAgent | null): void {
   if (ag.isDead) return;
   ag.isDead = true;
   ag.deaths++;
+  flushAssists(ag, attacker);
   ag.respawnAt = gameState.worldElapsed + RESPAWN_TIME + Math.random() * 2;
   const deathDur = playAgentDeathAnimation(ag.renderComponent);
   const rc = ag.renderComponent!;
@@ -247,6 +358,8 @@ function killAgent(ag: TDMAgent, attacker: TDMAgent | null): void {
     attacker.kills++;
     attacker.confidence = Math.min(100, attacker.confidence + 10);
     attacker.killStreak++;
+    registerTeamKill(attacker.team);
+    trackPotgKill(attacker);
   }
 
   if (gameState.mode === 'tdm') {
@@ -261,11 +374,14 @@ function killAgent(ag: TDMAgent, attacker: TDMAgent | null): void {
   if (attacker === gameState.player) {
     gameState.pKills++;
     gameState.pKillStreak++;
+    gameState.lastPlayerKillTime = gameState.worldElapsed;
     if (dom.killTxt) dom.killTxt.textContent = String(gameState.pKills);
     showKillNotif(ag.name, ag.team);
     showKillMarker();
+    playKillConfirmed();
     showStreakBanner(gameState.pKillStreak);
     checkStreakReward(gameState.pKillStreak);
+    getPostFX()?.triggerKill();
   }
   if (attacker === gameState.player) {
     const distance = attacker.position.distanceTo(ag.position);
@@ -289,7 +405,18 @@ function killAgent(ag: TDMAgent, attacker: TDMAgent | null): void {
     ag.team,
     attacker ? WEAPONS[attacker.weaponId].name : undefined,
     wasHeadshot,
+    attacker ? attacker.weaponId : undefined,
   );
+
+  // In overtime, any score wins — check immediately
+  if (gameState.overtime && (gameState.mode === 'tdm' || gameState.mode === 'ctf')) {
+    const winner = gameState.teamScores[TEAM_BLUE] > gameState.teamScores[TEAM_RED] ? TEAM_BLUE : TEAM_RED;
+    if (gameState.teamScores[TEAM_BLUE] !== gameState.teamScores[TEAM_RED]) {
+      setTimeout(() => showRoundSummary(winner), 800);
+      return;
+    }
+  }
+
   checkGameEnd();
 }
 
@@ -330,6 +457,8 @@ export function respawnAgent(ag: TDMAgent): void {
   ag.renderComponent!.visible = true;
   ag.renderComponent!.position.set(sp[0], 0, sp[2]);
   resetAgentAnimation(ag.renderComponent!);
+  // Spawn protection for bots (2 seconds)
+  (ag as any)._spawnProtectUntil = gameState.worldElapsed + 2;
 
   ag.resetTacticalState();
   ag.grenades = getModeDefaults(gameState.mode).playerStartsArmed ? 2 : 0;
@@ -360,9 +489,14 @@ function checkEliminationEnd(): void {
   let blueAlive = 0;
   let redAlive = 0;
   for (const ag of gameState.agents) {
-    if (ag.isDead) continue;
+    if (ag.isDead || ag.isDBNO) continue;
     if (ag.team === TEAM_BLUE) blueAlive++;
     else redAlive++;
+  }
+  // Player DBNO also doesn't count
+  if (gameState.pDBNO) {
+    if (gameState.player.team === TEAM_BLUE) blueAlive = Math.max(0, blueAlive - 1);
+    else redAlive = Math.max(0, redAlive - 1);
   }
   gameState.eliminationBlueAlive = blueAlive;
   gameState.eliminationRedAlive = redAlive;
@@ -436,6 +570,7 @@ function checkGameEnd(): void {
 
   const leadScore = getCurrentLeadScore();
   if (leadScore >= gameState.scoreLimit) {
+    // In overtime, any score ends the match immediately
     if (gameState.mode === 'ffa') {
       const all = [
         { name: 'Player', kills: gameState.pKills, isPlayer: true },
@@ -456,6 +591,8 @@ function checkGameEnd(): void {
 export function resetMatch(mode = gameState.mode): void {
   gameState.mode = mode;
   gameState.roundOver = false;
+  gameState.overtime = false;
+  gameState.warmupTimer = mode === 'br' ? 0 : 3;
   const defaults = getModeDefaults(mode);
   gameState.matchTime = defaults.matchTime;
   gameState.matchTimeRemaining = defaults.matchTime;
@@ -470,6 +607,11 @@ export function resetMatch(mode = gameState.mode): void {
   gameState.killfeedEntries = [];
   dom.killfeed.innerHTML = '';
   gameState.eliminationRound = 0;
+  resetPlayerRecoil();
+  resetSuppression();
+
+  // Randomize weather each round
+  applyRandomWeather();
 
   // Clear pending AI callouts so stale intel from last match doesn't carry over
   clearTeamIntel();
@@ -487,6 +629,8 @@ export function resetMatch(mode = gameState.mode): void {
   gameState.cameraPitch = 0;
   gameState.pHP = 100;
   gameState.player.hp = 100;
+  gameState.pSpawnProtectUntil = gameState.worldElapsed + 2;
+  gameState.pAssists = 0;
   applyPlayerLoadoutForMode();
   gameState.pGrenades = defaults.playerStartsArmed ? 2 : 0;
   gameState.pReloading = false;
@@ -526,12 +670,21 @@ export function resetMatch(mode = gameState.mode): void {
   if (gameState.mainMenuOpen) dom.lockHint.classList.add('on');
 }
 
-export function updateRespawns(): void {
+export function updateRespawns(dt = 0.016): void {
   if (gameState.roundOver) return;
 
   if (gameState.mode === 'br') return;
 
   if (gameState.matchTimeRemaining <= 0) {
+    // Overtime: if scores are tied, enter sudden death instead of ending
+    if (!gameState.overtime && gameState.mode !== 'ffa') {
+      if (gameState.teamScores[TEAM_BLUE] === gameState.teamScores[TEAM_RED]) {
+        gameState.overtime = true;
+        gameState.matchTimeRemaining = 60; // 60s overtime
+        addKillfeedEntry('SYSTEM', 'OVERTIME — SUDDEN DEATH', TEAM_BLUE, TEAM_RED, 'OT');
+        return;
+      }
+    }
     gameState.roundOver = true;
     if (gameState.mode === 'ffa') {
       showRoundSummary(TEAM_BLUE);
@@ -548,6 +701,70 @@ export function updateRespawns(): void {
   for (const ag of gameState.agents) {
     if (ag !== gameState.player && ag.isDead && gameState.worldElapsed >= ag.respawnAt) {
       respawnAgent(ag);
+    }
+  }
+
+  // ── DBNO bleedout & revive ──
+  updateDBNO(dt);
+}
+
+const DBNO_REVIVE_RANGE = 3; // meters to revive
+const DBNO_REVIVE_TIME = 3;  // seconds to revive
+
+function updateDBNO(dt: number): void {
+  if (gameState.mode !== 'elimination') return;
+
+  for (const ag of gameState.agents) {
+    if (!ag.isDBNO || ag.isDead) continue;
+
+    // Bleedout timer
+    ag.dbnoTimer -= dt;
+    if (ag.dbnoTimer <= 0) {
+      ag.isDBNO = false;
+      ag.hp = 0;
+      killAgent(ag, ag.lastAttacker);
+      continue;
+    }
+
+    // Check if a living teammate is nearby to revive
+    let reviver: TDMAgent | null = null;
+    for (const ally of gameState.agents) {
+      if (ally === ag || ally.isDead || ally.isDBNO || ally.team !== ag.team) continue;
+      const dist = ag.position.distanceTo(ally.position);
+      if (dist < DBNO_REVIVE_RANGE) {
+        reviver = ally;
+        break;
+      }
+    }
+
+    if (reviver) {
+      if (ag.dbnoReviver !== reviver) {
+        ag.dbnoReviver = reviver;
+        (ag as any)._reviveProgress = 0;
+      }
+      (ag as any)._reviveProgress = ((ag as any)._reviveProgress ?? 0) + dt;
+      if ((ag as any)._reviveProgress >= DBNO_REVIVE_TIME) {
+        // Revived!
+        ag.isDBNO = false;
+        ag.dbnoTimer = 0;
+        ag.dbnoReviver = null;
+        ag.hp = Math.floor(ag.maxHP * 0.3); // revive at 30% HP
+        addKillfeedEntry(reviver.name, ag.name, reviver.team, ag.team, 'REVIVED');
+      }
+    } else {
+      ag.dbnoReviver = null;
+      (ag as any)._reviveProgress = 0;
+    }
+  }
+
+  // Check player DBNO bleedout
+  if (gameState.pDBNO) {
+    gameState.pDBNOTimer -= dt;
+    if (gameState.pDBNOTimer <= 0) {
+      gameState.pDBNO = false;
+      gameState.pHP = 0;
+      gameState.player.hp = 0;
+      playerDied(gameState.player.lastAttacker);
     }
   }
 }

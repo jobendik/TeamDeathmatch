@@ -8,6 +8,8 @@ import { matchState, MEDALS, resetMatchMedals } from './Medals';
 import { clearChallenges, getCompletedChallenges, rollChallenges } from './Challenges';
 import { clearFloatingDamage } from './FloatingDamage';
 import { clearAnnouncer } from './Announcer';
+import { getPotgAgent, resetPotg } from '@/combat/Combat';
+import { startPotgReplay, stopPotgReplay } from './Killcam';
 
 interface PlayerStats {
   name: string; team: number; kills: number; deaths: number; isPlayer: boolean;
@@ -40,6 +42,15 @@ export function showRoundSummary(winnerTeam: number): void {
   document.exitPointerLock?.();
   clearFloatingDamage();
   clearAnnouncer();
+
+  // Trigger POTG replay if someone scored 3+ kills in a window
+  const potgAgent = getPotgAgent();
+  if (potgAgent && gameState.potgBestScore >= 3) {
+    startPotgReplay(potgAgent);
+    // Auto-stop after 5s (the replay handles its own duration)
+    setTimeout(() => stopPotgReplay(), 5200);
+  }
+  resetPotg();
 
   const prog = loadProgression();
   const startLevel = prog.level;
@@ -189,8 +200,20 @@ export function showRoundSummary(winnerTeam: number): void {
     </div>
   `;
 
+  // ── MVP banner ──
+  const mvp = stats[0];
+  const mvpKd = mvp.deaths > 0 ? (mvp.kills / mvp.deaths).toFixed(2) : mvp.kills.toFixed(2);
+  const mvpLabel = mvp.isPlayer ? 'YOU' : mvp.name;
+  const mvpTeamCol = gameState.mode === 'ffa' ? 'var(--gold)' : (mvp.team === TEAM_BLUE ? 'var(--blue)' : 'var(--red)');
+
   // ── Scoreboard ──
   const scoreboardHtml = `
+    <div class="rs-section-header">MVP</div>
+    <div class="rs-mvp-card" style="border-color:${mvpTeamCol}">
+      <span class="rs-mvp-icon">★</span>
+      <span class="rs-mvp-name" style="color:${mvpTeamCol}">${mvpLabel}</span>
+      <span class="rs-mvp-kd">${mvp.kills}K / ${mvp.deaths}D (${mvpKd})</span>
+    </div>
     <div class="rs-section-header">FINAL STANDINGS</div>
     <div class="rs-stats-grid">
       ${stats.slice(0, 6).map((s, i) => {

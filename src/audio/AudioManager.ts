@@ -313,6 +313,111 @@ class AudioMgr {
     this.ambientNodes = [];
     this.ambientPlaying = false;
   }
+
+  // ── Environmental ambient layer ──
+  private envNodes: (OscillatorNode | AudioBufferSourceNode)[] = [];
+  private envPlaying = false;
+  private envTimers: ReturnType<typeof setTimeout>[] = [];
+
+  startEnvironmentAmbience(): void {
+    if (!this.ctx || this.envPlaying) return;
+    this.envPlaying = true;
+    const ctx = this.ctx;
+
+    const envGain = ctx.createGain();
+    envGain.gain.value = 0;
+    envGain.connect(this.busMusic);
+    envGain.gain.linearRampToValueAtTime(0.08, ctx.currentTime + 4);
+
+    // Wind: filtered white noise
+    const windBuf = ctx.createBuffer(1, ctx.sampleRate * 8, ctx.sampleRate);
+    const windData = windBuf.getChannelData(0);
+    for (let i = 0; i < windData.length; i++) windData[i] = Math.random() * 2 - 1;
+    const wind = ctx.createBufferSource();
+    wind.buffer = windBuf;
+    wind.loop = true;
+    const windFilter = ctx.createBiquadFilter();
+    windFilter.type = 'bandpass';
+    windFilter.frequency.value = 400;
+    windFilter.Q.value = 0.5;
+    const windGain = ctx.createGain();
+    windGain.gain.value = 0.06;
+    wind.connect(windFilter).connect(windGain).connect(envGain);
+    wind.start();
+    this.envNodes.push(wind);
+
+    // Distant gunfire bursts — periodic random shots
+    const scheduleDistantShot = () => {
+      if (!this.envPlaying || !this.ctx) return;
+      const delay = 4000 + Math.random() * 12000;
+      const timer = setTimeout(() => {
+        if (!this.envPlaying || !this.ctx) return;
+        const burstCount = 1 + Math.floor(Math.random() * 4);
+        for (let i = 0; i < burstCount; i++) {
+          setTimeout(() => {
+            if (!this.ctx) return;
+            const t = this.ctx.currentTime;
+            const osc = this.ctx.createOscillator();
+            osc.type = 'sawtooth';
+            osc.frequency.setValueAtTime(120 + Math.random() * 80, t);
+            osc.frequency.exponentialRampToValueAtTime(60, t + 0.08);
+            const g = this.ctx.createGain();
+            g.gain.setValueAtTime(0, t);
+            g.gain.linearRampToValueAtTime(0.03, t + 0.002);
+            g.gain.exponentialRampToValueAtTime(0.0001, t + 0.1);
+            const lp = this.ctx.createBiquadFilter();
+            lp.type = 'lowpass';
+            lp.frequency.value = 600;
+            osc.connect(lp).connect(g).connect(envGain);
+            osc.start(t);
+            osc.stop(t + 0.12);
+          }, i * (80 + Math.random() * 60));
+        }
+        scheduleDistantShot();
+      }, delay);
+      this.envTimers.push(timer);
+    };
+    scheduleDistantShot();
+
+    // Metallic creaks — filtered noise bursts every 8-20s
+    const scheduleCreak = () => {
+      if (!this.envPlaying || !this.ctx) return;
+      const delay = 8000 + Math.random() * 12000;
+      const timer = setTimeout(() => {
+        if (!this.envPlaying || !this.ctx) return;
+        const t = this.ctx.currentTime;
+        const nBuf = this.ctx.createBuffer(1, this.ctx.sampleRate, this.ctx.sampleRate);
+        const nData = nBuf.getChannelData(0);
+        for (let i = 0; i < nData.length; i++) nData[i] = Math.random() * 2 - 1;
+        const n = this.ctx.createBufferSource();
+        n.buffer = nBuf;
+        const bp = this.ctx.createBiquadFilter();
+        bp.type = 'bandpass';
+        bp.frequency.value = 1200 + Math.random() * 800;
+        bp.Q.value = 8;
+        const g = this.ctx.createGain();
+        g.gain.setValueAtTime(0, t);
+        g.gain.linearRampToValueAtTime(0.02, t + 0.01);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + 0.3);
+        n.connect(bp).connect(g).connect(envGain);
+        n.start(t);
+        n.stop(t + 0.35);
+        scheduleCreak();
+      }, delay);
+      this.envTimers.push(timer);
+    };
+    scheduleCreak();
+  }
+
+  stopEnvironmentAmbience(): void {
+    this.envPlaying = false;
+    for (const n of this.envNodes) {
+      try { n.stop(); } catch { /* already stopped */ }
+    }
+    this.envNodes = [];
+    for (const t of this.envTimers) clearTimeout(t);
+    this.envTimers = [];
+  }
 }
 
 export const Audio = new AudioMgr();
@@ -550,6 +655,103 @@ const SOUNDS: Record<string, SoundDef> = {
       noise.connect(f).connect(g).connect(d);
       noise.start(t); noise.stop(t + 0.03);
       return 0.03;
+    },
+  },
+
+  // ── Bullet whiz/flyby (positional) ──
+  bullet_whiz: { category: 'sfx', volume: 0.6, polyphonic: true,
+    synth: (ctx, d) => {
+      const t = ctx.currentTime;
+      const noise = ctx.createBufferSource();
+      noise.buffer = whiteNoise(ctx, 0.12);
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass'; bp.frequency.value = 3200; bp.Q.value = 2;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(0.7, t + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
+      noise.connect(bp).connect(g).connect(d);
+      noise.start(t); noise.stop(t + 0.13);
+      return 0.13;
+    },
+  },
+
+  // ── Kill confirmed chime (2D, non-positional) ──
+  kill_confirmed: { category: 'sfx', volume: 0.5, polyphonic: true,
+    synth: (ctx, d) => {
+      const t = ctx.currentTime;
+      // Rising two-tone chime
+      const o1 = ctx.createOscillator();
+      o1.type = 'sine';
+      o1.frequency.setValueAtTime(1200, t);
+      o1.frequency.setValueAtTime(1600, t + 0.06);
+      const g1 = ctx.createGain();
+      envelope(g1, t, 0.002, 0.12, 0.45);
+      o1.connect(g1).connect(d);
+      o1.start(t); o1.stop(t + 0.14);
+      // Harmonic shimmer
+      const o2 = ctx.createOscillator();
+      o2.type = 'triangle';
+      o2.frequency.setValueAtTime(2400, t + 0.04);
+      const g2 = ctx.createGain();
+      envelope(g2, t + 0.04, 0.002, 0.08, 0.2);
+      o2.connect(g2).connect(d);
+      o2.start(t + 0.04); o2.stop(t + 0.14);
+      return 0.14;
+    },
+  },
+
+  // ── Hitmarker feedback (2D, non-positional) ──
+  friendly_fire_buzz: { category: 'sfx', volume: 0.4, polyphonic: true,
+    synth: (ctx, d) => {
+      const t = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(180, t);
+      osc.frequency.linearRampToValueAtTime(120, t + 0.12);
+      const g = ctx.createGain();
+      envelope(g, t, 0.003, 0.12, 0.35);
+      osc.connect(g).connect(d);
+      osc.start(t); osc.stop(t + 0.15);
+      return 0.15;
+    },
+  },
+  hitmarker_body: { category: 'sfx', volume: 0.35, polyphonic: true,
+    synth: (ctx, d) => {
+      const t = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(800, t);
+      osc.frequency.exponentialRampToValueAtTime(400, t + 0.025);
+      const g = ctx.createGain();
+      envelope(g, t, 0.001, 0.025, 0.3);
+      osc.connect(g).connect(d);
+      osc.start(t); osc.stop(t + 0.035);
+      return 0.035;
+    },
+  },
+  hitmarker_headshot: { category: 'sfx', volume: 0.5, polyphonic: true,
+    synth: (ctx, d) => {
+      const t = ctx.currentTime;
+      // High metallic dink
+      const osc = ctx.createOscillator();
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(2200, t);
+      osc.frequency.exponentialRampToValueAtTime(1200, t + 0.03);
+      const g = ctx.createGain();
+      envelope(g, t, 0.001, 0.04, 0.45);
+      osc.connect(g).connect(d);
+      osc.start(t); osc.stop(t + 0.05);
+      // Second harmonic ping
+      const osc2 = ctx.createOscillator();
+      osc2.type = 'sine';
+      osc2.frequency.setValueAtTime(3400, t);
+      osc2.frequency.exponentialRampToValueAtTime(1800, t + 0.05);
+      const g2 = ctx.createGain();
+      envelope(g2, t, 0.001, 0.05, 0.2);
+      osc2.connect(g2).connect(d);
+      osc2.start(t); osc2.stop(t + 0.06);
+      return 0.06;
     },
   },
 
@@ -876,6 +1078,38 @@ const SOUNDS: Record<string, SoundDef> = {
   footstep_6:    { category: 'sfx', volume: 0.25, polyphonic: true,
     synth: (ctx, d) => SOUNDS.footstep.synth(ctx, d) },
 
+  // ── Metal footstep variants (higher-pitched, metallic ring) ──
+  footstep_metal_1: { category: 'sfx', volume: 0.3, polyphonic: true,
+    synth: (ctx, d) => {
+      const t = ctx.currentTime;
+      const osc = ctx.createOscillator(); osc.type = 'square';
+      osc.frequency.setValueAtTime(800 + Math.random() * 200, t);
+      osc.frequency.exponentialRampToValueAtTime(300, t + 0.06);
+      const g = ctx.createGain(); envelope(g, t, 0.002, 0.05, 0.3);
+      osc.connect(g).connect(d); osc.start(t); osc.stop(t + 0.08); return 0.08;
+    },
+  },
+  footstep_metal_2: { category: 'sfx', volume: 0.3, polyphonic: true,
+    synth: (ctx, d) => SOUNDS.footstep_metal_1.synth(ctx, d) },
+  footstep_metal_3: { category: 'sfx', volume: 0.3, polyphonic: true,
+    synth: (ctx, d) => SOUNDS.footstep_metal_1.synth(ctx, d) },
+
+  // ── Wood footstep variants (softer, lower thud) ──
+  footstep_wood_1: { category: 'sfx', volume: 0.28, polyphonic: true,
+    synth: (ctx, d) => {
+      const t = ctx.currentTime;
+      const osc = ctx.createOscillator(); osc.type = 'triangle';
+      osc.frequency.setValueAtTime(180 + Math.random() * 60, t);
+      osc.frequency.exponentialRampToValueAtTime(80, t + 0.06);
+      const g = ctx.createGain(); envelope(g, t, 0.003, 0.05, 0.4);
+      osc.connect(g).connect(d); osc.start(t); osc.stop(t + 0.08); return 0.08;
+    },
+  },
+  footstep_wood_2: { category: 'sfx', volume: 0.28, polyphonic: true,
+    synth: (ctx, d) => SOUNDS.footstep_wood_1.synth(ctx, d) },
+  footstep_wood_3: { category: 'sfx', volume: 0.28, polyphonic: true,
+    synth: (ctx, d) => SOUNDS.footstep_wood_1.synth(ctx, d) },
+
   // ── Landing variant ──
   land_2:        { category: 'sfx', volume: 0.45,
     synth: (ctx, d) => SOUNDS.land.synth(ctx, d) },
@@ -1034,6 +1268,14 @@ export const REAL_SOUND_URLS: Record<string, string> = {
   footstep_4:        'player/concrete-run-4.mp3',
   footstep_5:        'player/concrete-run-5.mp3',
   footstep_6:        'player/concrete-run-6.mp3',
+
+  // ── Player: surface footsteps ──
+  footstep_metal_1:  'player/metal-run-1.mp3',
+  footstep_metal_2:  'player/metal-run-2.mp3',
+  footstep_metal_3:  'player/metal-run-3.mp3',
+  footstep_wood_1:   'player/wood-run-1.mp3',
+  footstep_wood_2:   'player/wood-run-2.mp3',
+  footstep_wood_3:   'player/wood-run-3.mp3',
 
   // ── Player: movement ──
   jump:              'player/jump.mp3',

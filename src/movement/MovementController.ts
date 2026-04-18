@@ -16,7 +16,8 @@ import * as THREE from 'three';
 import { gameState } from '@/core/GameState';
 import { FP } from '@/config/player';
 import { WEAPONS } from '@/config/weapons';
-import { playJump, playLand, playSlide, playFootstep } from '@/audio/SoundHooks';
+import { playJump, playLand, playSlide, playFootstep, detectSurface } from '@/audio/SoundHooks';
+import { dealDmgPlayer } from '@/combat/Combat';
 
 export interface MovementState {
   isCrouching: boolean;
@@ -25,12 +26,17 @@ export interface MovementState {
   slideTimer: number;
   slideDir: THREE.Vector3;
   slideStartSpeed: number;
+  slideCooldown: number;
 
   leanDir: number;          // -1 left, 0 none, 1 right
   leanT: number;            // smoothed -1..1
 
   isSprinting: boolean;
   sprintT: number;          // smoothed 0..1
+
+  isTacSprinting: boolean;
+  tacSprintTimer: number;
+  tacSprintCooldown: number;
 
   isGrounded: boolean;
   coyoteTimer: number;
@@ -46,6 +52,8 @@ export interface MovementState {
   fovTarget: number;
   fovCurrent: number;
 
+  headBobScale: number;
+
   cameraOffsetX: number;    // for lean
   cameraTilt: number;       // for lean roll
 }
@@ -57,12 +65,17 @@ export const movement: MovementState = {
   slideTimer: 0,
   slideDir: new THREE.Vector3(),
   slideStartSpeed: 0,
+  slideCooldown: 0,
 
   leanDir: 0,
   leanT: 0,
 
   isSprinting: false,
   sprintT: 0,
+
+  isTacSprinting: false,
+  tacSprintTimer: 0,
+  tacSprintCooldown: 0,
 
   isGrounded: true,
   coyoteTimer: 0,
@@ -77,6 +90,8 @@ export const movement: MovementState = {
   fovBase: 78,
   fovTarget: 78,
   fovCurrent: 78,
+
+  headBobScale: 1,
 
   cameraOffsetX: 0,
   cameraTilt: 0,
@@ -102,6 +117,7 @@ const FOV_SPRINT_BOOST = 8;
 const FOV_ADS_REDUCTION = 22;
 const LEAN_OFFSET = 0.35;
 const LEAN_TILT = 0.18;
+let strafeTiltSmooth = 0;
 
 /**
  * Returns the effective player height (for camera + collision).
@@ -132,6 +148,7 @@ function tryStartSlide(forward: THREE.Vector3): boolean {
   if (movement.isSliding) return false;
   if (!movement.isSprinting) return false;
   if (!movement.isGrounded) return false;
+  if (movement.slideCooldown > 0) return false;
 
   movement.isSliding = true;
   movement.slideTimer = SLIDE_DURATION;
@@ -145,6 +162,7 @@ function tryStartSlide(forward: THREE.Vector3): boolean {
 function endSlide(): void {
   movement.isSliding = false;
   movement.slideTimer = 0;
+  movement.slideCooldown = 1.2;
 }
 
 /**
@@ -206,11 +224,22 @@ export function requestJump(): void {
 }
 
 export function toggleCrouch(): void {
-  if (movement.isSliding) return;
+  // Crouch during slide = slide cancel
+  if (movement.isSliding) {
+    endSlide();
+    movement.isCrouching = false;
+    return;
+  }
   movement.isCrouching = !movement.isCrouching;
 }
 
 export function setCrouch(on: boolean): void {
+  // Crouch during slide = slide cancel (stand up, kill slide momentum)
+  if (movement.isSliding && on) {
+    endSlide();
+    movement.isCrouching = false;
+    return;
+  }
   if (movement.isSliding && !on) return;
   movement.isCrouching = on;
 }
@@ -236,8 +265,24 @@ export function updateMovement(dt: number): {
   let jumped = false;
 
   // ── Sprint detection ──
+  // ── Slide cooldown ──
+  if (movement.slideCooldown > 0) movement.slideCooldown -= dt;
+
+  // ── Tactical sprint cooldown ──
+  if (movement.tacSprintCooldown > 0) movement.tacSprintCooldown -= dt;
+
   const wantingToSprint = keys.shift && keys.w && !movement.isCrouching && !gameState.isADS;
   movement.isSprinting = wantingToSprint && movement.isGrounded;
+
+  // Tactical sprint: faster tier with limited duration
+  if (movement.isTacSprinting) {
+    movement.tacSprintTimer -= dt;
+    if (movement.tacSprintTimer <= 0 || !movement.isSprinting) {
+      movement.isTacSprinting = false;
+      movement.tacSprintCooldown = 5;
+    }
+  }
+
   movement.sprintT += ((movement.isSprinting ? 1 : 0) - movement.sprintT) * Math.min(1, dt * 8);
 
   // ── Crouch transition ──
@@ -248,11 +293,17 @@ export function updateMovement(dt: number): {
   const leanInput = movement.leanDir;
   movement.leanT += (leanInput - movement.leanT) * Math.min(1, dt * 10);
   movement.cameraOffsetX = movement.leanT * LEAN_OFFSET;
-  movement.cameraTilt = -movement.leanT * LEAN_TILT;
+
+  // Strafe tilt — subtle camera roll when strafing
+  const strafeInput = (keys.d ? 1 : 0) - (keys.a ? 1 : 0);
+  const strafeTiltTarget = strafeInput * 0.012 * (movement.isSprinting ? 1.5 : 1);
+  strafeTiltSmooth += (strafeTiltTarget - strafeTiltSmooth) * Math.min(1, dt * 6);
+  movement.cameraTilt = -movement.leanT * LEAN_TILT + strafeTiltSmooth;
 
   // ── FOV target ──
   let fovT = movement.fovBase;
   if (movement.isSprinting) fovT += FOV_SPRINT_BOOST * movement.sprintT;
+  if (movement.isTacSprinting) fovT += 4;
   if (movement.isSliding) fovT += FOV_SPRINT_BOOST * 1.4;
   if (gameState.isADS) {
     const adsAmount = gameState.pWeaponId === 'sniper_rifle' ? 1 : 0.6;
@@ -285,7 +336,9 @@ export function updateMovement(dt: number): {
     const strafe = (keys.d ? 1 : 0) - (keys.a ? 1 : 0);
 
     if (forward || strafe) {
-      const baseSpeed = movement.isSprinting ? FP.sprintSpeed : FP.moveSpeed;
+      const baseSpeed = movement.isSprinting
+        ? (movement.isTacSprinting ? FP.sprintSpeed * 1.25 : FP.sprintSpeed)
+        : FP.moveSpeed;
       const spd = baseSpeed * getSpeedMultiplier();
       let mx = (-Math.sin(gameState.cameraYaw)) * forward + (Math.cos(gameState.cameraYaw)) * strafe;
       let mz = (-Math.cos(gameState.cameraYaw)) * forward + (-Math.sin(gameState.cameraYaw)) * strafe;
@@ -325,7 +378,13 @@ export function updateMovement(dt: number): {
     const intensity = Math.min(1, fallDist / 6);
     playLand(intensity);
     if (fallDist > 4) {
-      // Hard landing — small camera punch (handled separately if you want)
+      // Hard landing — camera punch downward
+      gameState.cameraPitch -= intensity * 0.06;
+    }
+    // Fall damage: anything above 5m deals increasing damage
+    if (fallDist > 5) {
+      const fallDmg = Math.round((fallDist - 5) * 10);
+      dealDmgPlayer(fallDmg, null);
     }
     movement.airTime = 0;
   }
@@ -372,7 +431,10 @@ export function updateMovement(dt: number): {
     if (movement.isCrouching) interval *= 1.6; // softer, slower
 
     movement.footstepCooldown = interval;
-    if (!movement.isCrouching) playFootstep(undefined as any, true);
+    if (!movement.isCrouching) {
+      const surf = detectSurface(gameState.camera.position);
+      playFootstep(undefined as any, true, movement.sprintT, surf);
+    }
     movement.bobPhase += Math.PI;
   }
 
@@ -388,10 +450,11 @@ export function updateMovement(dt: number): {
 export function getCameraOffset(): { x: number; y: number; tilt: number; bob: number } {
   const speed = Math.hypot(movement.velocity.x, movement.velocity.z);
   const moving = speed > 0.5 && movement.isGrounded && !movement.isSliding;
-  const bobAmt = moving ? (movement.isSprinting ? 0.05 : 0.025) : 0;
+  const bobAmt = moving ? (movement.isSprinting ? 0.05 : 0.025) * movement.headBobScale : 0;
   const bobY = Math.abs(Math.sin(movement.bobPhase * 0.5)) * bobAmt;
+  const bobX = Math.sin(movement.bobPhase) * bobAmt * 0.4;
   return {
-    x: movement.cameraOffsetX,
+    x: movement.cameraOffsetX + bobX,
     y: bobY,
     tilt: movement.cameraTilt,
     bob: movement.bobPhase,

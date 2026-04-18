@@ -6,7 +6,7 @@ import { gameState } from '@/core/GameState';
 import { TEAM_BLUE } from '@/config/constants';
 import { WEAPONS } from '@/config/weapons';
 import { getEnemyFlagTeam } from '@/core/GameModes';
-import { getPreferredPosition } from '@/ai/StrategicPositions';
+import { getPreferredPosition, STRATEGIC_POSITIONS } from '@/ai/StrategicPositions';
 
 // ═══════════════════════════════════════════
 //  ATOMIC GOALS — leaf-level behaviors
@@ -152,6 +152,13 @@ export class EngageCombatGoal extends YUKA.Goal<TDMAgent> {
 
       let seekX = ag.position.x + perpX * strafeMultiplier + toTarget.x * rangeFactor * 8;
       let seekZ = ag.position.z + perpZ * strafeMultiplier + toTarget.z * rangeFactor * 8;
+
+      // Trade-frag coordination: offset approach angle when teammate is already engaging
+      const tradeAngle = (ag as any)._tradeAngleOffset as number | undefined;
+      if (tradeAngle && dist > 8) {
+        seekX += Math.sin(tradeAngle) * 5;
+        seekZ += Math.cos(tradeAngle) * 5;
+      }
 
       if (isInsideWall(seekX, seekZ)) {
         const safe = pushOutOfWall(seekX, seekZ);
@@ -486,6 +493,81 @@ export class TeamPushGoal extends YUKA.Goal<TDMAgent> {
   }
 }
 
+export class HoldAngleGoal extends YUKA.Goal<TDMAgent> {
+  private holdPos: YUKA.Vector3 | null = null;
+  private holdAngle = 0;
+  private holdDuration = 0;
+
+  activate(): void {
+    const ag = this.owner;
+    ag.stateName = 'HOLD_ANGLE';
+    ag.stateTime = 0;
+    ag.isBotCrouching = true;
+
+    // Find a nearby choke/cover/sniper_nest strategic position
+    let best: { pos: YUKA.Vector3; angle: number; score: number } | null = null;
+    for (const sp of STRATEGIC_POSITIONS) {
+      if (sp.type !== 'choke' && sp.type !== 'cover' && sp.type !== 'sniper_nest') continue;
+      const dist = ag.position.distanceTo(sp.pos);
+      if (dist > 30 || dist < 3) continue;
+      let score = 40 - dist;
+      if (sp.type === 'choke') score += 15;
+      if (sp.type === 'sniper_nest' && ag.botClass === 'sniper') score += 20;
+      if (!best || score > best.score) {
+        best = { pos: sp.pos.clone(), angle: sp.controlsAngle, score };
+      }
+    }
+
+    if (best) {
+      this.holdPos = best.pos;
+      this.holdAngle = best.angle;
+    } else {
+      // Fallback: hold current position
+      this.holdPos = ag.position.clone();
+      this.holdAngle = Math.atan2(ag.velocity.x, ag.velocity.z);
+    }
+
+    // Duration scales with patience
+    const p = ag.personality;
+    this.holdDuration = 3 + (p ? p.patienceBias * 4 : 1) + Math.random() * 2;
+    ag.preAimPos = new YUKA.Vector3(
+      this.holdPos.x + Math.sin(this.holdAngle) * 20,
+      0,
+      this.holdPos.z + Math.cos(this.holdAngle) * 20,
+    );
+    this.status = YUKA.Goal.STATUS.ACTIVE;
+  }
+
+  execute(): void {
+    const ag = this.owner;
+    if (ag.wanderB) ag.wanderB.weight = 0;
+    if (ag.pursuitB) ag.pursuitB.weight = 0;
+    if (ag.fleeB) ag.fleeB.weight = 0;
+    if (ag.seekB) ag.seekB.weight = 0;
+
+    if (ag.arriveB && this.holdPos) {
+      ag.arriveB.weight = 1.2;
+      (ag.arriveB as any).target.copy(this.holdPos);
+    }
+
+    // Break on contact or time up
+    if (ag.currentTarget && !ag.currentTarget.isDead) {
+      this.status = YUKA.Goal.STATUS.COMPLETED;
+    }
+    if (ag.stateTime >= this.holdDuration) {
+      this.status = YUKA.Goal.STATUS.COMPLETED;
+    }
+  }
+
+  terminate(): void {
+    const ag = this.owner;
+    ag.isBotCrouching = false;
+    ag.preAimPos = null;
+    if (ag.arriveB) ag.arriveB.weight = 0;
+    this.status = YUKA.Goal.STATUS.COMPLETED;
+  }
+}
+
 function getCTFObjectivePosition(ag: TDMAgent): YUKA.Vector3 | null {
   if (gameState.mode !== 'ctf') return null;
 
@@ -754,6 +836,10 @@ const HUNT_POINTS: YUKA.Vector3[] = [
 ];
 
 function findHuntTarget(ag: TDMAgent): YUKA.Vector3 | null {
+  // Coordinated pinch target overrides normal hunt
+  const pinch = (ag as any)._pinchTarget as YUKA.Vector3 | null;
+  if (pinch) return pinch;
+
   const scores: { pos: YUKA.Vector3; score: number }[] = [];
 
   if (gameState.mode === 'ctf') {
