@@ -72,6 +72,7 @@ export interface KillfeedEntry {
   victimTeam: number;
   time: number;
   weaponName?: string;
+  headshot?: boolean;
 }
 
 export interface FlagState {

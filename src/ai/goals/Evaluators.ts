@@ -4,6 +4,7 @@ import { gameState } from '@/core/GameState';
 import { TEAM_BLUE } from '@/config/constants';
 import { WEAPONS } from '@/config/weapons';
 import { findNearestPickup } from '@/ai/CoverSystem';
+import { getZoneDanger } from '@/ai/MatchMemory';
 import {
   AttackTargetGoal,
   SurviveGoal,
@@ -44,6 +45,10 @@ export class AttackEvaluator extends YUKA.GoalEvaluator<TDMAgent> {
     if (ag.nearbyAllies >= 2) desire += 0.08;
     if (ag.underPressure) desire -= ag.pressureLevel * 0.3;
 
+    // Zone danger — reduce aggression in areas where team keeps dying
+    const zoneDanger = getZoneDanger(ag.team, ag.position.x, ag.position.z);
+    desire -= zoneDanger * 0.25;
+
     // Personality
     const p = ag.personality;
     if (p) {
@@ -83,6 +88,10 @@ export class SurviveEvaluator extends YUKA.GoalEvaluator<TDMAgent> {
     desire += (1 - ag.fuzzyAggr / 100) * 0.15;
     if (ag.botClass === 'sniper') desire += 0.1;
     if (ag.underPressure) desire += ag.pressureLevel * 0.35;
+
+    // Zone danger — urgently retreat from death zones
+    const zoneDanger = getZoneDanger(ag.team, ag.position.x, ag.position.z);
+    desire += zoneDanger * 0.3;
 
     const p = ag.personality;
     if (p) {
@@ -232,6 +241,10 @@ export class HuntEvaluator extends YUKA.GoalEvaluator<TDMAgent> {
     for (const [, entry] of ag.enemyMemory) {
       if (entry.confidence > 0.3) { desire += 0.1; break; }
     }
+
+    // Zone danger — less eager to hunt into death zones
+    const hZoneDanger = getZoneDanger(ag.team, ag.position.x, ag.position.z);
+    desire -= hZoneDanger * 0.15;
 
     const p = ag.personality;
     if (p) {

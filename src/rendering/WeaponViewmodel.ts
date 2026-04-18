@@ -33,17 +33,19 @@ interface VMLayout {
   recoilZ: number;
   recoilUp: number;
   recoilRot: number;
+  /** Per-shot vertical climb multiplier during sustained fire (0 = no climb) */
+  climbPerShot: number;
 }
 
 const VM_LAYOUTS: Record<WeaponId, VMLayout> = {
-  unarmed:         { pos: [0.14, -0.25, -0.15], rot: [0, 0, 0], scale: 1.0, muzzleOffset: [0, 0, 0], recoilZ: 0, recoilUp: 0, recoilRot: 0 },
-  knife:           { pos: [0.14, -0.12, -0.18], rot: [0, 0, 0], scale: 1.0, muzzleOffset: [0, 0, 0], recoilZ: 0, recoilUp: 0, recoilRot: 0 },
-  pistol:          { pos: [0.14, -0.12, -0.20], rot: [0, 0, 0], scale: 1.4, muzzleOffset: [0, 0.008, -0.10], recoilZ: 0.025, recoilUp: 0.012, recoilRot: 0.08 },
-  smg:             { pos: [0.12, -0.11, -0.22], rot: [0, 0, 0], scale: 1.3, muzzleOffset: [0, 0.008, -0.14], recoilZ: 0.012, recoilUp: 0.006, recoilRot: 0.04 },
-  assault_rifle:   { pos: [0.11, -0.10, -0.24], rot: [0, 0, 0], scale: 1.2, muzzleOffset: [0, 0.010, -0.18], recoilZ: 0.018, recoilUp: 0.008, recoilRot: 0.06 },
-  shotgun:         { pos: [0.12, -0.11, -0.22], rot: [0, 0, 0], scale: 1.2, muzzleOffset: [0, 0.012, -0.20], recoilZ: 0.040, recoilUp: 0.025, recoilRot: 0.14 },
-  sniper_rifle:    { pos: [0.10, -0.10, -0.26], rot: [0, 0, 0], scale: 1.1, muzzleOffset: [0, 0.010, -0.26], recoilZ: 0.035, recoilUp: 0.018, recoilRot: 0.10 },
-  rocket_launcher: { pos: [0.14, -0.13, -0.20], rot: [0, 0, 0], scale: 1.2, muzzleOffset: [0, 0.000, -0.18], recoilZ: 0.050, recoilUp: 0.030, recoilRot: 0.12 },
+  unarmed:         { pos: [0.14, -0.25, -0.15], rot: [0, 0, 0], scale: 1.0, muzzleOffset: [0, 0, 0], recoilZ: 0, recoilUp: 0, recoilRot: 0, climbPerShot: 0 },
+  knife:           { pos: [0.14, -0.12, -0.18], rot: [0, 0, 0], scale: 1.0, muzzleOffset: [0, 0, 0], recoilZ: 0, recoilUp: 0, recoilRot: 0, climbPerShot: 0 },
+  pistol:          { pos: [0.14, -0.12, -0.20], rot: [0, 0, 0], scale: 1.4, muzzleOffset: [0, 0.008, -0.10], recoilZ: 0.025, recoilUp: 0.012, recoilRot: 0.08, climbPerShot: 0.008 },
+  smg:             { pos: [0.12, -0.11, -0.22], rot: [0, 0, 0], scale: 1.3, muzzleOffset: [0, 0.008, -0.14], recoilZ: 0.012, recoilUp: 0.006, recoilRot: 0.04, climbPerShot: 0.003 },
+  assault_rifle:   { pos: [0.11, -0.10, -0.24], rot: [0, 0, 0], scale: 1.2, muzzleOffset: [0, 0.010, -0.18], recoilZ: 0.018, recoilUp: 0.008, recoilRot: 0.06, climbPerShot: 0.005 },
+  shotgun:         { pos: [0.12, -0.11, -0.22], rot: [0, 0, 0], scale: 1.2, muzzleOffset: [0, 0.012, -0.20], recoilZ: 0.040, recoilUp: 0.025, recoilRot: 0.14, climbPerShot: 0 },
+  sniper_rifle:    { pos: [0.10, -0.10, -0.26], rot: [0, 0, 0], scale: 1.1, muzzleOffset: [0, 0.010, -0.26], recoilZ: 0.035, recoilUp: 0.018, recoilRot: 0.10, climbPerShot: 0 },
+  rocket_launcher: { pos: [0.14, -0.13, -0.20], rot: [0, 0, 0], scale: 1.2, muzzleOffset: [0, 0.000, -0.18], recoilZ: 0.050, recoilUp: 0.030, recoilRot: 0.12, climbPerShot: 0 },
 };
 
 const ADS_LAYOUTS: Partial<Record<WeaponId, VMLayout>> = {
@@ -58,6 +60,9 @@ let swayY = 0;
 let bobPhase = 0;
 let sprintLerp = 0;
 let switchProgress = 1;
+/** Consecutive shot counter for recoil climb */
+let climbShots = 0;
+let climbResetTimer = 0;
 let switchDir: 'down' | 'up' = 'up';
 let pendingWeaponId: WeaponId | null = null;
 let reloadLerp = 0;
@@ -1369,12 +1374,15 @@ export function fireViewmodel(): void {
   vmMuzzleSprite.scale.set(0.12, 0.12, 1);
   vmMuzzleSprite.material.rotation = Math.random() * Math.PI * 2;
 
-  const kickUp = layout.recoilRot * 0.4 + Math.random() * layout.recoilRot * 0.15;
+  const kickUp = layout.recoilRot * 0.4 + Math.random() * layout.recoilRot * 0.15
+    + climbShots * layout.climbPerShot;
   const kickSide = (Math.random() - 0.5) * layout.recoilRot * 0.15;
   gameState.recoilPitch += kickUp;
   gameState.recoilYaw += kickSide;
   gameState.recoilRecoveryPitch += kickUp;
   gameState.recoilRecoveryYaw += kickSide;
+  climbShots++;
+  climbResetTimer = 0.25; // reset climb if no shot within 250ms
 
   if (isAnimatedWeapon(currentWeaponId) && currentViewmodelMixer) {
     playAnimatedRange(currentWeaponId, 'shoot', 1.0);
@@ -1389,6 +1397,12 @@ export function playViewmodelHit(): void {
 
 export function updateViewmodel(dt: number): void {
   if (!vmGroup) return;
+
+  // Decay recoil climb counter when not firing
+  if (climbResetTimer > 0) {
+    climbResetTimer -= dt;
+    if (climbResetTimer <= 0) climbShots = 0;
+  }
 
   const { keys, pDead, pReloading, mouseDeltaX, mouseDeltaY } = gameState;
   const isMoving = keys.w || keys.a || keys.s || keys.d;

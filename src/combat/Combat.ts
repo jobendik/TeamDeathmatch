@@ -28,7 +28,7 @@ import { clearTeamIntel } from '@/ai/TeamIntel';
 import { showHitMarker, showKillMarker } from '@/ui/HitMarkers';
 import { showDamageArc } from '@/ui/DamageArcs';
 import { getPostFX } from '@/rendering/PostProcess.Bridge';
-import { setViewmodelWeapon } from '@/rendering/WeaponViewmodel';
+import { setViewmodelWeapon, playViewmodelHit } from '@/rendering/WeaponViewmodel';
 import { isPlayerInAir } from '@/br/DropPlane';
 import { playHitTaken, playHeal } from '@/audio/SoundHooks';
 import { startKillcam } from '@/ui/Killcam';
@@ -130,6 +130,12 @@ if (attacker) {
 }
   if (attacker) showDamageArc(attacker.position.x, attacker.position.z);
   getPostFX()?.triggerHit(Math.min(1, dmg / 30) * 0.7);
+
+  // Aim punch — camera kick proportional to damage
+  const punchScale = Math.min(1, dmg / 60);
+  gameState.cameraPitch += (0.01 + punchScale * 0.025) * (Math.random() > 0.5 ? 1 : -0.6);
+  gameState.cameraYaw += (Math.random() - 0.5) * punchScale * 0.02;
+  playViewmodelHit();
 
   if (gameState.pHP <= 0) playerDied(attacker);
 }
@@ -282,6 +288,7 @@ function killAgent(ag: TDMAgent, attacker: TDMAgent | null): void {
     attacker ? attacker.team : TEAM_RED,
     ag.team,
     attacker ? WEAPONS[attacker.weaponId].name : undefined,
+    wasHeadshot,
   );
   checkGameEnd();
 }

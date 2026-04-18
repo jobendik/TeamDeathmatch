@@ -7,9 +7,11 @@ import { WEAPONS } from '@/config/weapons';
  * when the player achieves kill streaks.
  *
  * Streak thresholds:
- *  3 kills = UAV Scan (reveal enemies on minimap for 8s)
- *  5 kills = Armor Boost (+25 bonus HP)
- *  7 kills = Rapid Fire (20% faster fire rate for 10s)
+ *  3 kills  = UAV Scan (reveal enemies on minimap for 8s)
+ *  5 kills  = Armor Boost (+25 bonus HP)
+ *  7 kills  = Rapid Fire (20% faster fire rate for 10s)
+ *  10 kills = Juggernaut (+50 bonus HP, cap 150)
+ *  15 kills = EMP Blast (stun all enemies for 3s, lose targets)
  */
 
 // ── Active streak state ──
@@ -20,6 +22,9 @@ export interface StreakState {
   rapidFireActive: boolean;
   rapidFireExpiry: number;
   rapidFireOrigRate: number;
+  juggernautActive: boolean;
+  empActive: boolean;
+  empExpiry: number;
 }
 
 const streak: StreakState = {
@@ -29,6 +34,9 @@ const streak: StreakState = {
   rapidFireActive: false,
   rapidFireExpiry: 0,
   rapidFireOrigRate: 0,
+  juggernautActive: false,
+  empActive: false,
+  empExpiry: 0,
 };
 
 /** Called when the player gets a kill — check if a streak threshold is reached */
@@ -36,6 +44,8 @@ export function checkStreakReward(killStreak: number): void {
   if (killStreak === 3) activateUAV();
   if (killStreak === 5) activateArmorBoost();
   if (killStreak === 7) activateRapidFire();
+  if (killStreak === 10) activateJuggernaut();
+  if (killStreak === 15) activateEMPBlast();
 }
 
 // ═══════════════════════════════════════════
@@ -78,6 +88,41 @@ export function isRapidFireActive(): boolean {
   return streak.rapidFireActive && gameState.worldElapsed < streak.rapidFireExpiry;
 }
 
+// ═══════════════════════════════════════════
+//  JUGGERNAUT — +50 bonus HP (cap 150)
+// ═══════════════════════════════════════════
+function activateJuggernaut(): void {
+  if (streak.juggernautActive) return;
+  streak.juggernautActive = true;
+  gameState.pHP = Math.min(150, gameState.pHP + 50);
+  gameState.player.hp = gameState.pHP;
+  showStreakRewardNotif('💀', 'JUGGERNAUT', '+50 HP — Max 150');
+}
+
+export function isJuggernautActive(): boolean {
+  return streak.juggernautActive;
+}
+
+// ═══════════════════════════════════════════
+//  EMP BLAST — stun all enemies for 3s
+// ═══════════════════════════════════════════
+function activateEMPBlast(): void {
+  streak.empActive = true;
+  streak.empExpiry = gameState.worldElapsed + 3;
+
+  // Stun all enemy bots — drop their targets and freeze shoot timer
+  const playerTeam = gameState.player.team;
+  for (const ag of gameState.agents) {
+    if (ag.team === playerTeam || ag.isDead) continue;
+    ag.currentTarget = null;
+    ag.hasTarget = false;
+    ag.shootTimer = 3;       // can't fire for 3s
+    ag.reactionTimer = 3;    // delayed reaction
+  }
+
+  showStreakRewardNotif('⚡', 'EMP BLAST', 'All enemies stunned for 3s');
+}
+
 /** Get the fire rate multiplier from active streaks */
 export function getStreakFireRateMult(): number {
   if (isRapidFireActive()) return 0.8; // 20% faster
@@ -96,6 +141,11 @@ export function updateStreaks(dt: number): void {
     streak.rapidFireActive = false;
   }
 
+  // EMP expiry
+  if (streak.empActive && gameState.worldElapsed >= streak.empExpiry) {
+    streak.empActive = false;
+  }
+
   // Update HUD indicator
   updateStreakHUD();
 }
@@ -108,6 +158,9 @@ export function clearStreaks(): void {
   streak.rapidFireActive = false;
   streak.rapidFireExpiry = 0;
   streak.rapidFireOrigRate = 0;
+  streak.juggernautActive = false;
+  streak.empActive = false;
+  streak.empExpiry = 0;
 
   // Remove HUD indicator
   const el = document.getElementById('streakIndicator');
@@ -174,6 +227,13 @@ function updateStreakHUD(): void {
   }
   if (streak.armorBoosted && !gameState.pDead) {
     items.push(`<div style="background:rgba(20,40,80,0.8);padding:4px 10px;border-radius:4px;border:1px solid rgba(100,200,100,0.4)">🛡️ ARMOR</div>`);
+  }
+  if (streak.juggernautActive && !gameState.pDead) {
+    items.push(`<div style="background:rgba(60,20,20,0.8);padding:4px 10px;border-radius:4px;border:1px solid rgba(255,80,80,0.4)">💀 JUGGERNAUT</div>`);
+  }
+  if (streak.empActive && gameState.worldElapsed < streak.empExpiry) {
+    const remaining = Math.ceil(streak.empExpiry - gameState.worldElapsed);
+    items.push(`<div style="background:rgba(40,20,60,0.8);padding:4px 10px;border-radius:4px;border:1px solid rgba(180,100,255,0.4)">⚡ EMP ${remaining}s</div>`);
   }
 
   el.innerHTML = items.join('');

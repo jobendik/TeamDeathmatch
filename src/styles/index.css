@@ -357,6 +357,11 @@ canvas { display: block; cursor: none; }
   border-radius: 2px;
   letter-spacing: 0.05em;
 }
+.kf-hs {
+  font-size: 12px;
+  margin: 0 2px;
+  filter: drop-shadow(0 0 3px rgba(255, 60, 60, 0.8));
+}
 
 /* ═══════════════════════════════════════════════
    MATCH INFO (top center)

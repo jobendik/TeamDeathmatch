@@ -181,13 +181,33 @@ export function checkAudioAwareness(ag: TDMAgent): void {
 
   const hearRange = 25;
   const hearRangeSq = hearRange * hearRange;
+  const suppressRange = 3; // near-miss suppression radius
+  const suppressRangeSq = suppressRange * suppressRange;
   const checkCount = Math.min(gameState.bullets.length, 5);
   for (let j = 0; j < checkCount; j++) {
     const bullet = gameState.bullets[j];
     if (bullet.ownerTeam === ag.team) continue;
     const dx = ag.position.x - bullet.mesh.position.x;
     const dz = ag.position.z - bullet.mesh.position.z;
-    if (dx * dx + dz * dz < hearRangeSq) {
+    const distSq = dx * dx + dz * dz;
+
+    // Near-miss suppression — flinch and delay shooting
+    if (distSq < suppressRangeSq) {
+      ag.alertLevel = Math.min(100, ag.alertLevel + 25);
+      ag.shootTimer = Math.max(ag.shootTimer, 0.3 + Math.random() * 0.2);
+      if (!ag.hasTarget && !ag.hasLastKnown) {
+        const noise = 4;
+        ag.lastKnownPos.set(
+          bullet.mesh.position.x + (Math.random() - 0.5) * noise,
+          0,
+          bullet.mesh.position.z + (Math.random() - 0.5) * noise,
+        );
+        ag.hasLastKnown = true;
+      }
+      break;
+    }
+
+    if (distSq < hearRangeSq) {
       ag.alertLevel = Math.min(100, ag.alertLevel + 8);
       if (!ag.hasTarget && !ag.hasLastKnown) {
         const noise = 4;
