@@ -30,8 +30,32 @@ export function getBRMapData(): BRMapData | null { return _mapData; }
 // Spatial grid for buildings (used by loot, bots, collision)
 export const buildingGrid = new SpatialGrid<Building>();
 
-export function buildBRMap(): BRMapData {
+// ── BR scene tracking for proper teardown ──
+let _brSceneObjects: THREE.Object3D[] = [];
+let _brColliderStart = 0;
+let _brArenaColliderStart = 0;
+let _brWallMeshStart = 0;
+let _brCoverPointStart = 0;
+let _prevFog: THREE.FogBase | null = null;
+let _prevBackground: THREE.Color | THREE.Texture | null = null;
+let _prevFloorMat: THREE.ShaderMaterial | null = null;
+
+function nextFrame(): Promise<void> {
+  return new Promise(r => requestAnimationFrame(() => r()));
+}
+
+export async function buildBRMap(onProgress?: (msg: string) => void): Promise<BRMapData> {
   const { scene } = gameState;
+
+  // Snapshot shared state so we can restore it on dispose
+  _prevFog = scene.fog;
+  _prevBackground = scene.background as THREE.Color | THREE.Texture | null;
+  _prevFloorMat = gameState.floorMat;
+  _brColliderStart = gameState.colliders.length;
+  _brArenaColliderStart = gameState.arenaColliders.length;
+  _brWallMeshStart = gameState.wallMeshes.length;
+  _brCoverPointStart = gameState.coverPoints.length;
+  _brSceneObjects = [];
 
   // ── Fortnite-style bright ground ──
   const groundMat = new THREE.ShaderMaterial({
@@ -102,6 +126,10 @@ export function buildBRMap(): BRMapData {
   ground.rotation.x = -Math.PI / 2;
   ground.receiveShadow = true;
   scene.add(ground);
+  _brSceneObjects.push(ground);
+
+  onProgress?.('Placing buildings...');
+  await nextFrame();
 
   // ── POIs ──
   const pois = [
@@ -134,6 +162,7 @@ export function buildBRMap(): BRMapData {
 
       const b = createBuilding(bx, bz, w, d, floors);
       scene.add(b.mesh);
+      _brSceneObjects.push(b.mesh);
 
       // Register per-wall colliders (with door gaps)
       for (const wc of b.wallColliders) {
@@ -153,6 +182,9 @@ export function buildBRMap(): BRMapData {
       buildingGrid.insert(b, bx, bz);
     }
   }
+
+  onProgress?.('Planting trees...');
+  await nextFrame();
 
   // ── Instanced trees (1 trunk mesh + 1 leaf mesh for ALL trees) ──
   const TREE_COUNT = 120;
@@ -204,6 +236,10 @@ export function buildBRMap(): BRMapData {
   if (leafInstances.instanceColor) leafInstances.instanceColor.needsUpdate = true;
   scene.add(treeInstances);
   scene.add(leafInstances);
+  _brSceneObjects.push(treeInstances, leafInstances);
+
+  onProgress?.('Scattering rocks...');
+  await nextFrame();
 
   // ── Instanced rocks ──
   const ROCK_COUNT = 60;
@@ -236,6 +272,7 @@ export function buildBRMap(): BRMapData {
   rockInstances.instanceMatrix.needsUpdate = true;
   if (rockInstances.instanceColor) rockInstances.instanceColor.needsUpdate = true;
   scene.add(rockInstances);
+  _brSceneObjects.push(rockInstances);
 
   // ── Boundary (soft wall) ──
   for (const [bx, bz, bw, bd] of [
@@ -247,6 +284,9 @@ export function buildBRMap(): BRMapData {
     gameState.colliders.push({ type: 'box', x: bx, z: bz, hw: bw / 2, hd: bd / 2 });
     gameState.arenaColliders.push({ type: 'box', x: bx, z: bz, hw: bw / 2, hd: bd / 2 });
   }
+
+  onProgress?.('Setting up lighting...');
+  await nextFrame();
 
   // ── Fortnite lighting ──
   buildBRLights();
@@ -270,8 +310,11 @@ function buildBRLights(): void {
   const { scene } = gameState;
 
   // Bright, warm sun
-  scene.add(new THREE.AmbientLight(0xc8d8e8, 0.65));
-  scene.add(new THREE.HemisphereLight(0x88bbee, 0x446633, 0.7));
+  const ambient = new THREE.AmbientLight(0xc8d8e8, 0.65);
+  const hemi = new THREE.HemisphereLight(0x88bbee, 0x446633, 0.7);
+  scene.add(ambient);
+  scene.add(hemi);
+  _brSceneObjects.push(ambient, hemi);
 
   const sun = new THREE.DirectionalLight(0xfff0d0, 2.8);
   sun.position.set(60, 120, 40);
@@ -286,11 +329,13 @@ function buildBRLights(): void {
   sun.shadow.bias = -0.0004;
   sun.shadow.normalBias = 0.05;
   scene.add(sun);
+  _brSceneObjects.push(sun);
 
   // Softer fill from opposite side
   const fill = new THREE.DirectionalLight(0x8899bb, 0.6);
   fill.position.set(-40, 50, -30);
   scene.add(fill);
+  _brSceneObjects.push(fill);
 
   // Bright fog — Fortnite uses light blue haze, not dark
   scene.fog = new THREE.FogExp2(0xb0c8e0, 0.003);
@@ -316,6 +361,36 @@ function nearRoad(x: number, z: number): boolean {
 }
 
 export function disposeBRMap(): void {
+  const { scene } = gameState;
+
+  // Remove all BR scene objects and dispose their resources
+  for (const obj of _brSceneObjects) {
+    scene.remove(obj);
+    obj.traverse((child) => {
+      const mesh = child as THREE.Mesh;
+      if (mesh.isMesh) {
+        mesh.geometry?.dispose();
+        if (Array.isArray(mesh.material)) {
+          for (const m of mesh.material) m.dispose();
+        } else if (mesh.material) {
+          mesh.material.dispose();
+        }
+      }
+    });
+  }
+  _brSceneObjects = [];
+
+  // Restore shared arrays to pre-BR state
+  gameState.colliders.length = _brColliderStart;
+  gameState.arenaColliders.length = _brArenaColliderStart;
+  gameState.wallMeshes.length = _brWallMeshStart;
+  gameState.coverPoints.length = _brCoverPointStart;
+
+  // Restore scene environment
+  scene.fog = _prevFog;
+  scene.background = _prevBackground;
+  gameState.floorMat = _prevFloorMat;
+
   buildingGrid.clear();
   _mapData = null;
 }

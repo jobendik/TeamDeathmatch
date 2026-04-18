@@ -271,9 +271,20 @@ export function isPlayerOnPlane(): boolean {
   return drop.state === 'onPlane';
 }
 
+function disposeMeshTree(obj: THREE.Object3D): void {
+  obj.traverse(child => {
+    if ((child as THREE.Mesh).isMesh) {
+      const m = child as THREE.Mesh;
+      m.geometry?.dispose();
+      if (Array.isArray(m.material)) m.material.forEach(mt => mt.dispose());
+      else if (m.material) (m.material as THREE.Material).dispose();
+    }
+  });
+}
+
 export function resetDrop(): void {
-  if (drop.planeMesh) gameState.scene.remove(drop.planeMesh);
-  if (drop.parachuteMesh) gameState.scene.remove(drop.parachuteMesh);
+  if (drop.planeMesh) { disposeMeshTree(drop.planeMesh); gameState.scene.remove(drop.planeMesh); }
+  if (drop.parachuteMesh) { disposeMeshTree(drop.parachuteMesh); gameState.scene.remove(drop.parachuteMesh); }
   drop.planeMesh = null;
   drop.parachuteMesh = null;
   drop.state = 'waiting';

@@ -7,6 +7,8 @@ import { getBRMapData } from './BRMap';
 import { SpatialGrid } from './SpatialGrid';
 import type { InventoryItem } from './Inventory';
 
+const BASE_URL = import.meta.env.BASE_URL;
+
 export interface GroundLoot {
   id: number;
   x: number; z: number; y: number;
@@ -41,20 +43,20 @@ interface LootRenderSlot {
 }
 
 const MODEL_URLS: Record<LootVisualKey, string> = {
-  ammo_crate: new URL('../../models/pickups/ammo_crate.glb', import.meta.url).href,
-  grenade: new URL('../../models/pickups/grenade.glb', import.meta.url).href,
-  bandage: new URL('../../models/pickups/bandage.glb', import.meta.url).href,
-  healthkit: new URL('../../models/pickups/healthkit.glb', import.meta.url).href,
-  mini_shield: new URL('../../models/pickups/mini_shield.glb', import.meta.url).href,
-  shield_potion: new URL('../../models/pickups/shield_potion.glb', import.meta.url).href,
-  armor_plate: new URL('../../models/pickups/armor_plate.glb', import.meta.url).href,
-  armor_vest: new URL('../../models/pickups/armor_vest.glb', import.meta.url).href,
-  weapon_crate: new URL('../../models/pickups/weapon_crate.glb', import.meta.url).href,
-  weapon_smg: new URL('../../models/pickups/weapon_smg.glb', import.meta.url).href,
-  weapon_ar: new URL('../../models/pickups/weapon_ar.glb', import.meta.url).href,
-  weapon_shotgun: new URL('../../models/pickups/weapon_shotgun.glb', import.meta.url).href,
-  weapon_sniper: new URL('../../models/pickups/weapon_sniper.glb', import.meta.url).href,
-  weapon_launcher: new URL('../../models/pickups/weapon_launcher.glb', import.meta.url).href,
+  ammo_crate: `${BASE_URL}models/pickups/ammo_crate.glb`,
+  grenade: `${BASE_URL}models/pickups/grenade.glb`,
+  bandage: `${BASE_URL}models/pickups/bandage.glb`,
+  healthkit: `${BASE_URL}models/pickups/healthkit.glb`,
+  mini_shield: `${BASE_URL}models/pickups/mini_shield.glb`,
+  shield_potion: `${BASE_URL}models/pickups/shield_potion.glb`,
+  armor_plate: `${BASE_URL}models/pickups/armor_plate.glb`,
+  armor_vest: `${BASE_URL}models/pickups/armor_vest.glb`,
+  weapon_crate: `${BASE_URL}models/pickups/weapon_crate.glb`,
+  weapon_smg: `${BASE_URL}models/pickups/weapon_smg.glb`,
+  weapon_ar: `${BASE_URL}models/pickups/weapon_ar.glb`,
+  weapon_shotgun: `${BASE_URL}models/pickups/weapon_shotgun.glb`,
+  weapon_sniper: `${BASE_URL}models/pickups/weapon_sniper.glb`,
+  weapon_launcher: `${BASE_URL}models/pickups/weapon_launcher.glb`,
 };
 
 const MODEL_TARGET_SIZE: Record<LootVisualKey, number> = {
@@ -289,7 +291,9 @@ function applyVisualToSlot(slot: LootRenderSlot, key: LootVisualKey): void {
   if (slot.visualKey === key) return;
 
   while (slot.root.children.length) {
-    slot.root.remove(slot.root.children[0]);
+    const child = slot.root.children[0];
+    child.traverse(c => { if ((c as THREE.Mesh).isMesh) { (c as THREE.Mesh).geometry?.dispose(); const mt = (c as THREE.Mesh).material; if (Array.isArray(mt)) mt.forEach(m => m.dispose()); else if (mt) (mt as THREE.Material).dispose(); } });
+    slot.root.remove(child);
   }
 
   const prefab = resolvedPrefabs.get(key) ?? null;
@@ -515,7 +519,7 @@ function createItem(kind: string, rarity: Rarity): InventoryItem {
     case 'armor_big':
       return { id: 'arm_b', category: 'armor', name: 'Heavy Armor', rarity: 'epic', stackSize: 1, qty: 1 };
     case 'grenade':
-      return { id: 'gren', category: 'grenade', name: 'Grenade', rarity: 'common', stackSize: 6, qty: 1 + (Math.random() * 1 | 0) };
+      return { id: 'gren', category: 'grenade', name: 'Grenade', rarity: 'common', stackSize: 6, qty: 1 + (Math.random() * 2 | 0) };
     default:
       return { id: 'junk', category: 'ammo', name: 'Scrap', rarity: 'common', stackSize: 1, qty: 1 };
   }
@@ -560,4 +564,11 @@ export function clearAllLoot(): void {
     slot.lootId = null;
   }
   lootToRenderSlot.clear();
+
+  if (beamInstances) {
+    beamInstances.geometry.dispose();
+    (beamInstances.material as THREE.Material).dispose();
+    gameState.scene.remove(beamInstances);
+    beamInstances = null;
+  }
 }

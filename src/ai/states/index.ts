@@ -2,6 +2,7 @@ import * as YUKA from 'yuka';
 import type { TDMAgent } from '@/entities/TDMAgent';
 import { CLASS_CONFIGS } from '@/config/classes';
 import { isInsideWall, pushOutOfWall } from '@/ai/CoverSystem';
+import { gameState } from '@/core/GameState';
 
 // ────────────────────────────────────────
 //  PatrolState — now patrols toward strategic points
@@ -19,7 +20,7 @@ export class PatrolState extends YUKA.State<TDMAgent> {
     if (ag.fleeB) ag.fleeB.weight = 0;
 
     // Respond to team callouts — investigate the reported position
-    if (ag.teamCallout && ag.teamCalloutTime > ag.stateTime - 5) {
+    if (ag.teamCallout && gameState.worldElapsed - ag.teamCalloutTime < 5) {
       ag.lastKnownPos.copy(ag.teamCallout);
       ag.hasLastKnown = true;
       ag.teamCallout = null;

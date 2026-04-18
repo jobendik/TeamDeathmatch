@@ -26,6 +26,7 @@ const WEATHER_PRESETS: WeatherPreset[] = [
 let _sun: THREE.DirectionalLight;
 let _ambient: THREE.AmbientLight;
 let _hemi: THREE.HemisphereLight;
+const _pointLights: THREE.PointLight[] = [];
 
 export function buildLights(): void {
   const { scene } = gameState;
@@ -70,6 +71,7 @@ export function buildLights(): void {
     const l = new THREE.PointLight(col, intensity, distance, 1.8);
     l.position.set(x, y, z);
     scene.add(l);
+    _pointLights.push(l);
     return l;
   };
 
@@ -88,12 +90,21 @@ export function buildLights(): void {
   const lane3 = pt(0x4455aa, 0, 4, -30, 7, 26);
   const lane4 = pt(0x4455aa, 0, 4, 30, 7, 26);
 
-  // Store for subtle animation in Visuals
-  (gameState as any)._flickerLights = [lane1, lane2, lane3, lane4];
+  // Store lane markers for potential future flicker animation
+  // (kept in module-level _pointLights array for cleanup)
 
   // ── SOFTER ATMOSPHERIC FOG — fog-of-mood not fog-of-war ──
   scene.fog = new THREE.FogExp2(0x1a2438, 0.003);
   scene.background = new THREE.Color(0x0c1220);
+}
+
+/** Remove all point lights from the scene (call before scene rebuild). */
+export function disposeLights(): void {
+  for (const l of _pointLights) {
+    l.parent?.remove(l);
+    l.dispose();
+  }
+  _pointLights.length = 0;
 }
 
 export function applyRandomWeather(): void {

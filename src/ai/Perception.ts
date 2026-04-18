@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import * as YUKA from 'yuka';
 import { gameState } from '@/core/GameState';
 import type { TDMAgent, EnemyMemoryEntry } from '@/entities/TDMAgent';
-import { isEnemy } from '@/core/GameModes';
+import { isEnemy, isFreeForAll } from '@/core/GameModes';
 import { getContextualVisionMod, applySuppression, getHearingAttenuation } from './ContextualPerception';
 
 const _origin = new THREE.Vector3();
@@ -308,7 +308,7 @@ export function findBestTarget(ag: TDMAgent): { target: TDMAgent | null; dist: n
 
 export function countNearbyAllies(ag: TDMAgent, range: number): number {
   // BR and FFA are solo — no allies
-  if (gameState.mode === 'ffa' || gameState.mode === 'br') return 0;
+  if (isFreeForAll()) return 0;
   let count = 0;
   const rangeSq = range * range;
   for (const ally of gameState.agents) {

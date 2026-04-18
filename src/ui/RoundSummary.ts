@@ -10,6 +10,8 @@ import { clearFloatingDamage } from './FloatingDamage';
 import { clearAnnouncer } from './Announcer';
 import { getPotgAgent, resetPotg } from '@/combat/Combat';
 import { startPotgReplay, stopPotgReplay } from './Killcam';
+import { stopDynamicMusic } from '@/audio/DynamicMusic';
+import { Audio } from '@/audio/AudioManager';
 
 interface PlayerStats {
   name: string; team: number; kills: number; deaths: number; isPlayer: boolean;
@@ -24,6 +26,8 @@ interface Progression {
 }
 
 const XP_PER_LEVEL = 1000;
+let _potgTO: ReturnType<typeof setTimeout> | undefined;
+let _xpTO: ReturnType<typeof setTimeout> | undefined;
 
 function loadProgression(): Progression {
   try {
@@ -48,7 +52,8 @@ export function showRoundSummary(winnerTeam: number): void {
   if (potgAgent && gameState.potgBestScore >= 3) {
     startPotgReplay(potgAgent);
     // Auto-stop after 5s (the replay handles its own duration)
-    setTimeout(() => stopPotgReplay(), 5200);
+    clearTimeout(_potgTO);
+    _potgTO = setTimeout(() => stopPotgReplay(), 5200);
   }
   resetPotg();
 
@@ -90,6 +95,13 @@ export function showRoundSummary(winnerTeam: number): void {
   dom.rsResult.textContent = isVictory ? 'VICTORY' : 'DEFEAT';
   dom.rsResult.style.color = isVictory ? '#22d66a' : '#ef4444';
 
+  stopDynamicMusic();
+  if (isVictory) {
+    Audio.play('music_victory');
+  } else {
+    Audio.play('music_defeat');
+  }
+
   // Team score or FFA
   if (gameState.mode === 'ffa') {
     dom.rsTeamScore.textContent = `FFA · ${gameState.pKills} KILLS · RANK #${stats.findIndex(s => s.isPlayer) + 1}`;
@@ -129,7 +141,8 @@ export function showRoundSummary(winnerTeam: number): void {
   `;
 
   // Animate XP count up
-  setTimeout(() => {
+  clearTimeout(_xpTO);
+  _xpTO = setTimeout(() => {
     const bar = document.getElementById('progBarNew');
     const text = document.getElementById('progXpCount');
     if (bar) bar.style.width = `${xpPct}%`;

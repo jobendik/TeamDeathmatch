@@ -3,6 +3,8 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { gameState } from '@/core/GameState';
 import { WEAPONS, type WeaponId } from '@/config/weapons';
 
+const BASE_URL = import.meta.env.BASE_URL;
+
 type PickupType = 'health' | 'ammo' | 'weapon' | 'grenade';
 type PickupVisualKey =
   | 'healthkit'
@@ -16,15 +18,15 @@ type PickupVisualKey =
   | 'weapon_launcher';
 
 const MODEL_URLS: Record<PickupVisualKey, string> = {
-  healthkit: new URL('../../models/pickups/healthkit.glb', import.meta.url).href,
-  ammo_crate: new URL('../../models/pickups/ammo_crate.glb', import.meta.url).href,
-  grenade: new URL('../../models/pickups/grenade.glb', import.meta.url).href,
-  weapon_crate: new URL('../../models/pickups/weapon_crate.glb', import.meta.url).href,
-  weapon_smg: new URL('../../models/pickups/weapon_smg.glb', import.meta.url).href,
-  weapon_ar: new URL('../../models/pickups/weapon_ar.glb', import.meta.url).href,
-  weapon_shotgun: new URL('../../models/pickups/weapon_shotgun.glb', import.meta.url).href,
-  weapon_sniper: new URL('../../models/pickups/weapon_sniper.glb', import.meta.url).href,
-  weapon_launcher: new URL('../../models/pickups/weapon_launcher.glb', import.meta.url).href,
+  healthkit: `${BASE_URL}models/pickups/healthkit.glb`,
+  ammo_crate: `${BASE_URL}models/pickups/ammo_crate.glb`,
+  grenade: `${BASE_URL}models/pickups/grenade.glb`,
+  weapon_crate: `${BASE_URL}models/pickups/weapon_crate.glb`,
+  weapon_smg: `${BASE_URL}models/pickups/weapon_smg.glb`,
+  weapon_ar: `${BASE_URL}models/pickups/weapon_ar.glb`,
+  weapon_shotgun: `${BASE_URL}models/pickups/weapon_shotgun.glb`,
+  weapon_sniper: `${BASE_URL}models/pickups/weapon_sniper.glb`,
+  weapon_launcher: `${BASE_URL}models/pickups/weapon_launcher.glb`,
 };
 
 const TARGET_MAX_DIM: Record<PickupVisualKey, number> = {
@@ -215,6 +217,31 @@ export function updatePickups(): void {
           }
         }
       });
+    }
+
+    // Player proximity pickup
+    if (p.active && !player.isDead) {
+      const dx = player.position.x - p.x;
+      const dz = player.position.z - p.z;
+      if (dx * dx + dz * dz < 2.5 * 2.5) {
+        if (p.t === 'health' && gameState.pHP < 100 * 0.7) {
+          p.active = false;
+          p.mesh.visible = p.ring.visible = false;
+          p.respawnAt = worldElapsed + 15;
+          gameState.pHP = Math.min(100, gameState.pHP + 35);
+          player.hp = gameState.pHP;
+        } else if (p.t === 'ammo' && gameState.pAmmo < gameState.pMaxAmmo * 0.4) {
+          p.active = false;
+          p.mesh.visible = p.ring.visible = false;
+          p.respawnAt = worldElapsed + 12;
+          gameState.pAmmo = gameState.pMaxAmmo;
+        } else if (p.t === 'grenade' && gameState.pGrenades < 3) {
+          p.active = false;
+          p.mesh.visible = p.ring.visible = false;
+          p.respawnAt = worldElapsed + 10;
+          gameState.pGrenades = Math.min(3, gameState.pGrenades + 1);
+        }
+      }
     }
 
     for (const ag of agents) {

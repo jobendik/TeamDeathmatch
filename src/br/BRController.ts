@@ -70,7 +70,12 @@ function hideLoading(): void {
   if (el) el.style.display = 'none';
 }
 
+let _brStarting = false;
+
 export async function startBRMatch(): Promise<void> {
+  if (_brStarting) return;
+  _brStarting = true;
+  try {
   cleanupBR();
 
   showLoading('Generating map...');
@@ -95,7 +100,7 @@ export async function startBRMatch(): Promise<void> {
   brState.winnerName = null;
   brState.frameCount = 0;
 
-  buildBRMap();
+  await buildBRMap((msg) => showLoading(msg));
 
   showLoading('Preparing loot visuals...');
   await preloadLootVisuals((done, total) => {
@@ -157,6 +162,7 @@ export async function startBRMatch(): Promise<void> {
   brState.phaseStart = gameState.worldElapsed;
 
   hideLoading();
+  } finally { _brStarting = false; }
 }
 
 export function cleanupBR(): void {

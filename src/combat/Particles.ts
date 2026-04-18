@@ -12,6 +12,7 @@ const _sparkPool: PoolEntry[] = [];
 // Shared geometry/material for impact particles to avoid per-spawn allocations
 const _impactGeo = new THREE.SphereGeometry(0.06, 4, 4);
 const _sparkGeo = new THREE.SphereGeometry(0.03, 3, 3);
+const _smokePuffGeo = new THREE.SphereGeometry(0.2, 5, 5);
 const _impactMatCache = new Map<number, THREE.MeshBasicMaterial>();
 
 function getImpactMat(col: number): THREE.MeshBasicMaterial {
@@ -316,12 +317,14 @@ export function spawnExplosion(pos: THREE.Vector3, radius: number): void {
 
   // Smoke puffs (dark, larger, slower)
   for (let i = 0; i < 6; i++) {
+    const s = 0.15 + Math.random() * 0.15;
     const m = new THREE.Mesh(
-      new THREE.SphereGeometry(0.15 + Math.random() * 0.15, 5, 5),
+      _smokePuffGeo,
       new THREE.MeshBasicMaterial({
         color: 0x222222, transparent: true, opacity: 0.5,
       }),
     );
+    m.scale.setScalar(s / 0.2);
     m.position.copy(pos);
     gameState.scene.add(m);
     gameState.particles.push({
@@ -434,7 +437,6 @@ export function spawnBulletHole(pos: THREE.Vector3, normal: THREE.Vector3 | null
   if (_decals.length > MAX_DECALS) {
     const old = _decals.shift()!;
     gameState.scene.remove(old);
-    old.geometry.dispose();
   }
 }
 
@@ -526,8 +528,13 @@ export function updateParticles(dt: number): void {
 
     if (p.life <= 0) {
       if ((p as any)._pool) {
-        returnMesh((p as any)._pool, p.mesh) || scene.remove(p.mesh);
+        if (!returnMesh((p as any)._pool, p.mesh)) {
+          // Overflow mesh not from pool — dispose its cloned material and remove
+          (p.mesh.material as THREE.Material).dispose();
+          scene.remove(p.mesh);
+        }
       } else {
+        (p.mesh.material as THREE.Material).dispose();
         scene.remove(p.mesh);
       }
       if (p.light) scene.remove(p.light);

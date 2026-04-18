@@ -4,6 +4,12 @@ import { getModeDefaults, getModeLabel, type GameMode } from '@/core/GameModes';
 import { resetMatch } from '@/combat/Combat';
 import { Audio } from '@/audio/AudioManager';
 import type { BotClass } from '@/config/classes';
+import { preloadBRModules } from '@/core/GameLoop';
+import { startBRMatch, cleanupBR } from '@/br/BRController';
+import { rollChallenges } from '@/ui/Challenges';
+import { resetMatchMedals } from '@/ui/Medals';
+import { rebuildWaypoints } from '@/ui/Waypoints';
+import { startDynamicMusic, playMusicState, stopDynamicMusic } from '@/audio/DynamicMusic';
 
 function setMainMenuVisible(on: boolean): void {
   dom.mainMenu.classList.toggle('on', on);
@@ -23,24 +29,17 @@ export async function startMatchFromMenu(): Promise<void> {
   gameState.paused = false;
 
   if (mode === 'br') {
-    const { preloadBRModules } = await import('@/core/GameLoop');
     await preloadBRModules();
-    const br = await import('@/br/BRController');
-    await br.startBRMatch();
+    await startBRMatch();
   } else {
-    const br = await import('@/br/BRController');
-    br.cleanupBR();
+    cleanupBR();
     resetMatch(mode);
-    const { rollChallenges } = await import('@/ui/Challenges');
-    const { resetMatchMedals } = await import('@/ui/Medals');
     resetMatchMedals();
     rollChallenges(3);
   }
 
-  const { rebuildWaypoints } = await import('@/ui/Waypoints');
   rebuildWaypoints();
 
-  const { startDynamicMusic } = await import('@/audio/DynamicMusic');
   startDynamicMusic();
   Audio.startEnvironmentAmbience();
 
@@ -65,15 +64,27 @@ export function initMenus(): void {
   dom.startBtn.onclick = () => startMatchFromMenu();
   dom.modeSelect.onchange = () => updateMenuCopy();
   dom.pauseResume.onclick = () => togglePause(false);
-  dom.pauseRestart.onclick = () => { togglePause(false); resetMatch(gameState.mode); };
+  dom.pauseRestart.onclick = () => { togglePause(false); resetMatch(gameState.mode); resetMatchMedals(); rollChallenges(3); };
   dom.pauseQuit.onclick = () => {
     gameState.paused = false;
     dom.pauseMenu.classList.remove('on');
     setMainMenuVisible(true);
     document.exitPointerLock?.();
+    stopDynamicMusic();
+    playMusicState('lobby');
   };
   updateMenuCopy();
   setMainMenuVisible(true);
+
+  // Try playing lobby music on first interact
+  const startLobbyMusic = () => {
+    if (!Audio.ctx) Audio.init();
+    if (gameState.mainMenuOpen) {
+      playMusicState('lobby');
+    }
+    document.removeEventListener('click', startLobbyMusic);
+  };
+  document.addEventListener('click', startLobbyMusic);
 }
 
 const MODE_DESCRIPTIONS: Record<GameMode, string> = {

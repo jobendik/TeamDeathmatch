@@ -67,6 +67,7 @@ const _downDir = new THREE.Vector3(0, -1, 0);
 
 /** Detect surface beneath a world position (raycasts down). */
 export function detectSurface(pos: THREE.Vector3): SurfaceType {
+  _downRay.camera = gameState.camera;
   _downRay.set(_v.set(pos.x, (pos.y ?? 0) + 0.5, pos.z), _downDir);
   _downRay.far = 3;
   const hits = _downRay.intersectObjects(gameState.scene.children, true);

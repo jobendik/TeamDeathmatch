@@ -54,7 +54,7 @@ export function updateVisuals(): void {
     if (ag.team !== TEAM_BLUE) {
       const d = ag.position.distanceTo(player.position);
       const vis = d < 45;
-      ag.nameTag!.visible = vis && !ag.isDead;
+      if (ag.nameTag) ag.nameTag.visible = vis && !ag.isDead;
       ag.hpBarGroup.visible = vis && !ag.isDead;
     }
   }

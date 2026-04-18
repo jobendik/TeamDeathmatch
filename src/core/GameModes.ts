@@ -1,9 +1,20 @@
 import * as THREE from 'three';
 import type { TDMAgent } from '@/entities/TDMAgent';
-import { TEAM_BLUE, TEAM_RED, type TeamId, BLUE_SPAWNS, RED_SPAWNS } from '@/config/constants';
+import { TEAM_BLUE, TEAM_RED, type TeamId, BLUE_SPAWNS, RED_SPAWNS, ARENA_MARGIN } from '@/config/constants';
+import { BR_MAP_MARGIN } from '@/br/BRConfig';
 import { gameState } from './GameState';
 
 export type GameMode = 'tdm' | 'ffa' | 'ctf' | 'elimination' | 'br';
+
+/** True when the current mode has no team allegiance (FFA, BR). */
+export function isFreeForAll(): boolean {
+  return gameState.mode === 'ffa' || gameState.mode === 'br';
+}
+
+/** Returns the world boundary margin for the current mode. */
+export function getWorldBoundary(): number {
+  return gameState.mode === 'br' ? BR_MAP_MARGIN : ARENA_MARGIN;
+}
 
 export function getModeLabel(mode: GameMode = gameState.mode): string {
   switch (mode) {
@@ -18,7 +29,7 @@ export function getModeLabel(mode: GameMode = gameState.mode): string {
 export function isEnemy(a: TDMAgent, b: TDMAgent): boolean {
   if (a === b) return false;
   if (a.isDead || b.isDead) return false;
-  if (gameState.mode === 'ffa' || gameState.mode === 'br') return true;
+  if (isFreeForAll()) return true;
   if (gameState.mode === 'elimination') {
     return a.team !== b.team;
   }
@@ -44,12 +55,13 @@ export function getPlayerSpawn(): [number, number, number] {
 
 /** Score spawns by distance from enemies — pick the safest one with some randomness. */
 function pickSafestSpawn(spawns: [number, number, number][], self: TDMAgent): [number, number, number] {
-  if (spawns.length <= 1) return spawns[0];
+  if (spawns.length === 0) return [0, 0, 0];
+  if (spawns.length === 1) return spawns[0];
   const scored = spawns.map(sp => {
     let minDist = Infinity;
     for (const ag of gameState.agents) {
       if (ag === self || ag.isDead || !ag.active) continue;
-      if (gameState.mode !== 'ffa' && gameState.mode !== 'br' && ag.team === self.team) continue;
+      if (!isFreeForAll() && ag.team === self.team) continue;
       const dx = ag.position.x - sp[0];
       const dz = ag.position.z - sp[2];
       const d = Math.sqrt(dx * dx + dz * dz);

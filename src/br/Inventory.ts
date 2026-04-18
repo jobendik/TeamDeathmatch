@@ -117,6 +117,7 @@ export function getActiveWeapon(inv: PlayerInventory): InventoryItem | null {
 export function addItem(inv: PlayerInventory, item: InventoryItem): boolean {
   // Weapons → first empty slot
   if (item.category === 'weapon') {
+    if (inv.weaponSlots.some(s => s !== null && s.weaponId === item.weaponId)) return false;
     const emptySlot = inv.weaponSlots.findIndex(s => s === null);
     if (emptySlot !== -1) {
       inv.weaponSlots[emptySlot] = item;

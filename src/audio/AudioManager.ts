@@ -905,6 +905,14 @@ const SOUNDS: Record<string, SoundDef> = {
     },
   },
 
+  // ── Music ──
+  music_lobby:    { category: 'music', volume: 0.8, synth: (ctx, d) => { return 0; } },
+  music_start:    { category: 'music', volume: 0.9, synth: (ctx, d) => { return 0; } },
+  music_midmatch: { category: 'music', volume: 0.6, synth: (ctx, d) => { return 0; } },
+  music_climax:   { category: 'music', volume: 0.9, synth: (ctx, d) => { return 0; } },
+  music_victory:  { category: 'music', volume: 1.0, synth: (ctx, d) => { return 0; } },
+  music_defeat:   { category: 'music', volume: 1.0, synth: (ctx, d) => { return 0; } },
+
   // ── Medals / announcer (tonal stingers) ──
   medal_silver: { category: 'voice', volume: 0.5,
     synth: (ctx, d) => {
@@ -1208,35 +1216,36 @@ const SOUNDS: Record<string, SoundDef> = {
 export const REAL_SOUND_URLS: Record<string, string> = {
   // ── Weapons: fire ──
   shot_pistol:       'weapons/pistol-fire.mp3',
-  shot_smg:          'weapons/tec9-fire.mp3',
+  shot_smg:          'weapons/tec-9-fire.mp3',
   shot_ar:           'weapons/m4-fire.mp3',
   shot_shotgun:      'weapons/shotgun-fire.mp3',
   shot_sniper:       'weapons/sniper-fire.mp3',
   shot_rocket:       'weapons/grenade-launcher.mp3',
   shot_ak47:         'weapons/ak47-fire.mp3',
   shot_awp:          'weapons/awp-fire.mp3',
-  shot_scar:         'weapons/scar-fire.mp3',
+  shot_scar:         'weapons/scar-fire-1.mp3',
   shot_lmg:          'weapons/lmg-fire.mp3',
 
   // ── Weapons: reload / mechanical ──
   reload:            'weapons/scar-reload.mp3',
   reload_pistol:     'weapons/pistol-reload.mp3',
-  reload_smg:        'weapons/tec9-reload.mp3',
+  reload_smg:        'weapons/tec-9-reload.mp3',
   reload_ar:         'weapons/scar-reload.mp3',
   reload_shotgun:    'weapons/shotgun-load.mp3',
   reload_sniper:     'weapons/sniper-reload.mp3',
   reload_lmg:        'weapons/lmg-reload.mp3',
   weapon_swap:       'weapons/scar-magazine-click.mp3',
+  empty_click:       'weapons/empty_click.mp3',
   shotgun_cock:      'weapons/shotgun-cock.mp3',
   sniper_zoom:       'weapons/sniper-zoom.mp3',
   sniper_load:       'weapons/sniper-load.mp3',
   scar_mag_load:     'weapons/scar-magazine-load.mp3',
   scar_tail:         'weapons/scar-tail.mp3',
   scar_tail_fire:    'weapons/scar-tail-fire.mp3',
-  tec9_tail:         'weapons/tec9-tail.mp3',
-  tec9_tail_fire:    'weapons/tec9-tail-fire.mp3',
-  tec9_load:         'weapons/tec9-load.mp3',
-  tec9_unload:       'weapons/tec9-unload.mp3',
+  tec9_tail:         'weapons/tec-9-tail.mp3',
+  tec9_tail_fire:    'weapons/tec-9-tail-fire.mp3',
+  tec9_load:         'weapons/tec-9-load.mp3',
+  tec9_unload:       'weapons/tec-9-unload.mp3',
 
   // ── Explosions ──
   explosion:         'weapons/grenade-explosion.mp3',
@@ -1281,6 +1290,7 @@ export const REAL_SOUND_URLS: Record<string, string> = {
   jump:              'player/jump.mp3',
   land:              'player/land-1.mp3',
   land_2:            'player/land-2.mp3',
+  slide:             'player/slide.mp3',
 
   // ── Player: voice / body ──
   hit_taken:         'player/echo-grunt-1.mp3',
@@ -1294,4 +1304,21 @@ export const REAL_SOUND_URLS: Record<string, string> = {
   heal:              'level/health-regen.mp3',
   pickup:            'level/potion-pickup.mp3',
   respawn:           'level/respawn-sound.mp3',
+
+  // ── UI ──
+  ui_hover:          'ui/ui_hover.mp3',
+  ui_confirm:        'ui/ui_confirm.mp3',
+  ui_deny:           'ui/ui_deny.mp3',
+
+  // ── Announcer ──
+  medal_silver:      'announcer/medal_silver.mp3',
+  medal_gold:        'announcer/medal_gold.mp3',
+
+  // ── Music ──
+  music_lobby:       'music/music_lobby.mp3',
+  music_start:       'music/music_start.mp3',
+  music_midmatch:    'music/music_midmatch.mp3',
+  music_climax:      'music/music_climax.mp3',
+  music_victory:     'music/music_victory.mp3',
+  music_defeat:      'music/music_defeat.mp3',
 };

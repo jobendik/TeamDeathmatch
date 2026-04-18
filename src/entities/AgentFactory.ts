@@ -194,7 +194,7 @@ export async function buildAgents(): Promise<void> {
 
   // Red team AI
   const redClasses: BotClass[] = ['rifleman', 'rifleman', 'assault', 'assault', 'sniper', 'flanker'];
-  const redNames = ['Demon', 'Blaze', 'Hammer', 'Fang', 'Specter', 'Viper'];
+  const redNames = ['Demon', 'Inferno', 'Hammer', 'Fang', 'Specter', 'Viper'];
   for (let i = 0; i < 6; i++) {
     const sp = RED_SPAWNS[i % RED_SPAWNS.length];
     const bot = mkAgent(

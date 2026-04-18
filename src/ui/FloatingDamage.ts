@@ -14,15 +14,11 @@ const active: FloatingNumber[] = [];
 const POOL_SIZE = 40;
 const pool: THREE.Sprite[] = [];
 
-// Shared canvas for rendering text → texture
-const _canvas = document.createElement('canvas');
-_canvas.width = 256;
-_canvas.height = 128;
-const _ctx = _canvas.getContext('2d')!;
-
 function makeTextTexture(text: string, color: string, size: number, glow: string): THREE.CanvasTexture {
-  const ctx = _ctx;
-  ctx.clearRect(0, 0, 256, 128);
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 128;
+  const ctx = canvas.getContext('2d')!;
 
   ctx.font = `900 ${size}px Orbitron, system-ui, sans-serif`;
   ctx.textAlign = 'center';
@@ -42,7 +38,7 @@ function makeTextTexture(text: string, color: string, size: number, glow: string
   ctx.fillStyle = color;
   ctx.fillText(text, 128, 64);
 
-  const tex = new THREE.CanvasTexture(_canvas);
+  const tex = new THREE.CanvasTexture(canvas);
   tex.minFilter = THREE.LinearFilter;
   tex.magFilter = THREE.LinearFilter;
   tex.generateMipmaps = false;

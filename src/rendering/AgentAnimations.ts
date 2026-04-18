@@ -11,6 +11,11 @@ const SWAT_ANIM_BASE = `${BASE_URL}models/characters/swat/animations`;
 const ENEMY_MODEL_URL = `${BASE_URL}models/characters/enemy/enemy.fbx`;
 const ENEMY_ANIM_BASE = `${BASE_URL}models/characters/enemy/animations`;
 
+const _animEuler = new THREE.Euler();
+const _animHorizVel = new THREE.Vector3();
+const _animForward = new THREE.Vector3();
+const _animRight = new THREE.Vector3();
+
 // Juster ved behov. 0.01 passer ofte bra for Mixamo FBX.
 const CHARACTER_SCALE = 0.01;
 
@@ -448,7 +453,7 @@ function normalizeAngle(rad: number): number {
 }
 
 function yawFromQuaternion(q: THREE.Quaternion): number {
-  const e = new THREE.Euler().setFromQuaternion(q, 'YXZ');
+  const e = _animEuler.setFromQuaternion(q, 'YXZ');
   return e.y;
 }
 
@@ -597,7 +602,7 @@ export function updateAgentAnimations(agents: readonly TDMAgent[], dt: number): 
     const yawDelta = normalizeAngle(yaw - ctrl.lastYaw);
     ctrl.lastYaw = yaw;
 
-    const horizVel = new THREE.Vector3(ag.velocity.x, 0, ag.velocity.z);
+    const horizVel = _animHorizVel.set(ag.velocity.x, 0, ag.velocity.z);
     const speed = horizVel.length();
 
     const stationary = speed < 0.08;
@@ -617,8 +622,8 @@ export function updateAgentAnimations(agents: readonly TDMAgent[], dt: number): 
     }
 
     const q = rc.quaternion;
-    const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(q).normalize();
-    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(q).normalize();
+    const forward = _animForward.set(0, 0, 1).applyQuaternion(q).normalize();
+    const right = _animRight.set(1, 0, 0).applyQuaternion(q).normalize();
 
     const localForward = horizVel.dot(forward);
     const localRight = horizVel.dot(right);

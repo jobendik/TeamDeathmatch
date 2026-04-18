@@ -276,6 +276,8 @@ export function shouldHealUp(me: TDMAgent, state: BRBotState): boolean {
 }
 
 export function doHealUp(me: TDMAgent, state: BRBotState): void {
+  // Guard: only heal once per cooldown window (prevents every-frame healing)
+  if ((state as any)._healCooldown && gameState.worldElapsed < (state as any)._healCooldown) return;
   const amount = 30 + Math.random() * 15;
   me.hp = Math.min(me.maxHP, me.hp + amount);
   (state as any)._healCooldown = gameState.worldElapsed + 9 + Math.random() * 5;
@@ -290,11 +292,6 @@ export function doHealUp(me: TDMAgent, state: BRBotState): void {
  * Currently bots hold a single weapon slot — this hooks for future
  * multi-slot inventories. Returns current weapon if no swap needed.
  */
-export function pickBestWeaponForRange(me: TDMAgent, dist: number): WeaponId {
-  // Single-slot bots — no-op
-  return me.weaponId;
-}
-
 // ─────────────────────────────────────────────────────────────────────
 //  DECIDE: SHOULD I ENGAGE THIS ENEMY?
 // ─────────────────────────────────────────────────────────────────────

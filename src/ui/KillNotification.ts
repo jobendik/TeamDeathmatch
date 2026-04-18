@@ -4,6 +4,8 @@ import { gameState } from '@/core/GameState';
 
 let _killStreak = 0;
 let _streakTimer = 0;
+let _scaleTO: ReturnType<typeof setTimeout> | undefined;
+let _fadeTO: ReturnType<typeof setTimeout> | undefined;
 
 const STREAK_LABELS = ['', '', 'DOUBLE KILL', 'TRIPLE KILL', 'MULTI KILL', 'MEGA KILL', 'ULTRA KILL', 'RAMPAGE'];
 
@@ -34,8 +36,10 @@ export function showKillNotif(name: string, team: number): void {
   // Shake effect for multi-kills
   if (_killStreak >= 2) {
     dom.kn.style.transform = 'translateX(-50%) scale(1.2)';
-    setTimeout(() => { dom.kn.style.transform = 'translateX(-50%) scale(1)'; }, 200);
+    clearTimeout(_scaleTO);
+    _scaleTO = setTimeout(() => { dom.kn.style.transform = 'translateX(-50%) scale(1)'; }, 200);
   }
 
-  setTimeout(() => { dom.kn.style.opacity = '0'; }, 2500);
+  clearTimeout(_fadeTO);
+  _fadeTO = setTimeout(() => { dom.kn.style.opacity = '0'; }, 2500);
 }

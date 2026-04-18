@@ -105,15 +105,6 @@ export interface InputKeys {
 }
 
 // ────────────────────────────────────────────
-//  NavMesh types (optional)
-// ────────────────────────────────────────────
-export interface NavMeshState {
-  navMesh: any | null;
-  navMeshLoaded: boolean;
-  navMeshLoading: boolean;
-}
-
-// ────────────────────────────────────────────
 //  Global mutable game state
 // ────────────────────────────────────────────
 
@@ -281,9 +272,4 @@ export const gameState = {
   potgBestScore: 0,
   potgBestAgent: null as TDMAgent | null,
   potgBestTime: 0,
-
-  // NavMesh (optional)
-  navMesh: null as any,
-  navMeshLoaded: false,
-  navMeshLoading: false,
 };

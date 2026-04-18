@@ -439,4 +439,11 @@ export function hideArena(): void {
 
 export function showArena(): void {
   for (const m of arenaMeshes) m.visible = true;
+  for (const p of gameState.pickups) {
+    if (p.active && p.mesh) p.mesh.visible = true;
+    if (p.active && p.ring) p.ring.visible = true;
+  }
+  for (const f of Object.values(gameState.flags)) {
+    if (f.mesh) f.mesh.visible = true;
+  }
 }

@@ -2,8 +2,7 @@ import * as THREE from 'three';
 import { gameState } from '@/core/GameState';
 import { FP } from '@/config/player';
 import { WEAPONS } from '@/config/weapons';
-import { ARENA_MARGIN } from '@/config/constants';
-import { allowsRespawn, getFacingYawTowardsArena, getModeDefaults, getPlayerSpawn } from '@/core/GameModes';
+import { allowsRespawn, getFacingYawTowardsArena, getModeDefaults, getPlayerSpawn, getWorldBoundary } from '@/core/GameModes';
 import { setViewmodelWeapon } from '@/rendering/WeaponViewmodel';
 import { updateHUD, flashHeal } from '@/ui/HUD';
 import { dom } from '@/ui/DOMElements';
@@ -14,7 +13,6 @@ import { isPlayerInAir } from '@/br/DropPlane';
 import { playerVehicle } from '@/br/Vehicles';
 import { isInventoryOpen, getPlayerInventory, syncInventoryFromCombat } from '@/br/InventoryUI';
 import { consumeAmmo } from '@/br/Inventory';
-import { BR_MAP_MARGIN } from '@/br/BRConfig';
 import { updateMovement, getCameraOffset, getCurrentPlayerHeight, requestJump, toggleCrouch, setLean, attemptSlide, movement } from '@/movement/MovementController';
 import { playHeal } from '@/audio/SoundHooks';
 import { isKillcamActive, updateKillcam, isPotgActive, updatePotgReplay } from '@/ui/Killcam';
@@ -36,7 +34,7 @@ export function getFloorY(x: number, z: number): number {
 }
 
 function collidesPlayer(x: number, z: number): boolean {
-  const margin = gameState.mode === 'br' ? BR_MAP_MARGIN : ARENA_MARGIN;
+  const margin = getWorldBoundary();
   if (Math.abs(x) > margin || Math.abs(z) > margin) return true;
   for (const c of gameState.colliders) {
     if (c.yTop !== undefined && gameState.pPosY >= c.yTop) continue;
@@ -52,7 +50,7 @@ function collidesPlayer(x: number, z: number): boolean {
 }
 
 export function keepInside(ag: TDMAgent): void {
-  const boundary = gameState.mode === 'br' ? BR_MAP_MARGIN : ARENA_MARGIN;
+  const boundary = getWorldBoundary();
   const margin = Math.max(0.55, ag.boundingRadius) + 0.08;
   ag.position.x = Math.max(-boundary + margin, Math.min(boundary - margin, ag.position.x));
   ag.position.z = Math.max(-boundary + margin, Math.min(boundary - margin, ag.position.z));

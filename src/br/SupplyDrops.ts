@@ -116,8 +116,21 @@ function rollLegendaryLoot(): InventoryItem[] {
   return legendary;
 }
 
+function disposeObj(obj: THREE.Object3D): void {
+  obj.traverse(child => {
+    if ((child as THREE.Mesh).isMesh) {
+      const m = child as THREE.Mesh;
+      m.geometry?.dispose();
+      if (Array.isArray(m.material)) m.material.forEach(mt => mt.dispose());
+      else if (m.material) (m.material as THREE.Material).dispose();
+    }
+    if ((child as THREE.Light).isLight) (child as THREE.Light).dispose();
+  });
+}
+
 export function resetSupplyDrops(): void {
   for (const d of active) {
+    disposeObj(d.beam); disposeObj(d.crate);
     gameState.scene.remove(d.beam);
     gameState.scene.remove(d.crate);
   }
@@ -181,6 +194,7 @@ export function updateSupplyDrops(dt: number): void {
     } else {
       // Linger 6s after landing, then cleanup
       if (now - d.landAt > 6) {
+        disposeObj(d.beam); disposeObj(d.crate);
         gameState.scene.remove(d.beam);
         gameState.scene.remove(d.crate);
         active.splice(i, 1);

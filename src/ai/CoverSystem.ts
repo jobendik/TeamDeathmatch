@@ -6,9 +6,9 @@ import type { TDMAgent } from '@/entities/TDMAgent';
 import { WEAPONS } from '@/config/weapons';
 
 // ── Cached temporaries ──
-const _pushResult = { x: 0, z: 0 };
 const _toTarget = new YUKA.Vector3();
 const _peekPos = new YUKA.Vector3();
+const _midPos = new YUKA.Vector3();
 
 /**
  * Check if a world position is inside any wall/pillar collider.
@@ -118,8 +118,8 @@ export function findCoverFrom(ag: TDMAgent, threat: YUKA.Vector3): YUKA.Vector3 
     // Sample midpoint of approach path
     const midX = (ag.position.x + cp.x) * 0.5;
     const midZ = (ag.position.z + cp.z) * 0.5;
-    const midPos = new YUKA.Vector3(midX, 0, midZ);
-    if (!isOccluded(midPos, threat)) {
+    _midPos.set(midX, 0, midZ);
+    if (!isOccluded(_midPos, threat)) {
       score -= 6; // exposed approach
     }
 
@@ -270,6 +270,7 @@ export function findNearestPickup(ag: TDMAgent, type: 'health' | 'ammo' | 'weapo
     if (type === 'weapon') {
       if (p.t !== 'weapon' || !p.weaponId) continue;
       const wep = WEAPONS[p.weaponId];
+      if (!wep) continue;
       const cur = WEAPONS[ag.weaponId];
       // If unarmed, any weapon is desirable
       if (ag.weaponId !== 'unarmed' && wep.desirability <= cur.desirability) continue;

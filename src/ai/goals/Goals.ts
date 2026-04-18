@@ -8,6 +8,8 @@ import { WEAPONS } from '@/config/weapons';
 import { getEnemyFlagTeam } from '@/core/GameModes';
 import { getPreferredPosition, STRATEGIC_POSITIONS } from '@/ai/StrategicPositions';
 
+const _goalTemp = new YUKA.Vector3();
+
 // ═══════════════════════════════════════════
 //  ATOMIC GOALS — leaf-level behaviors
 // ═══════════════════════════════════════════
@@ -60,7 +62,7 @@ export class PatrolGoal extends YUKA.Goal<TDMAgent> {
       if (ag.fleeB) ag.fleeB.weight = 0;
     }
 
-    if (ag.teamCallout && ag.teamCalloutTime > ag.stateTime - 5) {
+    if (ag.teamCallout && gameState.worldElapsed - ag.teamCalloutTime < 5) {
       ag.lastKnownPos.copy(ag.teamCallout);
       ag.hasLastKnown = true;
       ag.teamCallout = null;
@@ -137,7 +139,7 @@ export class EngageCombatGoal extends YUKA.Goal<TDMAgent> {
     if (ag.pursuitB) ag.pursuitB.weight = 0.8;
 
     if (ag.seekB && ag.currentTarget) {
-      const toTarget = new YUKA.Vector3().subVectors(ag.currentTarget.position, ag.position);
+      const toTarget = _goalTemp.subVectors(ag.currentTarget.position, ag.position);
       const dist = toTarget.length();
       toTarget.normalize();
 
@@ -216,7 +218,7 @@ export class RetreatGoal extends YUKA.Goal<TDMAgent> {
     }
 
     if (ag.seekB && ag.currentTarget) {
-      const away = new YUKA.Vector3().subVectors(ag.position, ag.currentTarget.position).normalize();
+      const away = _goalTemp.subVectors(ag.position, ag.currentTarget.position).normalize();
       const perpX = -away.z * ag.strafeDir;
       const perpZ = away.x * ag.strafeDir;
       let rx = ag.position.x + perpX * 7 + away.x * 4;
@@ -320,7 +322,7 @@ export class PeekGoal extends YUKA.Goal<TDMAgent> {
     if (ag.fleeB) ag.fleeB.weight = 0;
 
     if (ag.seekB && ag.currentTarget && ag.currentCover) {
-      const toTarget = new YUKA.Vector3().subVectors(ag.currentTarget.position, ag.currentCover).normalize();
+      const toTarget = _goalTemp.subVectors(ag.currentTarget.position, ag.currentCover).normalize();
       (ag.seekB as any).target.set(
         ag.currentCover.x + toTarget.x * 3,
         0,
@@ -462,7 +464,7 @@ export class TeamPushGoal extends YUKA.Goal<TDMAgent> {
     if (ag.pursuitB) ag.pursuitB.weight = 1.5;
 
     if (ag.seekB && ag.currentTarget) {
-      const toTarget = new YUKA.Vector3().subVectors(ag.currentTarget.position, ag.position).normalize();
+      const toTarget = _goalTemp.subVectors(ag.currentTarget.position, ag.position).normalize();
       const perpX = -toTarget.z * ag.strafeDir;
       const perpZ = toTarget.x * ag.strafeDir;
       let px = ag.position.x + perpX * 4 + toTarget.x * 6;

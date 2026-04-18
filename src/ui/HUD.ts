@@ -53,8 +53,11 @@ export function updateHUD(): void {
   const lowAmmo = !isUnarmed && !isKnife && gameState.pAmmo > 0 && gameState.pAmmo / wep.magSize < 0.2;
   dom.ammoTxt.classList.toggle('low', lowAmmo);
 
-  // Weapon icon + mode
-  if (dom.wcIcon) dom.wcIcon.innerHTML = getWeaponIconSVG(gameState.pWeaponId);
+  // Weapon icon + mode (only update when weapon changes)
+  if (dom.wcIcon && (dom.wcIcon as any)._lastWid !== gameState.pWeaponId) {
+    dom.wcIcon.innerHTML = getWeaponIconSVG(gameState.pWeaponId);
+    (dom.wcIcon as any)._lastWid = gameState.pWeaponId;
+  }
   if (dom.wcMode) dom.wcMode.textContent = getWeaponModeLabel(gameState.pWeaponId);
 
   // Reload hint

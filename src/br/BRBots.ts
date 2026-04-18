@@ -25,8 +25,8 @@ import { TEAM_BLUE, TEAM_RED, TEAM_COLORS } from '@/config/constants';
 import { CLASS_CONFIGS, type BotClass } from '@/config/classes';
 import { TDMAgent } from '@/entities/TDMAgent';
 import { buildSoldierMesh } from '@/rendering/SoldierMesh';
-import { makeNameTag } from '@/rendering/NameTag';
-import { addHPBar } from '@/rendering/HPBar';
+import { makeNameTag, disposeNameTag } from '@/rendering/NameTag';
+import { addHPBar, disposeHPBar } from '@/rendering/HPBar';
 import {
   attachBlueSwatCharacter, attachEnemyCharacter,
   hasBlueSwatAssets, hasEnemyAssets,
@@ -292,7 +292,20 @@ export function clearBRBots(): void {
     const ag = gameState.agents[i];
     if (ag === gameState.player) continue;
     if ((ag as any)._brState) {
-      if (ag.renderComponent) gameState.scene.remove(ag.renderComponent);
+      // Dispose name tag and HP bar GPU resources
+      if (ag.nameTag) disposeNameTag(ag.nameTag);
+      disposeHPBar(ag);
+      if (ag.renderComponent) {
+        ag.renderComponent.traverse(child => {
+          if ((child as THREE.Mesh).isMesh) {
+            const m = child as THREE.Mesh;
+            m.geometry?.dispose();
+            if (Array.isArray(m.material)) m.material.forEach(mt => mt.dispose());
+            else if (m.material) (m.material as THREE.Material).dispose();
+          }
+        });
+        gameState.scene.remove(ag.renderComponent);
+      }
       gameState.entityManager.remove(ag);
       gameState.agents.splice(i, 1);
     }
@@ -331,6 +344,7 @@ function updateBotVisualLOD(ag: TDMAgent, state: BRBotState, now: number): void 
     for (let i = ag.renderComponent.children.length - 1; i >= 0; i--) {
       const child = ag.renderComponent.children[i];
       if (child === ag.nameTag || child === ag.hpBarGroup) continue;
+      child.traverse(c => { if ((c as THREE.Mesh).isMesh) { (c as THREE.Mesh).geometry?.dispose(); const mt = (c as THREE.Mesh).material; if (Array.isArray(mt)) mt.forEach(m => m.dispose()); else if (mt) (mt as THREE.Material).dispose(); } });
       ag.renderComponent.remove(child);
     }
     try {
@@ -345,6 +359,7 @@ function updateBotVisualLOD(ag: TDMAgent, state: BRBotState, now: number): void 
     for (let i = ag.renderComponent.children.length - 1; i >= 0; i--) {
       const child = ag.renderComponent.children[i];
       if (child === ag.nameTag || child === ag.hpBarGroup) continue;
+      child.traverse(c => { if ((c as THREE.Mesh).isMesh) { (c as THREE.Mesh).geometry?.dispose(); const mt = (c as THREE.Mesh).material; if (Array.isArray(mt)) mt.forEach(m => m.dispose()); else if (mt) (mt as THREE.Material).dispose(); } });
       ag.renderComponent.remove(child);
     }
     delete (ag.renderComponent.userData as any).agentAnimController;
@@ -571,9 +586,6 @@ function determinePhase(ag: TDMAgent, state: BRBotState, now: number): BRBotPhas
 
   // 8) Zone pressure
   if (nearEdge && zone.active && zone.isShrinking) return 'rotating';
-  if (zone.active && zone.isShrinking && distanceToZoneEdge(ag.position.x, ag.position.z) < 15) {
-    return 'rotating';
-  }
 
   // 9) Third-party — look for ongoing fights nearby
   if (!suppressed && ag.hp > ag.maxHP * 0.5) {
@@ -786,7 +798,7 @@ export function updateBRBot(ag: TDMAgent, dt: number): void {
   state.lastX = ag.position.x;
   state.lastZ = ag.position.z;
 
-  if (state.stuckTimer > 1.2) {
+  if (state.stuckTimer > 1.2 && state.phase !== 'endgame_hold') {
     state.stuckTimer = 0;
     state.lootTargetId = null;
     state.poiTarget = null;

@@ -16,7 +16,7 @@ const snapshots = new Map<TDMAgent, CamSnapshot[]>();
 let active = false;
 let killcamStart = 0;
 let killcamDuration = 3.2;
-let target: TDMAgent | null = null;
+let killcamTarget: TDMAgent | null = null;
 let killcamEl: HTMLDivElement | null = null;
 
 let savedCamPos = new THREE.Vector3();
@@ -77,7 +77,7 @@ export function startKillcam(killer: TDMAgent | null): void {
   if (!arr || arr.length < 5) return;
 
   active = true;
-  target = killer;
+  killcamTarget = killer;
   killcamStart = gameState.worldElapsed;
 
   const ui = ensureUI();
@@ -92,7 +92,7 @@ export function startKillcam(killer: TDMAgent | null): void {
 
 export function stopKillcam(): void {
   active = false;
-  target = null;
+  killcamTarget = null;
   if (killcamEl) killcamEl.classList.remove('on');
   // Restore camera (Player.ts will overwrite anyway on respawn)
 }
@@ -103,7 +103,7 @@ export function isKillcamActive(): boolean { return active; }
  * Update killcam camera position — call from game loop while active.
  */
 export function updateKillcam(dt: number): boolean {
-  if (!active || !target) return false;
+  if (!active || !killcamTarget) return false;
 
   const elapsed = gameState.worldElapsed - killcamStart;
   if (elapsed >= killcamDuration) {
@@ -111,7 +111,7 @@ export function updateKillcam(dt: number): boolean {
     return false;
   }
 
-  const arr = snapshots.get(target);
+  const arr = snapshots.get(killcamTarget);
   if (!arr || arr.length === 0) {
     stopKillcam();
     return false;
@@ -155,13 +155,14 @@ export function updateKillcam(dt: number): boolean {
 export function clearKillcamSnapshots(): void {
   snapshots.clear();
   active = false;
-  target = null;
+  killcamTarget = null;
 }
 
 // ── Play of the Game replay ──
 let potgActive = false;
 let potgStart = 0;
 const POTG_DURATION = 5;
+let potgTarget: TDMAgent | null = null;
 let potgEl: HTMLDivElement | null = null;
 
 function ensurePotgUI(): HTMLDivElement {
@@ -195,7 +196,7 @@ export function startPotgReplay(agent: TDMAgent): void {
 
   potgActive = true;
   potgStart = gameState.worldElapsed;
-  target = agent;
+  potgTarget = agent;
 
   const ui = ensurePotgUI();
   ui.style.display = 'block';
@@ -206,18 +207,18 @@ export function startPotgReplay(agent: TDMAgent): void {
 export function isPotgActive(): boolean { return potgActive; }
 
 export function updatePotgReplay(dt: number): boolean {
-  if (!potgActive || !target) return false;
+  if (!potgActive || !potgTarget) return false;
 
   const elapsed = gameState.worldElapsed - potgStart;
   if (elapsed >= POTG_DURATION) {
     potgActive = false;
-    target = null;
+    potgTarget = null;
     if (potgEl) potgEl.style.display = 'none';
     return false;
   }
 
   // Reuse killcam camera logic
-  const arr = snapshots.get(target);
+  const arr = snapshots.get(potgTarget);
   if (!arr || arr.length === 0) {
     potgActive = false;
     if (potgEl) potgEl.style.display = 'none';
@@ -254,6 +255,6 @@ export function updatePotgReplay(dt: number): boolean {
 
 export function stopPotgReplay(): void {
   potgActive = false;
-  target = null;
+  potgTarget = null;
   if (potgEl) potgEl.style.display = 'none';
 }

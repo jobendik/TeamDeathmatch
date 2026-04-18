@@ -23,7 +23,7 @@ import {
 } from '@/core/GameModes';
 import { updateObjectiveVisibility } from './Objectives';
 import { applyAimFlinch } from '@/ai/HumanAim';
-import { registerDeath, registerTeamKill } from '@/ai/MatchMemory';
+import { registerDeath, registerTeamKill, clearMatchMemory } from '@/ai/MatchMemory';
 import { clearTeamIntel } from '@/ai/TeamIntel';
 import { applyHitReaction } from './HitReactions';
 import { resetPlayerRecoil } from './Recoil';
@@ -33,9 +33,11 @@ import { showDamageArc } from '@/ui/DamageArcs';
 import { getPostFX } from '@/rendering/PostProcess.Bridge';
 import { setViewmodelWeapon, playViewmodelHit } from '@/rendering/WeaponViewmodel';
 import { isPlayerInAir } from '@/br/DropPlane';
+import { onBRDeath } from '@/br/BRController';
 import { playHitTaken, playHeal, playKillConfirmed } from '@/audio/SoundHooks';
-import { startKillcam } from '@/ui/Killcam';
+import { startKillcam, clearKillcamSnapshots } from '@/ui/Killcam';
 import { checkStreakReward, clearStreaks } from './Streaks';
+import { resetHitscanState } from './Hitscan';
 import { movement } from '@/movement/MovementController';
 import { applyRandomWeather } from '@/world/Lights';
 
@@ -90,6 +92,8 @@ function trackPotgKill(killer: TDMAgent): void {
   // Score: count kills within the POTG_WINDOW ending now
   const cutoff = gameState.worldElapsed - POTG_WINDOW;
   const recent = times.filter(t => t >= cutoff);
+  // Prune old entries
+  potgKillTimes.set(killer, recent);
   const score = recent.length;
   if (score > gameState.potgBestScore) {
     gameState.potgBestScore = score;
@@ -184,6 +188,7 @@ export function dealDmgPlayer(dmg: number, attacker: TDMAgent | null = null): vo
   
 if (attacker) {
   const attackerHS = Boolean((gameState.player as any)._lastHitWasHeadshot);
+  delete (gameState.player as any)._lastHitWasHeadshot;
   spawnDamageNumber(
     new THREE.Vector3(gameState.player.position.x, 1.5, gameState.player.position.z),
     { amount: dmg, isHeadshot: attackerHS },
@@ -192,6 +197,8 @@ if (attacker) {
   if (attacker) showDamageArc(attacker.position.x, attacker.position.z);
   // Log damage for assist tracking
   if (attacker) logDamageContribution(gameState.player, attacker, dmg);
+  // Track last attacker for DBNO bleedout kill credit
+  if (attacker) gameState.player.lastAttacker = attacker;
   // Store attacker position for minimap damage direction indicator
   if (attacker) {
     (gameState as any).pLastAttackerX = attacker.position.x;
@@ -249,7 +256,7 @@ function playerDied(attacker: TDMAgent | null): void {
   clearDeadTargetReferences(gameState.player);
 
   if (gameState.mode === 'br') {
-    import('@/br/BRController').then(m => m.onBRDeath(gameState.player));
+    onBRDeath(gameState.player);
   }
 
   for (const team of [TEAM_BLUE, TEAM_RED] as const) {
@@ -303,12 +310,12 @@ export function dealDmgAgent(ag: TDMAgent, dmg: number, attacker: TDMAgent | nul
 
   // Hit marker when the player scores a hit
   if (attacker === gameState.player) {
-    const wasHS = Boolean((ag as any)._lastHitWasHeadshot);
+    const hsMarker = Boolean((ag as any)._lastHitWasHeadshot);
     const isFalloff = Boolean((ag as any)._lastHitWasFalloff);
-    showHitMarker(wasHS);
+    showHitMarker(hsMarker);
     spawnDamageNumber(
       new THREE.Vector3(ag.position.x, 1.5, ag.position.z),
-      { amount: dmg, isHeadshot: wasHS, isFalloff },
+      { amount: dmg, isHeadshot: hsMarker, isFalloff },
     );
   }
 
@@ -351,7 +358,7 @@ function killAgent(ag: TDMAgent, attacker: TDMAgent | null): void {
   clearDeadTargetReferences(ag);
 
   if (gameState.mode === 'br') {
-    import('@/br/BRController').then(m => m.onBRDeath(ag));
+    onBRDeath(ag);
   }
 
   if (attacker) {
@@ -609,12 +616,17 @@ export function resetMatch(mode = gameState.mode): void {
   gameState.eliminationRound = 0;
   resetPlayerRecoil();
   resetSuppression();
+  damageContributors.clear();
+  potgKillTimes.clear();
+  clearKillcamSnapshots();
 
   // Randomize weather each round
   applyRandomWeather();
 
   // Clear pending AI callouts so stale intel from last match doesn't carry over
   clearTeamIntel();
+  clearMatchMemory();
+  resetHitscanState();
 
   if (gameState.pDead) {
     gameState.pDead = false;

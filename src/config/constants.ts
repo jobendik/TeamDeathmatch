@@ -31,3 +31,7 @@ export const RED_SPAWNS: [number, number, number][] = [
   [48, 0, 48], [44, 0, 52], [52, 0, 44],
   [40, 0, 48], [48, 0, 40], [52, 0, 52],
 ];
+
+/** Agent hitbox radii (shared between Bullets and Hitscan) */
+export const BODY_HIT_RADIUS = 0.55;
+export const HEAD_HIT_RADIUS = 0.22;

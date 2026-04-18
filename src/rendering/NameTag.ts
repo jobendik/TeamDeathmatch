@@ -65,3 +65,11 @@ export function makeNameTag(text: string, color: number): THREE.Sprite {
 
   return sprite;
 }
+
+/** Dispose a name tag sprite's texture and material to prevent VRAM leaks. */
+export function disposeNameTag(sprite: THREE.Sprite): void {
+  const mat = sprite.material as THREE.SpriteMaterial;
+  if (mat.map) mat.map.dispose();
+  mat.dispose();
+  sprite.parent?.remove(sprite);
+}

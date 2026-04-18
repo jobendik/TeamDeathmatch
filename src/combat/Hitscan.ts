@@ -2,8 +2,8 @@ import * as THREE from 'three';
 import { gameState } from '@/core/GameState';
 import { spawnImpact, spawnWallSparks, spawnTracer, spawnMuzzleFlash, spawnExplosion, spawnRocketTrail, spawnBulletHole, spawnBloodSplatter } from './Particles';
 import { dealDmgPlayer, dealDmgAgent } from './Combat';
-import { TEAM_BLUE } from '@/config/constants';
-import { WEAPONS, type WeaponId } from '@/config/weapons';
+import { TEAM_BLUE, BODY_HIT_RADIUS, HEAD_HIT_RADIUS } from '@/config/constants';
+import { GRENADE_CONFIG, WEAPONS, type WeaponId } from '@/config/weapons';
 import type { TDMAgent } from '@/entities/TDMAgent';
 import { isEnemy } from '@/core/GameModes';
 import { playShot, playImpact, playExplosion, playBulletWhiz, playFriendlyFireBuzz } from '@/audio/SoundHooks';
@@ -49,12 +49,12 @@ export function hitscanShot(
     const closest = origin.clone().add(dir.clone().normalize().multiplyScalar(proj));
     const bodyDist = closest.distanceTo(agPos);
 
-    if (bodyDist < 0.55) {
+    if (bodyDist < BODY_HIT_RADIUS) {
       hitAgent = ag;
       hitDist = proj;
       const headPos = new THREE.Vector3(ag.position.x, 1.42, ag.position.z);
       const headDist = closest.distanceTo(headPos);
-      isHeadshot = headDist < 0.22;
+      isHeadshot = headDist < HEAD_HIT_RADIUS;
     }
   }
 
@@ -70,7 +70,7 @@ export function hitscanShot(
       const proj = toAgent.dot(nDir);
       if (proj < 0 || proj > wallDist) continue;
       const closest = origin.clone().add(nDir.multiplyScalar(proj));
-      if (closest.distanceTo(agPos) < 0.55) {
+      if (closest.distanceTo(agPos) < BODY_HIT_RADIUS) {
         flashFriendlyFireWarning();
         break;
       }
@@ -169,7 +169,7 @@ export function hitscanShot(
           if (penWalls.length > 0 && penWalls[0].distance < proj) continue;
           const closest = penOrigin.clone().add(dir.clone().normalize().multiplyScalar(proj));
           const bodyDist = closest.distanceTo(agPos);
-          if (bodyDist < 0.55) {
+          if (bodyDist < BODY_HIT_RADIUS) {
             // Wallbang: 30% damage
             const penDmg = wep.damage * 0.3;
             if (ag === gameState.player) {
@@ -253,7 +253,7 @@ export function spawnGrenade(
   ownerType: 'player' | 'ai',
   ownerTeam: number,
   ownerAgent: TDMAgent | null = ownerType === 'player' ? gameState.player : null,
-  life = 2.5,
+  life = GRENADE_CONFIG.fuseTime,
   grenadeType: GrenadeType = 'frag',
 ): void {
   const colors: Record<GrenadeType, number> = {
@@ -272,10 +272,19 @@ export function spawnGrenade(
   mesh.add(light);
 
   gameState.bullets.push({
-    mesh, pl: light, dir: new THREE.Vector3(dir.x * 18, 6, dir.z * 18),
-    ownerType, ownerTeam, ownerAgent, dmg: grenadeType === 'frag' ? 60 : 0, spd: 1, life,
-    isGrenade: true, splashRadius: 6,
+    mesh, pl: light, dir: new THREE.Vector3(dir.x * GRENADE_CONFIG.throwSpeed, 6, dir.z * GRENADE_CONFIG.throwSpeed),
+    ownerType, ownerTeam, ownerAgent, dmg: grenadeType === 'frag' ? GRENADE_CONFIG.damage : 0, spd: 1, life,
+    isGrenade: true, splashRadius: GRENADE_CONFIG.splashRadius,
     grenadeType,
+  });
+}
+
+function disposeProjectile(mesh: THREE.Mesh): void {
+  mesh.geometry.dispose();
+  if (Array.isArray(mesh.material)) mesh.material.forEach(m => m.dispose());
+  else (mesh.material as THREE.Material).dispose();
+  mesh.children.forEach(c => {
+    if ((c as THREE.Light).isLight) (c as THREE.Light).dispose();
   });
 }
 
@@ -308,6 +317,7 @@ export function updateProjectiles(dt: number): void {
         } else {
           explode(b.mesh.position.clone(), b.splashRadius!, b.dmg, b.ownerAgent ?? null);
         }
+        disposeProjectile(b.mesh);
         scene.remove(b.mesh);
         bullets.splice(i, 1);
       }
@@ -349,6 +359,7 @@ export function updateProjectiles(dt: number): void {
 
       if (hit || b.life <= 0) {
         explode(b.mesh.position.clone(), b.splashRadius!, b.dmg, b.ownerAgent ?? null);
+        disposeProjectile(b.mesh);
         scene.remove(b.mesh);
         bullets.splice(i, 1);
       }
@@ -359,6 +370,7 @@ export function updateProjectiles(dt: number): void {
     b.mesh.position.y += b.dir.y * b.spd * dt;
     b.mesh.position.z += b.dir.z * b.spd * dt;
     if (b.life <= 0) {
+      disposeProjectile(b.mesh);
       scene.remove(b.mesh);
       bullets.splice(i, 1);
     }
@@ -419,6 +431,19 @@ function spawnSmokeCloud(pos: THREE.Vector3): void {
   mesh.scale.setScalar(0.1);
   gameState.scene.add(mesh);
   _smokeClouds.push({ pos: pos.clone(), mesh, life: SMOKE_DURATION });
+}
+
+export function resetHitscanState(): void {
+  // Clear smoke clouds
+  for (const s of _smokeClouds) {
+    gameState.scene.remove(s.mesh);
+    s.mesh.geometry.dispose();
+    (s.mesh.material as THREE.Material).dispose();
+  }
+  _smokeClouds.length = 0;
+  // Reset flash
+  _flashTimer = 0;
+  if (_flashOverlay) _flashOverlay.style.opacity = '0';
 }
 
 /** Returns true if a position is obscured by any active smoke cloud. */

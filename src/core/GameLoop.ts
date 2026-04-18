@@ -45,17 +45,9 @@ import { updatePlayerRecoilRecovery } from '@/combat/Recoil';
 import { updateSuppression } from '@/combat/Suppression';
 import { updateHitReactions } from '@/combat/HitReactions';
 import { updateDynamicMusic } from '@/audio/DynamicMusic';
-
-// Lazy imports — keep BR modules out of the initial bundle cost.
-let brModule: typeof import('@/br/BRController') | null = null;
-let brHudModule: typeof import('@/br/BRHUD') | null = null;
-let brInvModule: typeof import('@/br/InventoryUI') | null = null;
-
-async function ensureBR() {
-  if (!brModule) brModule = await import('@/br/BRController');
-  if (!brHudModule) brHudModule = await import('@/br/BRHUD');
-  if (!brInvModule) brInvModule = await import('@/br/InventoryUI');
-}
+import * as brModule from '@/br/BRController';
+import * as brHudModule from '@/br/BRHUD';
+import * as brInvModule from '@/br/InventoryUI';
 
 let _hudThrottle = 0;
 let _minimapThrottle = 0;
@@ -85,8 +77,11 @@ function ensureWarmupEl(): HTMLDivElement {
   return warmupEl;
 }
 
+let _rafId = 0;
+export function stopLoop(): void { cancelAnimationFrame(_rafId); }
+
 export function animate(): void {
-  requestAnimationFrame(animate);
+  _rafId = requestAnimationFrame(animate);
 
   const rawDt = Math.min(gameState.time.update().getDelta(), 0.05);
   const frozen = !!gameState.paused;
@@ -132,11 +127,15 @@ export function animate(): void {
     }
     gameState.perceptionFrame++;
 
+    // In BR, advance drop/zone/bot state before the player update so
+    // isPlayerInAir() reflects the current frame's drop state.
+    if (isBR && brModule.isBRActive()) {
+      brModule.updateBR(dt);
+    }
+
     updatePlayer(dt);
 
-    if (isBR && brModule?.isBRActive()) {
-      brModule.updateBR(dt);
-    } else {
+    if (!isBR || !brModule.isBRActive()) {
       for (const ag of gameState.agents) {
         if (!ag.active) continue;
         updateAI(ag, dt);
@@ -163,25 +162,10 @@ export function animate(): void {
     updateObjectives();
     updateRespawns(dt);
 
-    // In BR we want to skip heavy per-agent work for the entire time the
-    // player is airborne, not just the 'airdrop' phase. Otherwise the
-    // moment the player jumps, 29 bots would all wake up at once.
-    const brPhase = isBR && brModule ? brModule.getBRPhase() : null;
+    // In BR we want to skip heavy per-agent work while the player is on
+    // the plane. Once the player jumps, bots are active.
+    const brPhase = isBR ? brModule.getBRPhase() : null;
     const brOnPlane = brPhase === 'airdrop';
-    // 'landing' phase lasts 20s after player jumps but the player is in
-    // freefall/parachute for only ~6-8s of that. We still want bots
-    // active during the rest of landing, so we key on isPlayerInAir.
-    let brAirborne = false;
-    if (isBR && brModule?.isBRActive()) {
-      // Probe DropPlane lazily — avoid import cycles.
-      const dp = (globalThis as any).__dropState as { state?: string } | undefined;
-      // Fallback: use phase check — conservative.
-      brAirborne = brOnPlane;
-      if (dp && typeof dp.state === 'string') {
-        brAirborne = brOnPlane ||
-          dp.state === 'freefall' || dp.state === 'parachute';
-      }
-    }
 
     if (!brOnPlane) {
       gameState.entityManager.update(dt);
@@ -239,8 +223,8 @@ export function animate(): void {
   updateCompass();
   updateReloadRing();
 
-  if (isBR && brHudModule) brHudModule.updateBRHUD();
-  if (isBR && brInvModule) brInvModule.updatePickupPrompt();
+  if (isBR) brHudModule.updateBRHUD();
+  if (isBR) brInvModule.updatePickupPrompt();
 
   updateViewmodel(rawDt);
 
@@ -317,7 +301,7 @@ function updateVisualsLOD(): void {
       }
     }
 
-    if (ag.nameTag) ag.nameTag.visible = d2 < 35 * 35;if (ag.nameTag) {
+    if (ag.nameTag) {
   const dist = Math.sqrt(d2);
 
   // Hide if too close (huge on screen) or too far (visual clutter)
@@ -357,5 +341,6 @@ function updateAgentAnimationsLOD(dt: number): void {
 }
 
 export async function preloadBRModules(): Promise<void> {
-  await ensureBR();
+  // BR modules are now statically imported; this function is kept for API
+  // compatibility but no longer needs to do lazy loading.
 }

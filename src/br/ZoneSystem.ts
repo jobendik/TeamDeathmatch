@@ -248,9 +248,9 @@ export function getZoneTimeRemaining(): { seconds: number; label: string } {
 }
 
 export function disposeZone(): void {
-  if (zone.mesh) { gameState.scene.remove(zone.mesh); zone.mesh = null; }
-  if (zone.ringMesh) { gameState.scene.remove(zone.ringMesh); zone.ringMesh = null; }
-  if (zone.targetRingMesh) { gameState.scene.remove(zone.targetRingMesh); zone.targetRingMesh = null; }
+  if (zone.mesh) { zone.mesh.geometry.dispose(); (zone.mesh.material as THREE.Material).dispose(); gameState.scene.remove(zone.mesh); zone.mesh = null; }
+  if (zone.ringMesh) { zone.ringMesh.geometry.dispose(); (zone.ringMesh.material as THREE.Material).dispose(); gameState.scene.remove(zone.ringMesh); zone.ringMesh = null; }
+  if (zone.targetRingMesh) { zone.targetRingMesh.geometry.dispose(); (zone.targetRingMesh.material as THREE.Material).dispose(); gameState.scene.remove(zone.targetRingMesh); zone.targetRingMesh = null; }
   zone.active = false;
   zone.phaseIndex = -1;
 }

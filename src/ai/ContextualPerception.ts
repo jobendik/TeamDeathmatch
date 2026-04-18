@@ -29,8 +29,6 @@ export interface ContextualModifiers {
   missChance: number;
 }
 
-const _temp = new YUKA.Vector3();
-
 /**
  * Compute contextual perception modifiers for a given agent.
  * Call once per AI tick — the result is cheap to apply to canSee().
@@ -178,6 +176,7 @@ export function getHearingAttenuation(
   gameState.raycaster.set(_origin, dir);
   gameState.raycaster.far = dist;
   const hits = gameState.raycaster.intersectObjects(gameState.wallMeshes, false);
+  gameState.raycaster.far = Infinity;
 
   // Each wall between listener and source drops audibility by 50%
   let att = 1;

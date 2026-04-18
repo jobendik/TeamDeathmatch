@@ -13,7 +13,7 @@ import { hitscanShot, shotgunBlast, spawnRocket, spawnGrenade } from '@/combat/H
 import { spawnMuzzleFlash } from '@/combat/Particles';
 import { keepInside, getFloorY } from '@/entities/Player';
 import { updateAim, getAimDirection } from './HumanAim';
-import { playFootstep } from '@/audio/SoundHooks';
+import { playFootstep, playBotCallout } from '@/audio/SoundHooks';
 import { CLASS_CONFIGS } from '@/config/classes';
 import { WEAPONS, CLASS_DEFAULT_WEAPON, type WeaponId } from '@/config/weapons';
 
@@ -22,6 +22,8 @@ const _footstepTimers = new Map<string, number>();
 import { deliverPendingCallouts, queueCallout } from './TeamIntel';
 import { shouldBotHesitate, getGlanceDirection } from './ContextualPerception';
 import type { TeamIntent } from './AITypes';
+
+const _pinchTarget = new YUKA.Vector3();
 
 // ═══════════════════════════════════════════
 //  TEAM TACTICAL BOARD
@@ -120,7 +122,7 @@ function updateTeamBoard(teamId: number): void {
           const pinchDist = 8;
           const px = board.focusPos.x + Math.cos(angle) * pinchDist;
           const pz = board.focusPos.z + Math.sin(angle) * pinchDist;
-          (ally as any)._pinchTarget = new YUKA.Vector3(px, 0, pz);
+          (ally as any)._pinchTarget = _pinchTarget.set(px, 0, pz).clone();
         }
         break;
       case 'reset':
@@ -183,19 +185,7 @@ function botTryWeaponSwap(ag: TDMAgent, dist: number): void {
   }
 }
 
-// Adaptive difficulty: softens/hardens bot aim based on player K/D
-function getAdaptiveDifficultyMul(): number {
-  const k = gameState.pKills;
-  const d = gameState.pDeaths;
-  if (k + d < 3) return 1; // not enough data
-  const kd = k / Math.max(1, d);
-  // Player dominating → bots get slightly worse aim; player struggling → bots soften
-  if (kd > 2.5) return 0.85; // player dominating, make bots a tiny bit harder (lower = tighter)
-  if (kd > 1.5) return 0.95;
-  if (kd < 0.4) return 1.3;  // player struggling, widen bot aim
-  if (kd < 0.7) return 1.15;
-  return 1;
-}
+
 
 let _lastCalloutFrame = -1;
 function deliverCalloutsOncePerFrame(): void {
@@ -507,13 +497,12 @@ export function updateAI(ag: TDMAgent, dt: number): void {
         if (ag.team === gameState.player.team) {
           const distToPlayer = ag.position.distanceTo(gameState.player.position);
           if (distToPlayer < 25 && Math.random() < 0.3) {
-            import('@/audio/SoundHooks').then(s => {
-              s.playBotCallout('reload', new THREE.Vector3(ag.position.x, 1.6, ag.position.z), ag.personality ? 0.85 + ag.personality.aggressionBias * 0.3 : 1);
-              // Low-HP help callout
-              if (ag.hp / ag.maxHP < 0.3 && ag.hasTarget && Math.random() < 0.15) {
-                s.playBotCallout('help', new THREE.Vector3(ag.position.x, 1.6, ag.position.z), ag.personality ? 0.85 + ag.personality.aggressionBias * 0.3 : 1);
-              }
-            });
+            const pitch = ag.personality ? 0.85 + ag.personality.aggressionBias * 0.3 : 1;
+            playBotCallout('reload', new THREE.Vector3(ag.position.x, 1.6, ag.position.z), pitch);
+            // Low-HP help callout
+            if (ag.hp / ag.maxHP < 0.3 && ag.hasTarget && Math.random() < 0.15) {
+              playBotCallout('help', new THREE.Vector3(ag.position.x, 1.6, ag.position.z), pitch);
+            }
           }
         }
         if (ag.stateName !== 'COVER' && ag.stateName !== 'RETREAT') {

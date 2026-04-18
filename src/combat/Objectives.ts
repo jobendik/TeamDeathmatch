@@ -36,8 +36,8 @@ export function buildObjectives(): void {
 
 export function updateObjectiveVisibility(): void {
   const visible = gameState.mode === 'ctf';
-  gameState.flags[TEAM_BLUE].mesh!.visible = visible;
-  gameState.flags[TEAM_RED].mesh!.visible = visible;
+  if (gameState.flags[TEAM_BLUE].mesh) gameState.flags[TEAM_BLUE].mesh.visible = visible;
+  if (gameState.flags[TEAM_RED].mesh) gameState.flags[TEAM_RED].mesh.visible = visible;
 }
 
 function agentNear(agent: TDMAgent, pos: THREE.Vector3, r = 2.2): boolean {

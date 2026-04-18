@@ -117,7 +117,7 @@ export function updateCameraShake(dt: number): {
   offsetX: number;
   offsetY: number;
 } {
-  elapsedNoise += dt;
+  elapsedNoise = (elapsedNoise + dt) % 1e4;
 
   let totalPitch = 0;
   let totalYaw = 0;

@@ -175,13 +175,6 @@ export class TDMAgent extends YUKA.Vehicle {
     this.spawnPos = new YUKA.Vector3();
     this.color = TEAM_COLORS[team];
 
-    this.damage = cfg.damage;
-    this.fireRate = cfg.fireRate;
-    this.burstSize = cfg.burstSize;
-    this.burstDelay = cfg.burstDelay;
-    this.reloadTime = cfg.reloadTime;
-    this.magSize = cfg.magSize;
-    this.ammo = cfg.magSize;
     this.aimError = cfg.aimError;
     this.reactionTime = cfg.reactionTime;
     this.retreatThreshold = cfg.retreatThreshold;
@@ -340,6 +333,7 @@ export class TDMAgent extends YUKA.Vehicle {
     this.decisionTimer = 0;
     this.combatMoveTimer = 0;
     this.fuzzyAggr = 50;
+    this.confidence = 50;
     this.enemyMemory.clear();
     this.cachedNearbyPickups = [];
     this.pickupCacheTimer = 0;

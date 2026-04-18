@@ -138,7 +138,7 @@ export function onPlayerKill(victim: TDMAgent, distance: number, weaponId: strin
 
   // Multi-kill: 2+ kills in 4 seconds
   const recent = matchState.playerKillTimes.filter(t => now - t < 4);
-  if (recent.length === 5) awardMedal('ace');
+  if (recent.length >= 5) awardMedal('ace');
   else if (recent.length === 4) awardMedal('quad_kill');
   else if (recent.length === 3) awardMedal('triple_kill');
   else if (recent.length === 2) awardMedal('multi_kill');

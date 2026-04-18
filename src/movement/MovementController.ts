@@ -406,7 +406,10 @@ export function updateMovement(dt: number): {
     if (t >= 1) {
       gameState.pPosY = mantleTarget.y;
       gameState.pVelY = 0;
-      gameState.player.position.x += Math.cos(0) * 0; // landed on top
+      // Push player forward on mantle completion
+      const fwd = 0.6;
+      gameState.player.position.x += -Math.sin(gameState.cameraYaw) * fwd;
+      gameState.player.position.z += -Math.cos(gameState.cameraYaw) * fwd;
       mantleTarget = null;
     }
   } else if (jumped || (!movement.isGrounded && gameState.pVelY < 1 && movement.airTime > 0.1)) {

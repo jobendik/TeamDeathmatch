@@ -5,6 +5,9 @@ import { canSee } from '@/ai/Perception';
 import { zone as brZone } from '@/br/ZoneSystem';
 import { isUAVActive } from '@/combat/Streaks';
 
+let _spotFrame = 0;
+const _spottedCache = new Set<string>();
+
 export function drawMinimap(): void {
   const canvas = dom.mmCanvas;
   const ctx = canvas.getContext('2d')!;
@@ -115,8 +118,14 @@ export function drawMinimap(): void {
       if (!isAlly) {
         // Only show spotted enemies (or all if UAV active)
         if (!isUAVActive()) {
-          const spotted = agents.some((a) => a.team === TEAM_BLUE && !a.isDead && canSee(a, ag));
-          if (!spotted) continue;
+          if (_spotFrame++ % 6 === 0) {
+            _spottedCache.clear();
+            for (const e of agents) {
+              if (e.team === TEAM_BLUE || e.isDead) continue;
+              if (agents.some(a => a.team === TEAM_BLUE && !a.isDead && canSee(a, e))) _spottedCache.add(e.name);
+            }
+          }
+          if (!_spottedCache.has(ag.name)) continue;
         }
       }
       const col = isAlly ? '#4aa8ff' : '#ff5c5c';

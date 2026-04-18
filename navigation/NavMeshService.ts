@@ -1,3 +1,9 @@
+/**
+ * ARCHIVED — This file is future-only infrastructure and is NOT imported
+ * anywhere in the live runtime code. Do not edit as if it is active.
+ * If navmesh support is revived, wire this into the game loop and
+ * re-add the navmesh state fields to GameState.
+ */
 import * as THREE from 'three';
 import * as YUKA from 'yuka';
 import { gameState } from '@/core/GameState';
@@ -99,7 +105,7 @@ class NavMeshService {
       if (regionCount === 0) return null;
 
       const region = this.navMesh.regions[Math.floor(Math.random() * regionCount)];
-      if (!region || region.polygon.centroid === undefined) return null;
+      if (!region || !region.centroid) return null;
 
       return region.centroid.clone();
     } catch {

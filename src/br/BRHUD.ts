@@ -6,6 +6,7 @@
 import { gameState } from '@/core/GameState';
 import { brState, isBRActive } from './BRController';
 import { getZoneTimeRemaining, zone } from './ZoneSystem';
+import { ZONE_PHASES } from './BRConfig';
 import { drop, isPlayerInAir } from './DropPlane';
 import { playerVehicle } from './Vehicles';
 
@@ -215,10 +216,9 @@ export function updateBRHUD(): void {
   }
   // Bar fill based on phase progress
   if (barEl) {
-    const total = zone.isShrinking
-      ? (zone.phaseIndex + 1 < 5 ? 1 : 0)
-      : 1;
-    barEl.style.width = `${Math.max(0, zt.seconds / Math.max(1, 80) * 100)}%`;
+    const phase = ZONE_PHASES[zone.phaseIndex] ?? ZONE_PHASES[0];
+    const total = zone.isShrinking ? phase.shrinkTime : phase.waitTime;
+    barEl.style.width = `${Math.max(0, zt.seconds / Math.max(1, total) * 100)}%`;
   }
 
   // Center prompts

@@ -8,14 +8,17 @@ import { hitscanShot, shotgunBlast, spawnRocket, spawnGrenade } from '@/combat/H
 import { updateHUD, flashCrosshairFire } from '@/ui/HUD';
 import { fireViewmodel, setViewmodelWeapon, resizeViewmodel } from '@/rendering/WeaponViewmodel';
 import { togglePause } from '@/ui/Menus';
-import { isPlayerInAir } from '@/br/DropPlane';
-import { getPlayerInventory, setBRActiveSlotByOrder, syncInventoryFromCombat } from '@/br/InventoryUI';
+import { isPlayerInAir, drop, playerJumpFromPlane, deployParachute } from '@/br/DropPlane';
+import { getPlayerInventory, setBRActiveSlotByOrder, syncInventoryFromCombat, toggleInventory, pickupNearestLoot, isInventoryOpen, closeInventory } from '@/br/InventoryUI';
 import { getAmmoPool, getAttachmentModifiers } from '@/br/Inventory';
 import { requestJump, toggleCrouch, setCrouch, setLean, attemptSlide, movement } from '@/movement/MovementController';
 import { Audio } from '@/audio/AudioManager';
 import { playEmptyClick, playWeaponSwap } from '@/audio/SoundHooks';
 import { applyPlayerRecoil } from '@/combat/Recoil';
 import { getSuppressionSpreadMul } from '@/combat/Suppression';
+import { startBRMatch } from '@/br/BRController';
+import { playerVehicle, exitVehicle, findNearbyVehicle, enterVehicle } from '@/br/Vehicles';
+import { fireDeferredPing } from '@/ui/PingSystem';
 
 let lastShiftPressTime = 0;
 
@@ -56,9 +59,10 @@ function isAction(key: string, action: ActionKey): boolean {
   return key === keyMap[action];
 }
 
+const _fwd = new THREE.Vector3();
 function getCameraForward(): THREE.Vector3 {
   const { cameraYaw, cameraPitch } = gameState;
-  return new THREE.Vector3(
+  return _fwd.set(
     -Math.sin(cameraYaw) * Math.cos(cameraPitch),
     Math.sin(cameraPitch),
     -Math.cos(cameraYaw) * Math.cos(cameraPitch),
@@ -148,6 +152,7 @@ function switchWeapon(slot: number): void {
   gameState.pShootTimer = 0;
   gameState.pBurstCount = 0;
   gameState.pFirstShotReady = true;
+  gameState.pSpreadAccum = 0;
   playWeaponSwap();
 
   setViewmodelWeapon(gameState.pWeaponId, true);
@@ -285,7 +290,12 @@ function onMouseMove(e: MouseEvent): void {
   gameState.mouseDeltaY += e.movementY;
 }
 
+let _eventsBound = false;
+
 export function bindEvents(): void {
+  if (_eventsBound) return; // Prevent duplicate listener stacking on hot reload
+  _eventsBound = true;
+
   const { keys } = gameState;
   loadKeybinds();
 
@@ -311,8 +321,7 @@ export function bindEvents(): void {
     if (isAction(k, 'grenade')) startCookGrenade();
 
     if (k === 'enter' && gameState.mode === 'br' && gameState.pDead) {
-      const br = await import('@/br/BRController');
-      await br.startBRMatch();
+      await startBRMatch();
       return;
     }
 
@@ -324,27 +333,23 @@ export function bindEvents(): void {
     // BR keys
     if (gameState.mode === 'br') {
       if (k === 'i') {
-        const ui = await import('@/br/InventoryUI');
-        ui.toggleInventory();
+        toggleInventory();
         e.preventDefault();
         return;
       }
       if (k === 'e') {
-        const ui = await import('@/br/InventoryUI');
-        ui.pickupNearestLoot();
+        pickupNearestLoot();
       }
       if (k === ' ') {
-        const dp = await import('@/br/DropPlane');
-        if (dp.drop.state === 'onPlane') { dp.playerJumpFromPlane(); return; }
-        if (dp.drop.state === 'freefall') { dp.deployParachute(); return; }
+        if (drop.state === 'onPlane') { playerJumpFromPlane(); return; }
+        if (drop.state === 'freefall') { deployParachute(); return; }
       }
       if (k === 'f') {
-        const veh = await import('@/br/Vehicles');
-        if (veh.playerVehicle) {
-          veh.exitVehicle();
+        if (playerVehicle) {
+          exitVehicle();
         } else {
-          const near = veh.findNearbyVehicle(gameState.player.position.x, gameState.player.position.z, 3);
-          if (near) veh.enterVehicle(near, true);
+          const near = findNearbyVehicle(gameState.player.position.x, gameState.player.position.z, 3);
+          if (near) enterVehicle(near, true);
         }
       }
     }
@@ -372,7 +377,6 @@ export function bindEvents(): void {
       lastShiftPressTime = now;
     }
     if (isAction(k, 'ping')) {
-      const { fireDeferredPing } = await import('@/ui/PingSystem');
       fireDeferredPing();
     }
 
@@ -386,8 +390,7 @@ export function bindEvents(): void {
     if (k === 'escape') {
       e.preventDefault();
       if (gameState.mode === 'br') {
-        const ui = await import('@/br/InventoryUI');
-        if (ui.isInventoryOpen()) { ui.closeInventory(); return; }
+        if (isInventoryOpen()) { closeInventory(); return; }
       }
       togglePause();
       return;
