@@ -5,6 +5,7 @@ import { TEAM_COLORS, type TeamId } from '@/config/constants';
 import { CLASS_DEFAULT_WEAPON, WEAPONS, type WeaponId } from '@/config/weapons';
 import type { Personality } from '@/ai/Personality';
 import { createAimState, type AimState } from '@/ai/HumanAim';
+import { NavAgentRuntime } from '@/ai/navigation/NavAgentRuntime';
 
 export interface EnemyMemoryEntry {
   lastSeenPos: YUKA.Vector3;
@@ -123,14 +124,8 @@ export class TDMAgent extends YUKA.Vehicle {
   cachedNearbyPickups: { pos: YUKA.Vector3; type: string; weaponId?: WeaponId; dist: number }[];
   pickupCacheTimer: number;
 
-  // NavMesh (optional)
-  navPath: YUKA.Vector3[];
-  navWaypointIndex: number;
-  navDestination: YUKA.Vector3 | null;
-  navMode: 'none' | 'arrive' | 'seek';
-  navTolerance: number;
-  navRepathTimer: number;
-  navCurrentRegion: any;
+  // NavMesh proper runtime
+  navRuntime!: NavAgentRuntime;
 
   preferredRange: number;
 
@@ -267,13 +262,6 @@ export class TDMAgent extends YUKA.Vehicle {
     this.cachedNearbyPickups = [];
     this.pickupCacheTimer = 0;
 
-    this.navPath = [];
-    this.navWaypointIndex = 0;
-    this.navDestination = null;
-    this.navMode = 'none';
-    this.navTolerance = 2.5;
-    this.navRepathTimer = 0;
-    this.navCurrentRegion = null;
 
     switch (botClass) {
       case 'sniper':   this.preferredRange = 35; break;
@@ -335,11 +323,9 @@ export class TDMAgent extends YUKA.Vehicle {
     this.pickupCacheTimer = 0;
     this.weaponSwapCooldown = 0;
 
-    this.navPath.length = 0;
-    this.navWaypointIndex = 0;
-    this.navDestination = null;
-    this.navMode = 'none';
-    this.navRepathTimer = 0;
+    if (this.navRuntime) {
+      this.navRuntime.clearPath();
+    }
 
     this.aim = createAimState();
     this.commitmentUntil = 0;

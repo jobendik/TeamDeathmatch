@@ -99,8 +99,12 @@ export function showRoundSummary(winnerTeam: number): void {
 
   stopDynamicMusic();
   if (isVictory) {
+    const victoryClips = ['victory', 'mission_accomplished', 'outstanding_work'];
+    Audio.play(victoryClips[Math.floor(Math.random() * victoryClips.length)]);
     Audio.play('music_victory');
   } else {
+    const defeatClips = ['defeat', 'mission_failed', 'returning_to_base', 'stand_down', 'get_them_next_time'];
+    Audio.play(defeatClips[Math.floor(Math.random() * defeatClips.length)]);
     Audio.play('music_defeat');
   }
 

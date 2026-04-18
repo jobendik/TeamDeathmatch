@@ -39,10 +39,19 @@ const streak: StreakState = {
 /** Called when the player gets a kill — check if a streak threshold is reached */
 export function checkStreakReward(killStreak: number): void {
   if (killStreak === 3) activateUAV();
-  if (killStreak === 5) activateArmorBoost();
+  if (killStreak === 5) {
+    activateArmorBoost();
+    import('@/audio/AudioManager').then(({ Audio }) => Audio.play('announcer_bloodthirsty'));
+  }
   if (killStreak === 7) activateRapidFire();
-  if (killStreak === 10) activateJuggernaut();
-  if (killStreak === 15) activateEMPBlast();
+  if (killStreak === 10) {
+    activateJuggernaut();
+    import('@/audio/AudioManager').then(({ Audio }) => Audio.play('announcer_unstoppable'));
+  }
+  if (killStreak === 15) {
+    activateEMPBlast();
+    import('@/audio/AudioManager').then(({ Audio }) => Audio.play('announcer_godlike'));
+  }
 }
 
 // ═══════════════════════════════════════════

@@ -4,7 +4,8 @@ import { TEAM_BLUE, TEAM_RED, type TeamId, BLUE_SPAWNS, RED_SPAWNS, ARENA_MARGIN
 import { BR_MAP_MARGIN } from '@/br/BRConfig';
 import { gameState } from './GameState';
 
-export type GameMode = 'tdm' | 'ffa' | 'ctf' | 'elimination' | 'br';
+export type GameMode = 'tdm' | 'ffa' | 'ctf' | 'elimination' | 'br'
+  | 'domination' | 'hardpoint' | 'koth' | 'sd' | 'training';
 
 /** True when the current mode has no team allegiance (FFA, BR). */
 export function isFreeForAll(): boolean {
@@ -22,6 +23,11 @@ export function getModeLabel(mode: GameMode = gameState.mode): string {
     case 'ctf': return 'CTF';
     case 'elimination': return 'ELIM';
     case 'br': return 'BR';
+    case 'domination': return 'DOM';
+    case 'hardpoint': return 'HP';
+    case 'koth': return 'KOTH';
+    case 'sd': return 'S&D';
+    case 'training': return 'TRAINING';
     default: return 'TDM';
   }
 }
@@ -88,7 +94,7 @@ export function getEnemyFlagTeam(team: TeamId): TeamId {
 
 /** Whether respawning is allowed in the current mode */
 export function allowsRespawn(): boolean {
-  return gameState.mode !== 'elimination' && gameState.mode !== 'br';
+  return gameState.mode !== 'elimination' && gameState.mode !== 'br' && gameState.mode !== 'sd';
 }
 
 export function getModeDefaults(mode: GameMode = gameState.mode): { matchTime: number; scoreLimit: number; playerStartsArmed: boolean } {
@@ -101,6 +107,16 @@ export function getModeDefaults(mode: GameMode = gameState.mode): { matchTime: n
       return { matchTime: 180, scoreLimit: 3, playerStartsArmed: true };
     case 'br':
       return { matchTime: 900, scoreLimit: 1, playerStartsArmed: false };
+    case 'domination':
+      return { matchTime: 600, scoreLimit: 200, playerStartsArmed: true };
+    case 'hardpoint':
+      return { matchTime: 600, scoreLimit: 250, playerStartsArmed: true };
+    case 'koth':
+      return { matchTime: 600, scoreLimit: 250, playerStartsArmed: true };
+    case 'sd':
+      return { matchTime: 150, scoreLimit: 4, playerStartsArmed: true };
+    case 'training':
+      return { matchTime: 0, scoreLimit: 0, playerStartsArmed: true };
     default:
       return { matchTime: 300, scoreLimit: 20, playerStartsArmed: true };
   }

@@ -15,6 +15,7 @@ import { isInventoryOpen, getPlayerInventory, syncInventoryFromCombat } from '@/
 import { consumeAmmo } from '@/br/Inventory';
 import { updateMovement, getCameraOffset, getCurrentPlayerHeight, requestJump, toggleCrouch, setLean, attemptSlide, movement } from '@/movement/MovementController';
 import { playHeal } from '@/audio/SoundHooks';
+import { getActivePerkHooks } from '@/config/Loadouts';
 import { isKillcamActive, updateKillcam, isPotgActive, updatePotgReplay } from '@/ui/Killcam';
 
 export function getFloorY(x: number, z: number): number {
@@ -241,8 +242,17 @@ export function updatePlayer(dt: number): void {
     const step = dt;
     const nx = player.position.x + desiredVelX * step;
     const nz = player.position.z + desiredVelZ * step;
+    const prevX = player.position.x;
+    const prevZ = player.position.z;
     if (!collidesPlayer(nx, player.position.z)) player.position.x = nx;
     if (!collidesPlayer(player.position.x, nz)) player.position.z = nz;
+    // Safety: if both axes moved and the combined position somehow sits inside a
+    // circular obstacle (possible at high frame-times on diagonal approach), revert.
+    if (player.position.x !== prevX && player.position.z !== prevZ &&
+        collidesPlayer(player.position.x, player.position.z)) {
+      player.position.x = prevX;
+      player.position.z = prevZ;
+    }
   }
 
   // Gravity (jump itself is handled inside updateMovement via pVelY)
@@ -332,7 +342,7 @@ export function updatePlayer(dt: number): void {
   if (!regenApplied && !gameState.pDead && gameState.pHP < 100 && gameState.pHP > 0) {
     const timeSinceDmg = gameState.worldElapsed - gameState.pLastDamageTime;
     if (timeSinceDmg > 5) {
-      const regenRate = 8 + Math.min(12, (timeSinceDmg - 5) * 4);
+      const regenRate = (8 + Math.min(12, (timeSinceDmg - 5) * 4)) * (getActivePerkHooks().healthRegenMul ?? 1);
       gameState.pHP = Math.min(100, gameState.pHP + dt * regenRate);
       player.hp = gameState.pHP;
       regenApplied = true;

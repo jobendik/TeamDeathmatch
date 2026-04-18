@@ -10,6 +10,7 @@ import { rollChallenges } from '@/ui/Challenges';
 import { resetMatchMedals } from '@/ui/Medals';
 import { rebuildWaypoints } from '@/ui/Waypoints';
 import { startDynamicMusic, playMusicState, stopDynamicMusic } from '@/audio/DynamicMusic';
+import { playMatchIntro } from '@/ui/MatchIntro';
 
 function setMainMenuVisible(on: boolean): void {
   dom.mainMenu.classList.toggle('on', on);
@@ -36,6 +37,17 @@ export async function startMatchFromMenu(): Promise<void> {
     resetMatch(mode);
     resetMatchMedals();
     rollChallenges(3);
+    if (mode !== 'training') {
+      const blueAgents = gameState.agents.filter(a => a.team === 0).slice(0, 6);
+      const redAgents  = gameState.agents.filter(a => a.team === 1).slice(0, 6);
+      await playMatchIntro({
+        mapName:   'Arena',
+        modeLabel: getModeLabel(mode),
+        teamBlue:  blueAgents.map(a => ({ name: a.name, level: 1, isPlayer: a === gameState.player })),
+        teamRed:   redAgents.map(a  => ({ name: a.name, level: 1 })),
+        camera:    gameState.camera,
+      });
+    }
   }
 
   rebuildWaypoints();
@@ -93,6 +105,11 @@ const MODE_DESCRIPTIONS: Record<GameMode, string> = {
   ctf: 'Capture The Flag — steal the enemy flag and bring it home.',
   elimination: 'Elimination — no respawns. Last team alive wins the round. First to 3.',
   br: 'Battle Royale — large map, loot weapons, last one standing wins.',
+  domination: 'Domination — capture and hold three flags to earn points.',
+  hardpoint: 'Hardpoint — hold the rotating zone to score for your team.',
+  koth: 'King of the Hill — control the hill to earn points. First to 200.',
+  sd: 'Search & Destroy — attack or defend bomb sites. No respawns.',
+  training: 'Training Range — practice your aim and test weapons.',
 };
 
 function updateMenuCopy(): void {

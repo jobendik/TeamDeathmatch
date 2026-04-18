@@ -18,6 +18,7 @@ import { FP } from '@/config/player';
 import { WEAPONS } from '@/config/weapons';
 import { playJump, playLand, playSlide, playFootstep, detectSurface } from '@/audio/SoundHooks';
 import { dealDmgPlayer } from '@/combat/Combat';
+import { getActivePerkHooks } from '@/config/Loadouts';
 import { getFloorY } from '@/entities/Player';
 import { shakeOnLand } from '@/movement/CameraShake';
 
@@ -58,6 +59,7 @@ export interface MovementState {
 
   cameraOffsetX: number;    // for lean
   cameraTilt: number;       // for lean roll
+  moveSpeedMulOverride: number;  // override speed multiplier (field upgrades)
 }
 
 export const movement: MovementState = {
@@ -97,6 +99,7 @@ export const movement: MovementState = {
 
   cameraOffsetX: 0,
   cameraTilt: 0,
+  moveSpeedMulOverride: 1,
 };
 
 // ── Tunables ──
@@ -265,6 +268,7 @@ export function updateMovement(dt: number): {
 } {
   const { keys } = gameState;
   let jumped = false;
+  const _perkHooks = getActivePerkHooks();
 
   // ── Sprint detection ──
   // ── Slide cooldown ──
@@ -341,7 +345,7 @@ export function updateMovement(dt: number): {
       const baseSpeed = movement.isSprinting
         ? (movement.isTacSprinting ? FP.sprintSpeed * 1.25 : FP.sprintSpeed)
         : FP.moveSpeed;
-      const spd = baseSpeed * getSpeedMultiplier();
+      const spd = baseSpeed * getSpeedMultiplier() * (_perkHooks.moveSpeedMul ?? 1) * movement.moveSpeedMulOverride;
       let mx = (-Math.sin(gameState.cameraYaw)) * forward + (Math.cos(gameState.cameraYaw)) * strafe;
       let mz = (-Math.cos(gameState.cameraYaw)) * forward + (-Math.sin(gameState.cameraYaw)) * strafe;
       const len = Math.hypot(mx, mz) || 1;
@@ -367,7 +371,7 @@ export function updateMovement(dt: number): {
   movement.jumpBuffer = Math.max(0, movement.jumpBuffer - dt);
 
   if (movement.jumpBuffer > 0 && movement.coyoteTimer > 0 && !movement.isCrouching && !movement.isSliding) {
-    gameState.pVelY = FP.jumpVelocity;
+    gameState.pVelY = FP.jumpVelocity * (_perkHooks.jumpHeightMul ?? 1);
     movement.jumpBuffer = 0;
     movement.coyoteTimer = 0;
     jumped = true;
@@ -387,7 +391,7 @@ export function updateMovement(dt: number): {
     }
     // Fall damage: anything above 5m deals increasing damage
     if (fallDist > 5) {
-      const fallDmg = Math.round((fallDist - 5) * 10);
+      const fallDmg = Math.round((fallDist - 5) * 10 * (_perkHooks.fallDamageMul ?? 1));
       dealDmgPlayer(fallDmg, null);
     }
     movement.airTime = 0;

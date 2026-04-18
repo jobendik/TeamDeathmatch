@@ -45,10 +45,26 @@ import { updatePlayerRecoilRecovery } from '@/combat/Recoil';
 import { updateSuppression } from '@/combat/Suppression';
 import { updateHitReactions } from '@/combat/HitReactions';
 import { updateDynamicMusic } from '@/audio/DynamicMusic';
+import { updateAnnouncerVoices } from '@/audio/AnnouncerVoices';
 import { updateCameraShake, updateLowHpShake } from '@/movement/CameraShake';
 import * as brModule from '@/br/BRController';
 import * as brHudModule from '@/br/BRHUD';
 import * as brInvModule from '@/br/InventoryUI';
+
+// MORESCRIPTS — new system imports
+import { updateRagdolls } from '@/rendering/RagdollSystem';
+import { pollFinisherInput, updateFinisher, updateFinisherPrompt } from '@/combat/Finishers';
+import { updateDynamicWeather } from '@/world/DynamicWeather';
+import { updateContractHud } from '@/ui/ContractSystem';
+import { updateFieldUpgrade } from '@/combat/FieldUpgradeController';
+import { updateDomination } from '@/combat/Domination';
+import { updateHardpoint } from '@/combat/Hardpoint';
+import { updateKoth } from '@/combat/KingOfTheHill';
+import { updateSd } from '@/combat/Searchanddestroy';
+import { updateSprays } from '@/ui/Emotes';
+import { updatePingSystem } from '@/ui/CommWheel';
+import { updateOverlay as updateADSOverlay } from '@/combat/EnhancedADS';
+import { isInTrainingRange, updateTrainingRange } from '@/combat/TrainingRange';
 
 let _hudThrottle = 0;
 let _minimapThrottle = 0;
@@ -94,6 +110,8 @@ export function animate(): void {
   } else if (!gameState.pDead && (gameState.worldElapsed - gameState.lastPlayerKillTime) < 0.2) {
     slowMo = 0.6;
   }
+  // Apply global timeScale (used by finisher system for cinematic slow-mo)
+  slowMo *= (gameState.timeScale ?? 1);
   const dt = frozen ? 0 : rawDt * slowMo;
   const isBR = gameState.mode === 'br';
 
@@ -172,6 +190,15 @@ export function animate(): void {
 
     if (!brOnPlane) {
       gameState.entityManager.update(dt);
+      gameState.pathPlanner?.update();
+
+      // Post-movement navmesh clamp — MUST run after entityManager moves entities.
+      // Running it before (e.g. inside updateAI) clamps the pre-movement position,
+      // which is a no-op; YUKA then moves the bot to an unclamped position.
+      for (const ag of gameState.agents) {
+        if (!ag.active || ag.isDead || ag === gameState.player) continue;
+        ag.navRuntime?.update();
+      }
     }
 
     // keepInside is cheap per-call but iterates arena colliders each time.
@@ -187,6 +214,27 @@ export function animate(): void {
     updateHitReactions(dt);
     updatePlayerRecoilRecovery(dt);
     updateDynamicMusic(dt);
+    updateAnnouncerVoices(dt);
+
+    // MORESCRIPTS — new system updates
+    updateRagdolls(dt);
+    pollFinisherInput();
+    updateFinisher(dt);
+    updateFinisherPrompt();
+    updateDynamicWeather(dt, gameState.camera.position);
+    updateFieldUpgrade(dt);
+    updateSprays();
+    updatePingSystem(dt, gameState.camera as any);
+
+    // Mode-specific updates
+    if (gameState.mode === 'domination') updateDomination(dt);
+    else if (gameState.mode === 'hardpoint') updateHardpoint(dt);
+    else if (gameState.mode === 'koth') updateKoth(dt);
+    else if (gameState.mode === 'sd') updateSd(dt);
+
+    updateContractHud();
+    updateADSOverlay();
+    if (isInTrainingRange()) updateTrainingRange(dt);
 
     if (brOnPlane) {
       // Plane window: nothing agent-related runs. Bots are inactive,

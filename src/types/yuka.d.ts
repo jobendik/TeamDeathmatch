@@ -22,6 +22,7 @@ declare module 'yuka' {
     dot(v: Vector3): number;
     length(): number;
     distanceTo(v: Vector3): number;
+    squaredDistanceTo(v: Vector3): number;
     applyRotation(q: Quaternion): this;
   }
 
@@ -69,6 +70,7 @@ declare module 'yuka' {
   // ── Steering ──
 
   export class SteeringManager {
+    behaviors: SteeringBehavior[];
     add(behavior: SteeringBehavior): this;
     remove(behavior: SteeringBehavior): this;
   }
@@ -111,7 +113,53 @@ declare module 'yuka' {
     constructor(obstacles?: GameEntity[]);
   }
 
+  export class Path {
+    add(waypoint: Vector3): this;
+    clear(): this;
+    current(): Vector3;
+    advance(): void;
+    finished(): boolean;
+    waypoints: Vector3[];
+  }
+
+  export class FollowPathBehavior extends SteeringBehavior {
+    path: Path;
+    nextWaypointDistance: number;
+    constructor(path?: Path, nextWaypointDistance?: number);
+  }
+
+  export class OnPathBehavior extends SteeringBehavior {
+    path: Path;
+    radius: number;
+    constructor(path?: Path, radius?: number);
+  }
+
+  // ── NavMesh ──
+
+  export class NavMeshLoader {
+    load(url: string, options?: any): Promise<NavMesh>;
+  }
+
+  export class NavMesh {
+    regions: any[];
+    getRegionForPoint(point: Vector3, epsilon?: number): any;
+    findPath(from: Vector3, to: Vector3): Vector3[];
+    clampMovement(currentRegion: any, previousPosition: Vector3, currentPosition: Vector3, finalPosition: Vector3): any;
+  }
+
+  // ── TaskQueue ──
+
+  export class Task {
+    execute(): void;
+  }
+
+  export class TaskQueue {
+    enqueue(task: Task): void;
+    update(): void;
+  }
+
   // ── FSM ──
+
 
   export class State<T = any> {
     enter(owner: T): void;

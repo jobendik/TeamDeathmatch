@@ -1,0 +1,9 @@
+export const NAV_CONFIG = {
+  NEXT_WAYPOINT_DISTANCE: 0.5,
+  ARRIVE_DECELERATION: 2,
+  ARRIVE_TOLERANCE: 1.0,
+  PATH_RADIUS: 0.1,
+  ON_PATH_WEIGHT: 1.0,
+  HEIGHT_CHANGE_FACTOR: 0.2, // Amount of height correction per frame
+  REGION_EPSILON: 1.0
+} as const;

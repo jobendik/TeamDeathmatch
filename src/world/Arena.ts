@@ -320,8 +320,10 @@ function addPillar(x: number, y: number, z: number, r: number): void {
   mesh.add(baseRing);
 
   wallMeshes.push(mesh);
-  colliders.push({ type: 'circle', x, z, r: r + FP.playerRadius });
-  arenaColliders.push({ type: 'circle', x, z, r: r + 0.35 });
+  // Use the wider BASE radius (r * 1.08) so the collision boundary aligns with
+  // the visible tapered base of the cylinder, not the narrower top radius.
+  colliders.push({ type: 'circle', x, z, r: r * 1.08 + FP.playerRadius });
+  arenaColliders.push({ type: 'circle', x, z, r: r * 1.08 + 0.35 });
 
   const ob = new YUKA.GameEntity();
   ob.position.set(x, 0.5, z);

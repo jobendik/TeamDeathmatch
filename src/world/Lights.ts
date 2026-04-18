@@ -28,6 +28,9 @@ let _ambient: THREE.AmbientLight;
 let _hemi: THREE.HemisphereLight;
 const _pointLights: THREE.PointLight[] = [];
 
+export function getSunLight(): THREE.DirectionalLight { return _sun; }
+export function getAmbientLight(): THREE.AmbientLight { return _ambient; }
+
 export function buildLights(): void {
   const { scene } = gameState;
 

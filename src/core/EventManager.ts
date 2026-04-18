@@ -20,6 +20,9 @@ import { shakeOnShot } from '@/movement/CameraShake';
 import { startBRMatch } from '@/br/BRController';
 import { playerVehicle, exitVehicle, findNearbyVehicle, enterVehicle } from '@/br/Vehicles';
 import { fireDeferredPing } from '@/ui/PingSystem';
+import { beginADS, endADS, adsAccuracyMul } from '@/combat/EnhancedADS';
+import { getActivePerkHooks } from '@/config/Loadouts';
+import { isInTrainingRange, recordShotFired } from '@/combat/TrainingRange';
 
 let lastShiftPressTime = 0;
 
@@ -113,10 +116,10 @@ function startReload(): void {
   gameState.pReloadTimer = 0;
   // Tactical reload (mag not empty) is 25% faster than empty reload
   const tacMul = gameState.pAmmo > 0 ? 0.75 : 1.0;
-  let reloadMul = 1;
+  let reloadMul = getActivePerkHooks().reloadMul ?? 1;
   if (gameState.mode === 'br') {
     const inv = getPlayerInventory();
-    if (inv) reloadMul = getAttachmentModifiers(inv).reloadMul;
+    if (inv) reloadMul *= getAttachmentModifiers(inv).reloadMul;
   }
   gameState.pReloadDuration = wep.reloadTime * tacMul * reloadMul;
   dom.reloadBar.classList.add('on');
@@ -197,7 +200,9 @@ export function onShoot(): void {
   const originKind = pWeaponId === 'rocket_launcher' ? 'projectile' : 'hitscan';
   const o = getShotOrigin(originKind);
   const dir = aimPoint.clone().sub(o).normalize();
-  const errMul = gameState.isADS ? 0.35 : gameState.keys.shift ? 1.35 : 1.0;
+  // Training range shot tracking
+  if (isInTrainingRange()) recordShotFired();
+  const errMul = gameState.isADS ? adsAccuracyMul() : gameState.keys.shift ? 1.35 : 1.0;
   const firstShotBonus = (gameState.pAmmo === gameState.pMaxAmmo || gameState.pFirstShotReady) ? 0.5 : 1;
   const spreadAccum = gameState.pSpreadAccum;
   const suppressMul = getSuppressionSpreadMul();
@@ -447,7 +452,7 @@ export function bindEvents(): void {
       return;
     }
     if (e.button === 2) {
-      if (gameState.pWeaponId !== 'knife' && gameState.pWeaponId !== 'unarmed') gameState.isADS = true;
+      if (gameState.pWeaponId !== 'knife' && gameState.pWeaponId !== 'unarmed') beginADS(gameState.pWeaponId);
       return;
     }
     if (e.button !== 0) return;
@@ -460,7 +465,7 @@ export function bindEvents(): void {
       gameState.mouseHeld = false;
       gameState.pFirstShotReady = true;
     }
-    if (e.button === 2) gameState.isADS = false;
+    if (e.button === 2) { endADS(); return; }
   });
 
   dom.lockHint.addEventListener('click', () => requestMouseLock());

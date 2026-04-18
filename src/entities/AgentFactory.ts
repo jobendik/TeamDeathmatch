@@ -12,6 +12,7 @@ import { FP } from '@/config/player';
 import { buildSoldierMesh } from '@/rendering/SoldierMesh';
 import { makeNameTag } from '@/rendering/NameTag';
 import { addHPBar } from '@/rendering/HPBar';
+import { NavAgentRuntime } from '@/ai/navigation/NavAgentRuntime';
 import { setupFuzzy } from '@/ai/FuzzyLogic';
 import { makePersonality } from '@/ai/Personality';
 import {
@@ -86,6 +87,10 @@ function mkAgent(
   ag.steering.add(ag.fleeB);
   ag.steering.add(ag.pursuitB);
   ag.steering.add(ag.avoidB);
+
+  // Setup NavMesh proper runtime
+  ag.navRuntime = new NavAgentRuntime(ag, gameState.navMeshManager);
+  ag.navRuntime.initFromSpawn(ag.spawnPos);
 
   ag.wanderB.weight = 1;
   ag.arriveB.weight = 0;

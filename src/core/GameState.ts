@@ -4,6 +4,8 @@ import type { TDMAgent } from '@/entities/TDMAgent';
 import type { WeaponId } from '@/config/weapons';
 import type { BotClass } from '@/config/classes';
 import type { GameMode } from './GameModes';
+import { NavMeshManager } from '@/ai/navigation/NavMeshManager';
+import { AsyncPathPlanner } from '@/ai/navigation/PathPlanner';
 
 // ────────────────────────────────────────────
 //  Shared type definitions
@@ -116,6 +118,10 @@ export const gameState = {
   raycaster: null as unknown as THREE.Raycaster,
   time: null as unknown as YUKA.Time,
   entityManager: null as unknown as YUKA.EntityManager,
+
+  // Navigation
+  navMeshManager: new NavMeshManager(),
+  pathPlanner: null as AsyncPathPlanner | null,
 
   // Viewmodel
 
@@ -268,4 +274,10 @@ export const gameState = {
   potgBestScore: 0,
   potgBestAgent: null as TDMAgent | null,
   potgBestTime: 0,
+
+  // Finisher / time-scale state (MORESCRIPTS integration)
+  timeScale: 1,
+  _finisherLockMovement: false,
+  _tutorialGrenadeThrown: false,
+  _introActive: false,
 };

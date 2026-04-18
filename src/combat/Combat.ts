@@ -13,7 +13,11 @@ import { updateHUD, flashDmg } from '@/ui/HUD';
 import { updateScoreboard } from '@/ui/Scoreboard';
 import { addKillfeedEntry } from '@/ui/Killfeed';
 import { showKillNotif } from '@/ui/KillNotification';
-import { resetAgentAnimation, playAgentDeathAnimation } from '@/rendering/AgentAnimations';
+import {
+  resetAgentAnimation, playAgentDeathAnimation,
+  hasBlueSwatAssets, hasEnemyAssets,
+  attachBlueSwatCharacter, attachEnemyCharacter,
+} from '@/rendering/AgentAnimations';
 import { CLASS_DEFAULT_WEAPON, WEAPONS, type WeaponId } from '@/config/weapons';
 import { dom } from '@/ui/DOMElements';
 import { showRoundSummary } from '@/ui/RoundSummary';
@@ -42,6 +46,15 @@ import { clearFootstepTimers } from '@/ai/AIController';
 import { movement } from '@/movement/MovementController';
 import { applyRandomWeather } from '@/world/Lights';
 import { shakeOnHit, shakeOnDeath, clearAllShake } from '@/movement/CameraShake';
+import { resetAnnouncerState } from '@/audio/AnnouncerVoices';
+
+// MORESCRIPTS — progression + new systems
+import { awardAccountXP, awardWeaponXP, profileMutate } from '@/core/PlayerProfile';
+import { reportContractEvent } from '@/ui/ContractSystem';
+import { onPlayerKillForFieldUpgrade, chargeFromEvent } from '@/combat/FieldUpgradeController';
+import { spawnRagdoll } from '@/rendering/RagdollSystem';
+import { BotVoice } from '@/ai/BotVoice';
+import { getActivePerkHooks } from '@/config/Loadouts';
 
 const STREAK_NAMES: Record<number, string> = {
   3: 'KILLING SPREE',
@@ -182,6 +195,13 @@ export function dealDmgPlayer(dmg: number, attacker: TDMAgent | null = null): vo
   if (isPlayerInAir()) return; // invulnerable during BR drop
   // Spawn protection — immune for brief window after respawn
   if (gameState.worldElapsed < gameState.pSpawnProtectUntil) return;
+
+  // Perk damage resistance
+  const _perkHooks = getActivePerkHooks();
+  dmg = dmg * (_perkHooks.damageResistMul ?? 1);
+
+  // MORESCRIPTS — field upgrade charge from taking damage
+  chargeFromEvent('damage_taken', dmg);
   gameState.pHP = Math.max(0, gameState.pHP - dmg);
   gameState.player.hp = gameState.pHP;
   updateHUD();
@@ -342,9 +362,38 @@ function killAgent(ag: TDMAgent, attacker: TDMAgent | null): void {
   ag.deaths++;
   flushAssists(ag, attacker);
   ag.respawnAt = gameState.worldElapsed + RESPAWN_TIME + Math.random() * 2;
-  const deathDur = playAgentDeathAnimation(ag.renderComponent);
-  const rc = ag.renderComponent!;
-  setTimeout(() => { if (ag.isDead) rc.visible = false; }, deathDur * 1000);
+  // Ragdoll physics — detach the FBX character model from the agent root group before
+  // handing it to the ragdoll system. This prevents disposeRig() from removing/corrupting
+  // ag.renderComponent (which holds the HP bar, name tag, and is needed for respawning).
+  const _rdCharModel = ag.renderComponent?.userData.characterModel as THREE.Group | undefined;
+  if (ag.renderComponent && attacker && _rdCharModel) {
+    const impulseDir = new THREE.Vector3().subVectors(
+      new THREE.Vector3(ag.position.x, 0.5, ag.position.z),
+      new THREE.Vector3(attacker.position.x, 0.5, attacker.position.z),
+    ).normalize();
+    // Capture world transform before detach so the ragdoll spawns at the right place
+    const _rdPos = new THREE.Vector3();
+    const _rdQuat = new THREE.Quaternion();
+    ag.renderComponent.getWorldPosition(_rdPos);
+    ag.renderComponent.getWorldQuaternion(_rdQuat);
+    // Detach from agent root — ragdoll system now fully owns this mesh
+    ag.renderComponent.remove(_rdCharModel);
+    ag.renderComponent.userData.characterModel = null;
+    ag.renderComponent.userData.agentAnimController = null;
+    gameState.scene.add(_rdCharModel);
+    _rdCharModel.position.copy(_rdPos);
+    _rdCharModel.quaternion.copy(_rdQuat);
+    spawnRagdoll(_rdCharModel, impulseDir, 18, Boolean((ag as any)._lastHitWasHeadshot));
+  } else {
+    const deathDur = playAgentDeathAnimation(ag.renderComponent);
+    const rc = ag.renderComponent!;
+    setTimeout(() => { if (ag.isDead) rc.visible = false; }, deathDur * 1000);
+  }
+
+  // BotVoice — victim death callout
+  if (ag !== gameState.player as any) {
+    BotVoice.onDeath({ id: ag.name, name: ag.name, team: ag.team === 0 ? 'blue' : 'red', position: new THREE.Vector3(ag.position.x, 0, ag.position.z) });
+  }
   spawnDeath(new THREE.Vector3(ag.position.x, 0.5, ag.position.z), TEAM_COLORS[ag.team]);
   ag.confidence = Math.max(10, ag.confidence - 15);
   ag.killStreak = 0;
@@ -408,6 +457,36 @@ function killAgent(ag: TDMAgent, attacker: TDMAgent | null): void {
       new THREE.Vector3(ag.position.x, 1.8, ag.position.z),
       { amount: 0, isKill: true },
     );
+
+    // MORESCRIPTS — XP + progression tracking
+    let xp = 100;
+    if (wasHeadshot) xp += 50;
+    if (distance > 50) xp += 75;
+    awardAccountXP(xp, 'kill');
+    awardWeaponXP(attacker.weaponId, wasHeadshot ? 20 : 10);
+
+    // Contract events
+    reportContractEvent({ type: 'kill' });
+    if (wasHeadshot) reportContractEvent({ type: 'headshot_kill' });
+    if (distance > 50) reportContractEvent({ type: 'long_range_kill', data: { distance } });
+    if (distance < 4) reportContractEvent({ type: 'point_blank_kill' });
+    reportContractEvent({ type: 'weapon_kill', data: { weaponId: attacker.weaponId } });
+
+    // Field upgrade charge
+    onPlayerKillForFieldUpgrade();
+    chargeFromEvent('kill', 1);
+
+    // BotVoice — bot attacker kill callout
+    if (attacker && attacker !== gameState.player as any) {
+      BotVoice.onKill({ id: attacker.name, name: attacker.name, team: attacker.team === 0 ? 'blue' : 'red', position: new THREE.Vector3(attacker.position.x, 0, attacker.position.z) }, wasHeadshot, false, false);
+    }
+
+    // Career stat tracking
+    profileMutate((p) => {
+      p.career.totalKills++;
+      if (wasHeadshot) p.career.totalHeadshots++;
+      if (distance > (p.career.longestKillDistance ?? 0)) p.career.longestKillDistance = distance;
+    });
   }
   addKillfeedEntry(
     attacker ? attacker.name : 'Unknown',
@@ -468,6 +547,24 @@ export function respawnAgent(ag: TDMAgent): void {
   ag.renderComponent!.visible = true;
   ag.renderComponent!.position.set(sp[0], 0, sp[2]);
   resetAgentAnimation(ag.renderComponent!);
+  // Re-attach character model if it was detached for ragdoll physics
+  if (ag.renderComponent && !ag.renderComponent.userData.characterModel) {
+    if (ag.team === TEAM_BLUE && hasBlueSwatAssets()) {
+      attachBlueSwatCharacter(ag.renderComponent as THREE.Group);
+    } else if (ag.team === TEAM_RED && hasEnemyAssets()) {
+      attachEnemyCharacter(ag.renderComponent as THREE.Group);
+    }
+  }
+  // Reset nav state so the clamp doesn't try to bridge from the death position to the
+  // respawn position (previously caused agents to teleport or snap to wrong locations).
+  if (ag.navRuntime) {
+    ag.navRuntime.previousPosition.set(sp[0], 0, sp[2]);
+    ag.navRuntime.currentPosition.set(sp[0], 0, sp[2]);
+    ag.navRuntime.clearPath();
+    if (ag.navRuntime.navManager.navMesh) {
+      ag.navRuntime.currentRegion = ag.navRuntime.navManager.getRegionForPoint(ag.position, 3);
+    }
+  }
   // Spawn protection for bots (2 seconds)
   (ag as any)._spawnProtectUntil = gameState.worldElapsed + 2;
 
@@ -603,6 +700,12 @@ function checkGameEnd(): void {
 
 export function resetMatch(mode = gameState.mode): void {
   gameState.mode = mode;
+  if (mode === 'tdm' || mode === 'elimination' || mode === 'ffa') {
+    import('@/audio/AudioManager').then(({ Audio }) => {
+      const intros = ['announcer_tdm', 'announcer_eliminate', 'announcer_secure', 'announcer_green'];
+      Audio.play(intros[Math.floor(Math.random() * intros.length)]);
+    });
+  }
   gameState.roundOver = false;
   gameState.overtime = false;
   gameState.warmupTimer = mode === 'br' ? 0 : 3;
@@ -635,6 +738,7 @@ export function resetMatch(mode = gameState.mode): void {
   resetHitscanState();
   clearFootstepTimers();
   clearAllShake();
+  resetAnnouncerState();
 
   if (gameState.pDead) {
     gameState.pDead = false;

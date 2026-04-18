@@ -71,6 +71,10 @@ export function awardMedal(id: MedalId): void {
   fireChallengeEvent({ type: 'medal', id });
   playMedalSound(def.tier);
 
+  if (id === 'multi_kill') import('@/audio/AudioManager').then(({ Audio }) => Audio.play('announcer_double_kill'));
+  if (id === 'triple_kill') import('@/audio/AudioManager').then(({ Audio }) => Audio.play('announcer_triple_kill'));
+  if (id === 'quad_kill' || id === 'ace') import('@/audio/AudioManager').then(({ Audio }) => Audio.play('announcer_overkill'));
+
   const ticker = ensureTicker();
   const item = document.createElement('div');
   item.className = `medal-item medal-${def.tier}`;

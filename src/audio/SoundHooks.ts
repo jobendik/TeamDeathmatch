@@ -201,3 +201,29 @@ export function updateHeartbeat(dt: number): void {
     hbTimer = 0;
   }
 }
+
+// ── MORESCRIPTS — new sound stubs ──
+
+export function playADSIn(): void {
+  Audio.play('ads_in', { volume: 0.4 });
+}
+
+export function playThunder(): void {
+  Audio.play('thunder', { volume: 0.85 });
+}
+
+export function playCapture(): void {
+  Audio.play('capture', { volume: 0.7 });
+}
+
+export function playObjective(): void {
+  Audio.play('objective_change', { volume: 0.7 });
+}
+
+export function playMelee(): void {
+  Audio.play('melee', { volume: 0.85 });
+}
+
+export function playHeadshot(): void {
+  Audio.play('headshot_ding', { volume: 0.55 });
+}

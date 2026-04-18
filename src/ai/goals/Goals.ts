@@ -23,38 +23,43 @@ export class PatrolGoal extends YUKA.Goal<TDMAgent> {
     ag.stateName = 'PATROL';
     ag.stateTime = 0;
     this.origSpeed = ag.maxSpeed;
-    // Sprint while patrolling (personality-influenced)
     const sprintMul = ag.personality ? 1.15 + ag.personality.aggressionBias * 0.15 : 1.2;
     ag.maxSpeed *= sprintMul;
-    // Try to pick a strategic position instead of random wandering
+
     this.strategicTarget = getPreferredPosition(ag);
+    if (this.strategicTarget && gameState.pathPlanner) {
+      ag.navRuntime.pathPending = true;
+      gameState.pathPlanner.findPath(ag, ag.position, this.strategicTarget, (vehicle: TDMAgent, path) => {
+        vehicle.navRuntime.applyPath(path);
+      });
+    }
     this.status = YUKA.Goal.STATUS.ACTIVE;
   }
   execute(): void {
     const ag = this.owner;
 
     if (this.strategicTarget) {
-      // Move toward strategic position
-      if (ag.wanderB) ag.wanderB.weight = 0;
+      // Suppress wander only while a navmesh path is actively being followed.
+      // While the async path is pending, keep wander on so the bot isn't frozen.
+      if (ag.wanderB) ag.wanderB.weight = ag.navRuntime.path ? 0 : 1.0;
       if (ag.pursuitB) ag.pursuitB.weight = 0;
       if (ag.fleeB) ag.fleeB.weight = 0;
-      if (ag.arriveB) {
-        ag.arriveB.weight = 1.2;
-        (ag.arriveB as any).target.copy(this.strategicTarget);
-      }
+      if (ag.arriveB) ag.arriveB.weight = 0;
       if (ag.seekB) ag.seekB.weight = 0;
 
-      // Reached strategic position — pick a new one or wander briefly
-      if (ag.position.distanceTo(this.strategicTarget) < 4) {
+      // When path is done (or failed), pick a new one
+      if (!ag.navRuntime.path && !ag.navRuntime.pathPending) {
         this.strategicTarget = getPreferredPosition(ag);
-        if (!this.strategicTarget) {
-          // Briefly wander before picking a new point
-          if (ag.arriveB) ag.arriveB.weight = 0;
+        if (this.strategicTarget && gameState.pathPlanner) {
+          ag.navRuntime.pathPending = true;
+          gameState.pathPlanner.findPath(ag, ag.position, this.strategicTarget, (vehicle: TDMAgent, path) => {
+            vehicle.navRuntime.applyPath(path);
+          });
+        } else {
           if (ag.wanderB) ag.wanderB.weight = 1.0;
         }
       }
     } else {
-      // Fallback: random wander
       if (ag.wanderB) ag.wanderB.weight = 1.0;
       if (ag.seekB) ag.seekB.weight = 0;
       if (ag.arriveB) ag.arriveB.weight = 0;
@@ -70,8 +75,8 @@ export class PatrolGoal extends YUKA.Goal<TDMAgent> {
   }
   terminate(): void {
     const ag = this.owner;
+    ag.navRuntime.clearPath();
     if (ag.wanderB) ag.wanderB.weight = 0;
-    if (ag.arriveB) ag.arriveB.weight = 0;
     const cfg = CLASS_CONFIGS[ag.botClass];
     if (cfg) ag.maxSpeed = cfg.maxSpeed;
     this.status = YUKA.Goal.STATUS.COMPLETED;
@@ -90,33 +95,34 @@ export class MoveToPositionGoal extends YUKA.Goal<TDMAgent> {
     const ag = this.owner;
     ag.stateName = 'INVESTIGATE';
     ag.stateTime = 0;
-    if (isInsideWall(this.targetPos.x, this.targetPos.z)) {
-      const safe = pushOutOfWall(this.targetPos.x, this.targetPos.z);
-      this.targetPos.x = safe.x;
-      this.targetPos.z = safe.z;
+    if (gameState.pathPlanner) {
+      ag.navRuntime.pathPending = true;
+      gameState.pathPlanner.findPath(ag, ag.position, this.targetPos, (vehicle: TDMAgent, path) => {
+        vehicle.navRuntime.applyPath(path);
+      });
     }
     this.status = YUKA.Goal.STATUS.ACTIVE;
   }
 
   execute(): void {
     const ag = this.owner;
-    if (ag.wanderB) ag.wanderB.weight = 0;
+    if (ag.wanderB) ag.wanderB.weight = ag.navRuntime.path ? 0 : 1.0;
     if (ag.pursuitB) ag.pursuitB.weight = 0;
     if (ag.fleeB) ag.fleeB.weight = 0;
     if (ag.seekB) ag.seekB.weight = 0;
-    if (ag.arriveB) {
-      ag.arriveB.weight = 1.3;
-      (ag.arriveB as any).target.copy(this.targetPos);
-    }
+    if (ag.arriveB) ag.arriveB.weight = 0;
 
-    if (ag.position.distanceTo(this.targetPos) < 3) {
+    if (!ag.navRuntime.path && !ag.navRuntime.pathPending) {
       this.status = YUKA.Goal.STATUS.COMPLETED;
+    }
+    if (ag.stateTime > 8) {
+      this.status = YUKA.Goal.STATUS.COMPLETED; // timeout fallback
     }
   }
 
   terminate(): void {
     const ag = this.owner;
-    if (ag.arriveB) ag.arriveB.weight = 0;
+    ag.navRuntime.clearPath();
     this.status = YUKA.Goal.STATUS.COMPLETED;
   }
 }
@@ -193,11 +199,17 @@ export class RetreatGoal extends YUKA.Goal<TDMAgent> {
     ag.stateName = 'RETREAT';
     ag.stateTime = 0;
     this.origSpeed = ag.maxSpeed;
-    // Retreat speed scales with pressure urgency
     ag.maxSpeed *= 1.15 + ag.pressureLevel * 0.15;
     if (ag.currentTarget) {
       const cover = findCoverFrom(ag, ag.currentTarget.position);
       if (cover) ag.currentCover = cover;
+    }
+    const targetPos = ag.currentCover || ag.spawnPos;
+    if (gameState.pathPlanner) {
+      ag.navRuntime.pathPending = true;
+      gameState.pathPlanner.findPath(ag, ag.position, targetPos, (vehicle: TDMAgent, path) => {
+        vehicle.navRuntime.applyPath(path);
+      });
     }
     this.status = YUKA.Goal.STATUS.ACTIVE;
   }
@@ -206,47 +218,33 @@ export class RetreatGoal extends YUKA.Goal<TDMAgent> {
     const ag = this.owner;
     if (ag.wanderB) ag.wanderB.weight = 0;
     if (ag.pursuitB) ag.pursuitB.weight = 0;
-
-    if (ag.arriveB) {
-      ag.arriveB.weight = 1.5;
-      if (ag.currentCover) {
-        (ag.arriveB as any).target.copy(ag.currentCover);
+    if (ag.arriveB) ag.arriveB.weight = 0;
+    // While path is pending, seek directly toward cover so the bot moves under fire
+    const retreatTarget = ag.currentCover || ag.spawnPos;
+    if (ag.seekB) {
+      if (ag.navRuntime.path) {
+        ag.seekB.weight = 0;
       } else {
-        (ag.arriveB as any).target.copy(ag.spawnPos);
+        (ag.seekB as any).target.copy(retreatTarget);
+        ag.seekB.weight = 1.5;
       }
     }
 
-    if (ag.seekB && ag.currentTarget) {
-      const away = _goalTemp.subVectors(ag.position, ag.currentTarget.position).normalize();
-      const perpX = -away.z * ag.strafeDir;
-      const perpZ = away.x * ag.strafeDir;
-      let rx = ag.position.x + perpX * 7 + away.x * 4;
-      let rz = ag.position.z + perpZ * 7 + away.z * 4;
-      if (isInsideWall(rx, rz)) {
-        const safe = pushOutOfWall(rx, rz);
-        rx = safe.x;
-        rz = safe.z;
+    if (!ag.navRuntime.path && !ag.navRuntime.pathPending) {
+      if (ag.position.distanceTo(retreatTarget) < 3 || ag.stateTime > 5) {
+        this.status = YUKA.Goal.STATUS.COMPLETED;
       }
-      (ag.seekB as any).target.set(rx, 0, rz);
-      ag.seekB.weight = 0.8;
-    } else if (ag.seekB) {
-      ag.seekB.weight = 0;
     }
-
-    if (ag.currentCover && ag.position.distanceTo(ag.currentCover) < 3) {
-      this.status = YUKA.Goal.STATUS.COMPLETED;
-    }
-    if (ag.stateTime > 5) {
+    if (ag.stateTime > 8) {
       this.status = YUKA.Goal.STATUS.COMPLETED;
     }
   }
 
   terminate(): void {
     const ag = this.owner;
+    ag.navRuntime.clearPath();
     const cfg = CLASS_CONFIGS[ag.botClass];
     if (cfg) ag.maxSpeed = cfg.maxSpeed;
-    if (ag.seekB) ag.seekB.weight = 0;
-    if (ag.arriveB) ag.arriveB.weight = 0;
     this.status = YUKA.Goal.STATUS.COMPLETED;
   }
 }
@@ -264,21 +262,23 @@ export class TakeCoverGoal extends YUKA.Goal<TDMAgent> {
     ag.stateName = 'COVER';
     ag.stateTime = 0;
     ag.isBotCrouching = true;
+    if (ag.currentCover && gameState.pathPlanner) {
+      ag.navRuntime.pathPending = true;
+      gameState.pathPlanner.findPath(ag, ag.position, ag.currentCover, (vehicle: TDMAgent, path) => {
+        vehicle.navRuntime.applyPath(path);
+      });
+    }
     this.status = YUKA.Goal.STATUS.ACTIVE;
   }
 
   execute(): void {
     const ag = this.owner;
-    if (ag.wanderB) ag.wanderB.weight = 0;
+    if (ag.wanderB) ag.wanderB.weight = ag.navRuntime.path ? 0 : 1.0;
     if (ag.pursuitB) ag.pursuitB.weight = 0;
     if (ag.fleeB) ag.fleeB.weight = 0;
     if (ag.seekB) ag.seekB.weight = 0;
-    if (ag.arriveB) {
-      ag.arriveB.weight = 1.4;
-      if (ag.currentCover) (ag.arriveB as any).target.copy(ag.currentCover);
-    }
+    if (ag.arriveB) ag.arriveB.weight = 0;
 
-    // Under pressure: stay in cover longer
     const effectiveDuration = this.duration + (ag.underPressure ? ag.pressureLevel * 2 : 0);
 
     if (ag.stateTime >= effectiveDuration) {
@@ -291,8 +291,8 @@ export class TakeCoverGoal extends YUKA.Goal<TDMAgent> {
 
   terminate(): void {
     const ag = this.owner;
+    ag.navRuntime.clearPath();
     ag.isBotCrouching = false;
-    if (ag.arriveB) ag.arriveB.weight = 0;
     this.status = YUKA.Goal.STATUS.COMPLETED;
   }
 }
@@ -354,37 +354,38 @@ export class FlankGoal extends YUKA.Goal<TDMAgent> {
     ag.stateName = 'FLANK';
     ag.stateTime = 0;
     this.origSpeed = ag.maxSpeed;
-    // Sprint during flanking maneuver
     ag.maxSpeed *= 1.25;
     if (ag.currentTarget) {
       this.flankPos = findFlankPosition(ag, ag.currentTarget.position);
+    }
+    if (this.flankPos && gameState.pathPlanner) {
+      ag.navRuntime.pathPending = true;
+      gameState.pathPlanner.findPath(ag, ag.position, this.flankPos, (vehicle: TDMAgent, path) => {
+        vehicle.navRuntime.applyPath(path);
+      });
     }
     this.status = this.flankPos ? YUKA.Goal.STATUS.ACTIVE : YUKA.Goal.STATUS.FAILED;
   }
 
   execute(): void {
     const ag = this.owner;
-    if (ag.wanderB) ag.wanderB.weight = 0;
+    if (ag.wanderB) ag.wanderB.weight = ag.navRuntime.path ? 0 : 1.0;
     if (ag.pursuitB) ag.pursuitB.weight = 0;
     if (ag.fleeB) ag.fleeB.weight = 0;
     if (ag.arriveB) ag.arriveB.weight = 0;
+    if (ag.seekB) ag.seekB.weight = 0;
 
-    if (ag.seekB && this.flankPos) {
-      (ag.seekB as any).target.copy(this.flankPos);
-      ag.seekB.weight = 1.5;
-    }
-
-    if (this.flankPos && ag.position.distanceTo(this.flankPos) < 4) {
+    if (!ag.navRuntime.path && !ag.navRuntime.pathPending && this.flankPos && ag.position.distanceTo(this.flankPos) < 4) {
       this.status = YUKA.Goal.STATUS.COMPLETED;
     }
-    if (ag.stateTime > 6) {
+    if (ag.stateTime > 8) {
       this.status = YUKA.Goal.STATUS.COMPLETED;
     }
   }
 
   terminate(): void {
     const ag = this.owner;
-    if (ag.seekB) ag.seekB.weight = 0;
+    ag.navRuntime.clearPath();
     const cfg = CLASS_CONFIGS[ag.botClass];
     if (cfg) ag.maxSpeed = cfg.maxSpeed;
     this.status = YUKA.Goal.STATUS.COMPLETED;
@@ -407,6 +408,12 @@ export class SeekPickupGoal extends YUKA.Goal<TDMAgent> {
     const pickup = findNearestPickup(ag, this.pickupType);
     if (pickup && ag.position.distanceTo(pickup) < 50) {
       ag.seekPickupPos = pickup;
+      if (gameState.pathPlanner) {
+        ag.navRuntime.pathPending = true;
+        gameState.pathPlanner.findPath(ag, ag.position, ag.seekPickupPos, (vehicle: TDMAgent, path) => {
+          vehicle.navRuntime.applyPath(path);
+        });
+      }
       this.status = YUKA.Goal.STATUS.ACTIVE;
     } else {
       this.status = YUKA.Goal.STATUS.FAILED;
@@ -415,21 +422,15 @@ export class SeekPickupGoal extends YUKA.Goal<TDMAgent> {
 
   execute(): void {
     const ag = this.owner;
-    if (ag.wanderB) ag.wanderB.weight = 0;
+    if (ag.wanderB) ag.wanderB.weight = ag.navRuntime.path ? 0 : 1.0;
     if (ag.pursuitB) ag.pursuitB.weight = 0;
     if (ag.fleeB) ag.fleeB.weight = 0;
     if (ag.seekB) ag.seekB.weight = 0;
-    if (ag.arriveB) {
-      ag.arriveB.weight = 1.6;
-      if (ag.seekPickupPos) {
-        (ag.arriveB as any).target.copy(ag.seekPickupPos);
-      }
-    }
+    if (ag.arriveB) ag.arriveB.weight = 0;
 
-    if (ag.seekPickupPos && ag.position.distanceTo(ag.seekPickupPos) < 3) {
+    if (!ag.navRuntime.path && !ag.navRuntime.pathPending && ag.seekPickupPos && ag.position.distanceTo(ag.seekPickupPos) < 3) {
       this.status = YUKA.Goal.STATUS.COMPLETED;
     }
-    // Don't abort weapon seek when unarmed just because enemy is near
     if (ag.weaponId !== 'unarmed' && ag.currentTarget && ag.position.distanceTo(ag.currentTarget.position) < 12) {
       this.status = YUKA.Goal.STATUS.FAILED;
     }
@@ -442,7 +443,7 @@ export class SeekPickupGoal extends YUKA.Goal<TDMAgent> {
     const ag = this.owner;
     ag.seekingPickup = false;
     ag.seekPickupPos = null;
-    if (ag.arriveB) ag.arriveB.weight = 0;
+    ag.navRuntime.clearPath();
     this.status = YUKA.Goal.STATUS.COMPLETED;
   }
 }
@@ -505,7 +506,6 @@ export class HoldAngleGoal extends YUKA.Goal<TDMAgent> {
     ag.stateTime = 0;
     ag.isBotCrouching = true;
 
-    // Find a nearby choke/cover/sniper_nest strategic position
     let best: { pos: YUKA.Vector3; angle: number; score: number } | null = null;
     for (const sp of STRATEGIC_POSITIONS) {
       if (sp.type !== 'choke' && sp.type !== 'cover' && sp.type !== 'sniper_nest') continue;
@@ -523,12 +523,17 @@ export class HoldAngleGoal extends YUKA.Goal<TDMAgent> {
       this.holdPos = best.pos;
       this.holdAngle = best.angle;
     } else {
-      // Fallback: hold current position
       this.holdPos = ag.position.clone();
       this.holdAngle = Math.atan2(ag.velocity.x, ag.velocity.z);
     }
 
-    // Duration scales with patience
+    if (this.holdPos && gameState.pathPlanner) {
+      ag.navRuntime.pathPending = true;
+      gameState.pathPlanner.findPath(ag, ag.position, this.holdPos, (vehicle: TDMAgent, path) => {
+        vehicle.navRuntime.applyPath(path);
+      });
+    }
+
     const p = ag.personality;
     this.holdDuration = 3 + (p ? p.patienceBias * 4 : 1) + Math.random() * 2;
     ag.preAimPos = new YUKA.Vector3(
@@ -541,17 +546,12 @@ export class HoldAngleGoal extends YUKA.Goal<TDMAgent> {
 
   execute(): void {
     const ag = this.owner;
-    if (ag.wanderB) ag.wanderB.weight = 0;
+    if (ag.wanderB) ag.wanderB.weight = ag.navRuntime.path ? 0 : 1.0;
     if (ag.pursuitB) ag.pursuitB.weight = 0;
     if (ag.fleeB) ag.fleeB.weight = 0;
     if (ag.seekB) ag.seekB.weight = 0;
+    if (ag.arriveB) ag.arriveB.weight = 0;
 
-    if (ag.arriveB && this.holdPos) {
-      ag.arriveB.weight = 1.2;
-      (ag.arriveB as any).target.copy(this.holdPos);
-    }
-
-    // Break on contact or time up
     if (ag.currentTarget && !ag.currentTarget.isDead) {
       this.status = YUKA.Goal.STATUS.COMPLETED;
     }
@@ -562,9 +562,9 @@ export class HoldAngleGoal extends YUKA.Goal<TDMAgent> {
 
   terminate(): void {
     const ag = this.owner;
+    ag.navRuntime.clearPath();
     ag.isBotCrouching = false;
     ag.preAimPos = null;
-    if (ag.arriveB) ag.arriveB.weight = 0;
     this.status = YUKA.Goal.STATUS.COMPLETED;
   }
 }

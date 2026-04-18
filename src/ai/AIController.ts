@@ -23,6 +23,17 @@ const _footstepTimers = new Map<string, number>();
 /** Clear footstep timers (call on match reset). */
 export function clearFootstepTimers(): void { _footstepTimers.clear(); }
 import { deliverPendingCallouts, queueCallout } from './TeamIntel';
+import { BotVoice, type CalloutSource } from '@/ai/BotVoice';
+
+function agentToCalloutSource(ag: TDMAgent): CalloutSource {
+  return {
+    id: ag.name,
+    name: ag.name,
+    team: ag.team === 0 ? 'blue' : 'red',
+    position: new THREE.Vector3(ag.position.x, 0, ag.position.z),
+    personality: ag.personality ? { chatter: ag.personality.aggressionBias } : undefined,
+  };
+}
 import { shouldBotHesitate, getGlanceDirection } from './ContextualPerception';
 import type { TeamIntent } from './AITypes';
 
@@ -294,6 +305,8 @@ function tryThrowGrenade(ag: TDMAgent, target: TDMAgent, dist: number): boolean 
   d.normalize();
 
   spawnGrenade(o, d, 'ai', ag.team, ag);
+  // BotVoice — grenade callout
+  BotVoice.onGrenade(agentToCalloutSource(ag), false);
   ag.grenades--;
   ag.grenadeCooldown = 8 + Math.random() * 4;
   return true;
@@ -338,6 +351,13 @@ export function updateAI(ag: TDMAgent, dt: number): void {
   updateBotFootsteps(ag, dt);
   updateStrafing(ag, dt);
   updateDamagePressure(ag, dt);
+  // BotVoice — low HP callout (throttled via flag on agent)
+  if (ag.hp / ag.maxHP < 0.3 && !(ag as any)._lowHpBVCalled) {
+    (ag as any)._lowHpBVCalled = true;
+    BotVoice.onLowHp(agentToCalloutSource(ag), ag.hp / ag.maxHP <= 0.15);
+  } else if (ag.hp / ag.maxHP >= 0.5) {
+    (ag as any)._lowHpBVCalled = false;
+  }
   updateTilt(ag, dt);
   decayEnemyMemory(ag, dt);
   updateAim(ag, dt);
@@ -447,6 +467,8 @@ export function updateAI(ag: TDMAgent, dt: number): void {
       // Contextual hesitation: surprise, low ammo, health disadvantage
       ag.reactionTimer += shouldBotHesitate(ag, target);
       ag.hasTarget = true;
+      // BotVoice — spot enemy callout
+      BotVoice.onSpotEnemy(agentToCalloutSource(ag), ag.weaponId === 'sniper_rifle', false);
     }
     ag.reactionTimer = Math.max(0, ag.reactionTimer - dt);
 
@@ -497,6 +519,8 @@ export function updateAI(ag: TDMAgent, dt: number): void {
       } else if (ag.ammo <= 0) {
         ag.isReloading = true;
         ag.reloadTimer = ag.reloadTime;
+        // BotVoice — reload callout
+        BotVoice.onReload(agentToCalloutSource(ag));
         if (ag.team === gameState.player.team) {
           const distToPlayer = ag.position.distanceTo(gameState.player.position);
           if (distToPlayer < 25 && Math.random() < 0.3) {
@@ -629,9 +653,7 @@ export function updateAI(ag: TDMAgent, dt: number): void {
     ag.hp = Math.min(ag.maxHP, ag.hp + dt * 15);
   }
 
-  keepInside(ag);
+  // NavMesh clamping is handled by GameLoop after entityManager.update() moves entities.
 
-  // Snap bot altitude to the highest floor surface + 0.5 (bot center offset)
-  const floorY = getFloorY(ag.position.x, ag.position.z);
-  ag.position.y = floorY + 0.5;
+  keepInside(ag);
 }
