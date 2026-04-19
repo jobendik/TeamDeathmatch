@@ -1871,19 +1871,42 @@ body.in-match:not(.mode-br) #lockHint {
 #loadingScreen {
   position: fixed; inset: 0; z-index: 9999;
   display: none; align-items: center; justify-content: center;
-  background:
-    linear-gradient(180deg, rgba(5,8,15,0.55) 0%, rgba(5,8,15,0.85) 100%),
-    url('/images/LoadingScreenBackground.png') center/cover no-repeat,
-    #0a0a12;
+  background: #0a0a12;
+  overflow: hidden;
 }
 #loadingScreen.on { display: flex; }
+/* Slowly-zooming background layer. Keeping this on a dedicated element
+ * lets us animate `transform: scale` (GPU-accelerated, smooth) rather
+ * than the non-animatable `background-size`. A fixed 8% overscan hides
+ * the edges during the zoom so we never see hard cut-offs. */
+.ls-bg {
+  position: absolute; inset: -8%;
+  background:
+    linear-gradient(180deg, rgba(5,8,15,0.55) 0%, rgba(5,8,15,0.85) 100%),
+    url('/images/LoadingScreenBackground.png') center/cover no-repeat;
+  transform: scale(1);
+  animation: lsZoom 22s ease-out forwards;
+  will-change: transform;
+}
+@keyframes lsZoom {
+  from { transform: scale(1); }
+  to   { transform: scale(1.18); }
+}
 .ls-inner {
+  position: relative;
   text-align: center;
   padding: 32px 48px;
   background: rgba(5, 10, 20, 0.55);
   border: 1px solid rgba(74, 158, 255, 0.25);
   border-radius: 8px;
   backdrop-filter: blur(6px);
+}
+.ls-logo-img {
+  width: min(360px, 70vw);
+  height: auto;
+  margin: 0 auto 20px;
+  display: block;
+  filter: drop-shadow(0 6px 24px rgba(0,0,0,0.75));
 }
 .ls-logo {
   font-size: 64px; color: var(--blue);
@@ -2019,3 +2042,98 @@ body.cb-tritanopia   { --blue: #009e73; --red: #cc79a7; }
   opacity: 0; transition: opacity 0.2s;
 }
 .spawn-shield.on { opacity: 1; }
+
+/* ═══════════════════════════════════════════════
+   START GATE (gesture splash to unlock audio)
+   ═══════════════════════════════════════════════ */
+#startGate {
+  position: fixed; inset: 0; z-index: 10000;
+  display: none;
+  align-items: center; justify-content: center;
+  overflow: hidden;
+  background:
+    radial-gradient(ellipse at center, rgba(10,18,30,0.55) 0%, rgba(3,6,12,0.95) 75%),
+    url('/images/PlayMenuBackground.png') center/cover no-repeat,
+    #05070c;
+}
+#startGate.on { display: flex; }
+.sg-inner {
+  text-align: center;
+  display: flex; flex-direction: column; align-items: center; gap: 28px;
+  animation: sgIn 0.6s ease-out both;
+}
+@keyframes sgIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.sg-logo {
+  width: min(520px, 80vw);
+  height: auto;
+  filter: drop-shadow(0 6px 30px rgba(0,0,0,0.8));
+  animation: sgLogoFloat 4s ease-in-out infinite;
+}
+@keyframes sgLogoFloat {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-8px); }
+}
+.sg-play {
+  font-family: var(--hud-font, 'Orbitron', sans-serif);
+  font-size: 22px; font-weight: 900;
+  letter-spacing: 0.4em;
+  padding: 16px 72px;
+  color: #fff;
+  background: linear-gradient(180deg, rgba(74,168,255,0.25), rgba(74,168,255,0.05));
+  border: 1.5px solid rgba(120,190,255,0.6);
+  border-radius: 4px;
+  cursor: pointer;
+  text-shadow: 0 0 10px rgba(120,190,255,0.6);
+  box-shadow: 0 0 24px rgba(74,168,255,0.25), inset 0 0 12px rgba(74,168,255,0.15);
+  transition: transform 0.15s ease, box-shadow 0.2s ease, background 0.2s ease;
+  animation: sgPulse 2.2s ease-in-out infinite;
+}
+.sg-play:hover {
+  background: linear-gradient(180deg, rgba(120,200,255,0.4), rgba(74,168,255,0.1));
+  box-shadow: 0 0 40px rgba(120,200,255,0.55), inset 0 0 16px rgba(120,200,255,0.3);
+  transform: scale(1.04);
+}
+.sg-play:active { transform: scale(0.98); }
+@keyframes sgPulse {
+  0%, 100% { box-shadow: 0 0 24px rgba(74,168,255,0.25), inset 0 0 12px rgba(74,168,255,0.15); }
+  50%      { box-shadow: 0 0 36px rgba(120,200,255,0.45), inset 0 0 18px rgba(120,200,255,0.25); }
+}
+.sg-hint {
+  font-family: var(--mono-font, monospace);
+  font-size: 11px; letter-spacing: 0.2em;
+  color: rgba(255,255,255,0.45);
+  text-transform: uppercase;
+}
+
+/* ═══════════════════════════════════════════════
+   INTRO-ACTIVE: hide HUD during MatchIntro camera sweep
+   ═══════════════════════════════════════════════ */
+body.intro-active #xh,
+body.intro-active #dmgArcs,
+body.intro-active #compass,
+body.intro-active #minimap,
+body.intro-active #matchInfo,
+body.intro-active #killfeed,
+body.intro-active #killstreak,
+body.intro-active #bottomHud,
+body.intro-active #reloadBar,
+body.intro-active #reloadText,
+body.intro-active #subtitleOverlay,
+body.intro-active #streakTray,
+body.intro-active #matchChallenges,
+body.intro-active #matchChallengesPanel,
+body.intro-active #fieldUpgradeHud,
+body.intro-active #contractsHud,
+body.intro-active #lockHint,
+body.intro-active #scopeOverlay,
+body.intro-active #adsOverlay,
+body.intro-active #adsVignette,
+body.intro-active #dmg,
+body.intro-active #hlf {
+  opacity: 0 !important;
+  pointer-events: none !important;
+  transition: opacity 0.2s ease;
+}

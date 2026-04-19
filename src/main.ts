@@ -302,7 +302,35 @@ async function init(): Promise<void> {
   // DOM overlay and doesn't need the 3D canvas animated behind it.
   gameState.paused = true;
   gameState.mainMenuOpen = true;
-  showMainMenu();
+
+  // ── Start gate ────────────────────────────────────────────────────
+  // Modern browsers block AudioContext playback until a user gesture.
+  // Show a splash with the WARZONE logo + PLAY button; the first click
+  // resumes the audio context and starts the lobby music so the
+  // MainMenu is never silent.
+  const gate = document.getElementById('startGate');
+  const playBtn = document.getElementById('sgPlay');
+  if (gate && playBtn) {
+    gate.classList.add('on');
+    const onFirstClick = async () => {
+      playBtn.removeEventListener('click', onFirstClick);
+      try { await Audio.resume(); } catch { /* non-fatal */ }
+      // Start the lobby music immediately; the dynamic-music system
+      // takes over once a match starts.
+      try {
+        const dm = await import('@/audio/DynamicMusic');
+        dm.playMusicState('lobby');
+      } catch (err) {
+        console.warn('[main] Failed to start lobby music:', err);
+      }
+      gate.classList.remove('on');
+      showMainMenu();
+    };
+    playBtn.addEventListener('click', onFirstClick);
+  } else {
+    // Fallback: gate markup missing — go straight to the menu.
+    showMainMenu();
+  }
 }
 
 init().catch((err) => console.error('[main] init failed:', err));

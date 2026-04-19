@@ -22,11 +22,22 @@
 <body>
   <!-- Loading screen -->
   <div id="loadingScreen" class="on">
+    <div class="ls-bg"></div>
     <div class="ls-inner">
-      <div class="ls-logo">◆</div>
-      <h1 class="ls-title">WARZONE</h1>
+      <img class="ls-logo-img" src="/images/WarZoneLogo.png" alt="WARZONE" />
       <div class="ls-bar"><div class="ls-fill" id="lsFill"></div></div>
       <div class="ls-text" id="lsText">Loading assets…</div>
+    </div>
+  </div>
+
+  <!-- Start gate: shown AFTER Phase-1 init finishes, hides BEFORE the
+       MainMenu. Required to unlock the Web Audio context (browsers
+       require a user gesture before any audio can play) so the lobby
+       music actually starts under the MainMenu. -->
+  <div id="startGate">
+    <div class="sg-inner">
+      <img class="sg-logo" src="/images/WarZoneLogo.png" alt="WARZONE" />
+      <button id="sgPlay" class="sg-play">PLAY</button>
     </div>
   </div>
 

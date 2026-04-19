@@ -26,6 +26,7 @@
 
 import * as THREE from 'three';
 import { gameState } from '@/core/GameState';
+import { setViewmodelVisible } from '@/rendering/WeaponViewmodel';
 
 export interface MatchIntroOptions {
   mapName: string;
@@ -331,6 +332,13 @@ export function playMatchIntro(opts: MatchIntroOptions): Promise<void> {
     // Lock input
     gameState._introActive = true;
 
+    // Hide viewmodel + HUD during the cinematic pre-match intro.
+    // The camera sweeps over the arena from a third-person perspective;
+    // a first-person weapon floating in-frame looks broken. HUD is
+    // hidden via CSS keyed on body.intro-active.
+    document.body.classList.add('intro-active');
+    try { setViewmodelVisible(false); } catch { /* viewmodel may not be initialized yet */ }
+
     // Fade in the overlay, then trigger map phase
     requestAnimationFrame(() => {
       const fade = introState.overlay!.querySelector('.mi-fade') as HTMLElement;
@@ -441,6 +449,11 @@ function cleanup(): void {
   introState.cameraRestore = null;
   introState.opts = null;
   gameState._introActive = false;
+
+  // Restore HUD + viewmodel now that the intro camera is gone and
+  // gameplay is about to take over.
+  document.body.classList.remove('intro-active');
+  try { setViewmodelVisible(true); } catch { /* non-fatal */ }
 }
 
 export function isIntroActive(): boolean {

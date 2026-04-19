@@ -160,8 +160,14 @@ pistol: {
   rocket_launcher: {
     url: GRENADE_LAUNCHER_GLB_URL,
     desiredMaxDimension: 1.18,
-    position: new THREE.Vector3(0.075, -0.055, -0.155),
-    rotation: new THREE.Euler(0.015, -0.145, 0.055),
+    // Pulled in closer to the camera (z: -0.155 → -0.085) so the
+    // end of the left arm (edge of the rigged model) is no longer
+    // visible in-frame.
+    position: new THREE.Vector3(0.05, -0.055, -0.085),
+    // The grenade-launcher GLB authors the model pointing toward +Z,
+    // opposite to every other weapon in the set — flip it 180° around
+    // Y so the muzzle faces away from the camera.
+    rotation: new THREE.Euler(0.015, Math.PI - 0.145, 0.055),
     holdTime: 8.84,
     ranges: {
       shoot: [0.00, 0.37],
