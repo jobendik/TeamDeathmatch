@@ -22,13 +22,13 @@ export const TEAM_NAMES: Record<TeamId, string> = {
 
 /** Spawn positions per team */
 export const BLUE_SPAWNS: [number, number, number][] = [
-  [-48, 0, -48], [-44, 0, -52], [-52, 0, -44],
-  [-40, 0, -48], [-48, 0, -40], [-52, 0, -52],
+  [-40, 0, -40], [-36, 0, -44], [-44, 0, -36],
+  [-36, 0, -40], [-40, 0, -36], [-44, 0, -44],
 ];
 
 export const RED_SPAWNS: [number, number, number][] = [
-  [48, 0, 48], [44, 0, 52], [52, 0, 44],
-  [40, 0, 48], [48, 0, 40], [52, 0, 52],
+  [40, 0, 40], [36, 0, 44], [44, 0, 36],
+  [36, 0, 40], [40, 0, 36], [44, 0, 44],
 ];
 
 /** Agent hitbox radii (shared between Bullets and Hitscan) */

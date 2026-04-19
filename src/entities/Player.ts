@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import * as YUKA from 'yuka';
 import { gameState } from '@/core/GameState';
 import { FP } from '@/config/player';
 import { WEAPONS } from '@/config/weapons';
@@ -18,7 +19,36 @@ import { playHeal } from '@/audio/SoundHooks';
 import { getActivePerkHooks } from '@/config/Loadouts';
 import { isKillcamActive, updateKillcam, isPotgActive, updatePotgReplay } from '@/ui/Killcam';
 
+const NAV_PLAYER_SAMPLES: readonly [number, number][] = [
+  [0, 0],
+  [FP.playerRadius * 0.65, 0],
+  [-FP.playerRadius * 0.65, 0],
+  [0, FP.playerRadius * 0.65],
+  [0, -FP.playerRadius * 0.65],
+];
+
+const NAV_FLOOR_SAMPLE_Y = 2.0;
+
+const navPoint = new YUKA.Vector3();
+const navProjectedPoint = new YUKA.Vector3();
+
 export function getFloorY(x: number, z: number): number {
+  if (gameState.navMeshManager.navMesh) {
+    navPoint.set(x, NAV_FLOOR_SAMPLE_Y, z);
+
+    const region = gameState.navMeshManager.getRegionForPoint(navPoint, Math.max(1, FP.playerRadius))
+      ?? gameState.navMeshManager.getRegionForPoint(navPoint, 3);
+
+    if (region?.getClosestPointToPoint) {
+      region.getClosestPointToPoint(navPoint, navProjectedPoint);
+      if (Number.isFinite(navProjectedPoint.y)) {
+        return navProjectedPoint.y;
+      }
+    }
+
+    return 0;
+  }
+
   let floorY = 0;
   for (const c of gameState.colliders) {
     if (c.yTop !== undefined && gameState.pPosY >= c.yTop) {
@@ -37,6 +67,17 @@ export function getFloorY(x: number, z: number): number {
 function collidesPlayer(x: number, z: number): boolean {
   const margin = getWorldBoundary();
   if (Math.abs(x) > margin || Math.abs(z) > margin) return true;
+
+  if (gameState.navMeshManager.navMesh) {
+    for (const [ox, oz] of NAV_PLAYER_SAMPLES) {
+      navPoint.set(x + ox, gameState.pPosY, z + oz);
+      if (!gameState.navMeshManager.getRegionForPoint(navPoint, FP.playerRadius * 0.45)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   for (const c of gameState.colliders) {
     if (c.yTop !== undefined && gameState.pPosY >= c.yTop) continue;
     if (c.type === 'box') {

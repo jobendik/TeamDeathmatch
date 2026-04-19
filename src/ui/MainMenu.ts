@@ -437,7 +437,10 @@ function injectStyles(): void {
       z-index: 20;
       font-family: 'Consolas', 'JetBrains Mono', monospace;
       color: #e0ecff;
-      background: radial-gradient(ellipse at center, #0a1020 0%, #05080f 80%);
+      background:
+        linear-gradient(180deg, rgba(5,8,15,0.72) 0%, rgba(5,8,15,0.88) 100%),
+        url('/images/MainMenuBackground.png') center/cover no-repeat,
+        radial-gradient(ellipse at center, #0a1020 0%, #05080f 80%);
       display: none;
     }
     #mainMenuRoot.active { display: block; }
@@ -899,6 +902,10 @@ export function showMainMenu(): void {
   state.visible = true;
   state.activeTab = 'play';
   state.container.classList.add('active');
+  // Safety net: whenever the MainMenu is on screen, the body is NOT
+  // "in a match". This guarantees the CLICK-TO-DEPLOY lockHint banner
+  // (z-index 30) stays hidden — CSS keys off `body.in-match`.
+  document.body.classList.remove('in-match');
   refresh();
   document.exitPointerLock?.();
 }

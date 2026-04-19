@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "three": "^0.160.0",
+    "three-mesh-bvh": "^0.8.3",
     "yuka": "^0.7.8"
   },
   "devDependencies": {

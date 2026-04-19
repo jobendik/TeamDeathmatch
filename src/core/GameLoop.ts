@@ -65,6 +65,8 @@ import { updateSprays } from '@/ui/Emotes';
 import { updatePingSystem } from '@/ui/CommWheel';
 import { updateOverlay as updateADSOverlay } from '@/combat/EnhancedADS';
 import { isInTrainingRange, updateTrainingRange } from '@/combat/TrainingRange';
+import { updateNavDebug } from '@/core/NavDebug';
+import { perf } from '@/core/PerfProfiler';
 
 let _hudThrottle = 0;
 let _minimapThrottle = 0;
@@ -74,25 +76,11 @@ let _fpsFrames = 0;
 let _fpsLastTime = 0;
 let _fpsDisplay = 0;
 
-// ── Warmup countdown state ──
-let warmupEl: HTMLDivElement | null = null;
-let lastWarmupSec = -1;
-
-function ensureWarmupEl(): HTMLDivElement {
-  if (!warmupEl) {
-    warmupEl = document.createElement('div');
-    warmupEl.id = 'warmupCountdown';
-    warmupEl.style.cssText = `
-      position:fixed; top:35%; left:50%; transform:translate(-50%,-50%);
-      font-family:var(--hud-font,'monospace'); font-size:72px; font-weight:900;
-      color:#ffcc33; text-shadow:0 0 30px rgba(255,200,50,0.6), 0 0 60px rgba(255,150,0,0.3);
-      z-index:80; pointer-events:none; opacity:0; transition:opacity 0.15s;
-      letter-spacing:0.1em;
-    `;
-    document.body.appendChild(warmupEl);
-  }
-  return warmupEl;
-}
+// ── Warmup countdown — DISABLED ────────────────────────────────
+// The old 3-2-1-FIGHT countdown has been removed. Matches begin the
+// instant the intro overlay finishes. `warmupTimer` remains in
+// GameState as a no-op for backwards compatibility with a handful of
+// callers (DynamicMusic, AnnouncerVoices) that still read the field.
 
 let _rafId = 0;
 function stopLoop(): void { cancelAnimationFrame(_rafId); }
@@ -122,28 +110,7 @@ export function animate(): void {
   if (!frozen && dt > 0) {
     gameState.worldElapsed += dt;
 
-    // ── Warmup countdown ──
-    if (gameState.warmupTimer > 0) {
-      gameState.warmupTimer = Math.max(0, gameState.warmupTimer - dt);
-      const sec = Math.ceil(gameState.warmupTimer);
-      const el = ensureWarmupEl();
-      if (gameState.warmupTimer <= 0) {
-        // GO!
-        el.textContent = 'FIGHT';
-        el.style.opacity = '1';
-        el.style.color = '#ff4444';
-        lastWarmupSec = -1;
-        setTimeout(() => { el.style.opacity = '0'; }, 800);
-      } else if (sec !== lastWarmupSec) {
-        lastWarmupSec = sec;
-        el.textContent = String(sec);
-        el.style.opacity = '1';
-        el.style.color = '#ffcc33';
-      }
-      // During warmup, don't count down match time
-    } else {
-      gameState.matchTimeRemaining = Math.max(0, gameState.matchTimeRemaining - dt);
-    }
+    gameState.matchTimeRemaining = Math.max(0, gameState.matchTimeRemaining - dt);
     gameState.perceptionFrame++;
 
     // In BR, advance drop/zone/bot state before the player update so
@@ -155,10 +122,12 @@ export function animate(): void {
     updatePlayer(dt);
 
     if (!isBR || !brModule.isBRActive()) {
+      perf.begin('updateAI');
       for (const ag of gameState.agents) {
         if (!ag.active) continue;
         updateAI(ag, dt);
       }
+      perf.end('updateAI');
     }
 
     recordKillcamSnapshot();
@@ -169,6 +138,7 @@ export function animate(): void {
     gameState.camera.getWorldDirection(camFwd);
     Audio.updateListener(gameState.camera.position, camFwd);
 
+    perf.begin('projectiles+particles');
     updateProjectiles(dt);
     updateSmokeClouds(dt);
     updateFlashEffect(dt);
@@ -177,6 +147,7 @@ export function animate(): void {
     updateScreenShake(dt);
     updateCameraShake(dt);
     updateLowHpShake(gameState.pHP / 100);
+    perf.end('projectiles+particles');
 
     if (!isBR) updatePickups();
 
@@ -189,6 +160,7 @@ export function animate(): void {
     const brOnPlane = brPhase === 'airdrop';
 
     if (!brOnPlane) {
+      perf.begin('entityManager+navRuntime');
       gameState.entityManager.update(dt);
       gameState.pathPlanner?.update();
 
@@ -199,6 +171,7 @@ export function animate(): void {
         if (!ag.active || ag.isDead || ag === gameState.player) continue;
         ag.navRuntime?.update();
       }
+      perf.end('entityManager+navRuntime');
     }
 
     // keepInside is cheap per-call but iterates arena colliders each time.
@@ -240,11 +213,17 @@ export function animate(): void {
       // Plane window: nothing agent-related runs. Bots are inactive,
       // visuals not needed.
     } else if (isBR) {
+      perf.begin('visuals+anims(BR)');
       updateVisualsLOD();
       updateAgentAnimationsLOD(dt);
+      perf.end('visuals+anims(BR)');
     } else {
+      perf.begin('visuals');
       updateVisuals();
+      perf.end('visuals');
+      perf.begin('agentAnims');
       updateAgentAnimations(gameState.agents, dt);
+      perf.end('agentAnims');
     }
 
     updateDamageArcs(dt);
@@ -256,6 +235,7 @@ export function animate(): void {
     updateWaypoints();
     updateMedalTicker(dt);
     updateStreaks(dt);
+    updateNavDebug();
   }
 
   updateHUD();
@@ -284,9 +264,19 @@ export function animate(): void {
     const hpT = Math.max(0, 1 - gameState.pHP / 35);
     fx.setLowHp(gameState.pDead ? 0 : hpT);
     fx.update(rawDt);
+  }
+
+  // Render path: use composer only if the installed FX provides one
+  // (i.e. the GPU post-process stack). Otherwise render directly — the
+  // DOM-overlay ScreenFX doesn't touch the render target.
+  if (fx && 'composer' in fx && fx.composer) {
+    perf.begin('render(postFX)');
     fx.composer.render();
+    perf.end('render(postFX)');
   } else {
+    perf.begin('render');
     gameState.renderer.render(gameState.scene, gameState.camera);
+    perf.end('render');
   }
 
   renderViewmodel();
@@ -294,6 +284,8 @@ export function animate(): void {
   // Clear per-frame mouse delta after all systems have consumed it
   gameState.mouseDeltaX = 0;
   gameState.mouseDeltaY = 0;
+
+  perf.markFrame();
 
   // ── FPS counter ──
   _fpsFrames++;

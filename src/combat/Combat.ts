@@ -362,31 +362,13 @@ function killAgent(ag: TDMAgent, attacker: TDMAgent | null): void {
   ag.deaths++;
   flushAssists(ag, attacker);
   ag.respawnAt = gameState.worldElapsed + RESPAWN_TIME + Math.random() * 2;
-  // Ragdoll physics — detach the FBX character model from the agent root group before
-  // handing it to the ragdoll system. This prevents disposeRig() from removing/corrupting
-  // ag.renderComponent (which holds the HP bar, name tag, and is needed for respawning).
-  const _rdCharModel = ag.renderComponent?.userData.characterModel as THREE.Group | undefined;
-  if (ag.renderComponent && attacker && _rdCharModel) {
-    const impulseDir = new THREE.Vector3().subVectors(
-      new THREE.Vector3(ag.position.x, 0.5, ag.position.z),
-      new THREE.Vector3(attacker.position.x, 0.5, attacker.position.z),
-    ).normalize();
-    // Capture world transform before detach so the ragdoll spawns at the right place
-    const _rdPos = new THREE.Vector3();
-    const _rdQuat = new THREE.Quaternion();
-    ag.renderComponent.getWorldPosition(_rdPos);
-    ag.renderComponent.getWorldQuaternion(_rdQuat);
-    // Detach from agent root — ragdoll system now fully owns this mesh
-    ag.renderComponent.remove(_rdCharModel);
-    ag.renderComponent.userData.characterModel = null;
-    ag.renderComponent.userData.agentAnimController = null;
-    gameState.scene.add(_rdCharModel);
-    _rdCharModel.position.copy(_rdPos);
-    _rdCharModel.quaternion.copy(_rdQuat);
-    spawnRagdoll(_rdCharModel, impulseDir, 18, Boolean((ag as any)._lastHitWasHeadshot));
-  } else {
-    const deathDur = playAgentDeathAnimation(ag.renderComponent);
-    const rc = ag.renderComponent!;
+  // Play a death animation on the character model. The ragdoll path was
+  // removed — it looked unprofessional (agents flew off), and it also
+  // occasionally left the character model detached across respawn which
+  // made bots invisible until the next death cycle.
+  const deathDur = playAgentDeathAnimation(ag.renderComponent);
+  const rc = ag.renderComponent!;
+  if (rc) {
     setTimeout(() => { if (ag.isDead) rc.visible = false; }, deathDur * 1000);
   }
 
@@ -703,7 +685,8 @@ export function resetMatch(mode = gameState.mode): void {
   }
   gameState.roundOver = false;
   gameState.overtime = false;
-  gameState.warmupTimer = mode === 'br' ? 0 : 3;
+  // No warmup countdown — the match starts the moment the intro fades.
+  gameState.warmupTimer = 0;
   const defaults = getModeDefaults(mode);
   gameState.matchTime = defaults.matchTime;
   gameState.matchTimeRemaining = defaults.matchTime;
@@ -788,7 +771,11 @@ export function resetMatch(mode = gameState.mode): void {
   if (dom.killTxt) dom.killTxt.textContent = '0';
   if (dom.deathTxt) dom.deathTxt.textContent = '0';
   dom.roundSummary.classList.remove('on');
-  if (gameState.mainMenuOpen) dom.lockHint.classList.add('on');
+  // NOTE: the old code forced `.on` on lockHint whenever the main menu
+  // was open — a leftover from the legacy dropdown menu. With the
+  // career-style MainMenu that flag means "the career menu is the
+  // foreground UI", so showing the CLICK-TO-DEPLOY banner on top of it
+  // is just a bug. lockHint is fully managed by onPointerLockChange.
 }
 
 export function updateRespawns(dt = 0.016): void {

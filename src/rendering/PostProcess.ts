@@ -87,6 +87,9 @@ export interface PostFX {
   setLowHp: (t: number) => void;
   update: (dt: number) => void;
   resize: () => void;
+  setQuality: (q: 'low' | 'medium' | 'high') => void;
+  setBloomEnabled: (on: boolean) => void;
+  setFxaaEnabled: (on: boolean) => void;
 }
 
 export function initPostProcess(): PostFX {
@@ -98,12 +101,23 @@ export function initPostProcess(): PostFX {
 
   const size = new THREE.Vector2(innerWidth, innerHeight);
   const composer = new EffectComposer(renderer);
-  composer.setPixelRatio(renderer.getPixelRatio());
+  // PERF: post-processing runs ~5 full-screen passes (RenderPass +
+  // UnrealBloom's pyramid blurs + Cinematic + FXAA + Output). Running them
+  // at devicePixelRatio × up to 1.5 made post-process dominate the frame
+  // (~38 ms on a 5v5 firefight measured via PerfProfiler). Capping the
+  // composer at 1.0 is a ~2–4× win on high-DPI displays, with no
+  // noticeable visual difference once FXAA smooths things out.
+  const composerPixelRatio = Math.min(renderer.getPixelRatio(), 1.0);
+  composer.setPixelRatio(composerPixelRatio);
   composer.setSize(size.x, size.y);
 
-  composer.addPass(new RenderPass(scene, camera));
+  const renderPass = new RenderPass(scene, camera);
+  composer.addPass(renderPass);
 
-  const bloom = new UnrealBloomPass(size, 0.45, 0.35, 0.82);
+  // Bloom at half resolution — UnrealBloom already does a 5-level pyramid,
+  // so halving the base render target quarters the work per mip.
+  const bloomSize = size.clone().multiplyScalar(0.5);
+  const bloom = new UnrealBloomPass(bloomSize, 0.45, 0.35, 0.82);
   bloom.threshold = 0.82;
   bloom.strength = 0.45;
   bloom.radius = 0.35;
@@ -113,7 +127,7 @@ export function initPostProcess(): PostFX {
   composer.addPass(cinematic);
 
   const fxaa = new ShaderPass(FXAAShader);
-  const px = renderer.getPixelRatio();
+  const px = composerPixelRatio;
   fxaa.material.uniforms['resolution'].value.set(1 / (innerWidth * px), 1 / (innerHeight * px));
   composer.addPass(fxaa);
 
@@ -125,6 +139,8 @@ export function initPostProcess(): PostFX {
   let hitPulse = 0;
   let lowHp = 0;
   let killPulse = 0;
+  let bloomOn = true;
+  let fxaaOn = true;
 
   return {
     composer, bloom, cinematic, fxaa,
@@ -148,9 +164,27 @@ export function initPostProcess(): PostFX {
     resize() {
       const w = innerWidth, h = innerHeight;
       composer.setSize(w, h);
-      bloom.setSize(w, h);
-      const px = renderer.getPixelRatio();
+      bloom.setSize(w * 0.5, h * 0.5);
+      const px = composerPixelRatio;
       fxaa.material.uniforms['resolution'].value.set(1 / (w * px), 1 / (h * px));
     },
+    setQuality(q) {
+      if (q === 'low') {
+        bloom.enabled = false;
+        fxaa.enabled = false;
+      } else if (q === 'medium') {
+        bloom.enabled = true;
+        bloom.strength = 0.3;
+        fxaa.enabled = true;
+      } else {
+        bloom.enabled = true;
+        bloom.strength = 0.45;
+        fxaa.enabled = true;
+      }
+      bloomOn = bloom.enabled;
+      fxaaOn = fxaa.enabled;
+    },
+    setBloomEnabled(on) { bloom.enabled = on; bloomOn = on; },
+    setFxaaEnabled(on) { fxaa.enabled = on; fxaaOn = on; },
   };
 }

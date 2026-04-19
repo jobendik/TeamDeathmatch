@@ -11,23 +11,56 @@ import { resetMatchMedals } from '@/ui/Medals';
 import { rebuildWaypoints } from '@/ui/Waypoints';
 import { startDynamicMusic, playMusicState, stopDynamicMusic } from '@/audio/DynamicMusic';
 import { playMatchIntro } from '@/ui/MatchIntro';
+import { showMainMenu } from '@/ui/MainMenu';
 
+/**
+ * Shows/hides the legacy simple-dropdown menu. The app now uses the full
+ * MainMenu (src/ui/MainMenu.ts) as the boot entry point; this function is
+ * kept only so the old `#mainMenu` node stays in sync when other code
+ * toggles it (lockHint etc.). The legacy menu should never be shown to
+ * the user — `index.html` no longer starts it with the `.on` class.
+ */
 function setMainMenuVisible(on: boolean): void {
   dom.mainMenu.classList.toggle('on', on);
-  gameState.mainMenuOpen = on;
-  dom.lockHint.classList.toggle('on', !on && !gameState.mouseLocked && !gameState.paused && !gameState.roundOver);
+  // Do NOT touch lockHint here. The career-style MainMenu owns the
+  // "main menu open" state, and lockHint is managed by the pointer-lock
+  // change listener in EventManager. Forcing `.on` here caused the
+  // CLICK TO DEPLOY banner to appear on top of the main menu.
+  if (on) gameState.mainMenuOpen = true;
+  // When on === false, leave mainMenuOpen alone — startMatchFromMenu /
+  // showMainMenu manage it explicitly for the new flow.
 }
 
-export async function startMatchFromMenu(): Promise<void> {
-  const mode = (dom.modeSelect.value || 'tdm') as GameMode;
-  const playerClass = (dom.classSelect.value || 'rifleman') as BotClass;
+/**
+ * Kick off a match. Can be driven either by the legacy dropdown menu
+ * (which reads `dom.modeSelect` / `dom.classSelect`) or by the new
+ * MainMenu (which passes explicit overrides).
+ */
+export async function startMatchFromMenu(
+  modeOverride?: GameMode,
+  classOverride?: BotClass,
+): Promise<void> {
+  const mode = (modeOverride ?? (dom.modeSelect?.value as GameMode) ?? 'tdm') as GameMode;
+  const playerClass = (classOverride ?? (dom.classSelect?.value as BotClass) ?? 'rifleman') as BotClass;
   const defaults = getModeDefaults(mode);
   gameState.mode = mode;
   gameState.pClass = playerClass;
   gameState.matchTime = defaults.matchTime;
   gameState.scoreLimit = defaults.scoreLimit;
   setMainMenuVisible(false);
-  gameState.paused = false;
+  // Freeze the simulation while the pre-match intro (roster reveal) is
+  // up. This prevents the old "bots run while the player is stuck
+  // watching" bug \u2014 the scene renders, the MatchIntro animates over
+  // it, but AI/projectiles/timers are halted. We unfreeze once the
+  // intro is done AND pointer lock is in flight, so player and bots
+  // start moving at the same instant.
+  gameState.paused = true;
+  gameState.mainMenuOpen = false;
+  document.body.classList.add('in-match');
+  // Mode-specific body class drives CSS rules such as hiding the
+  // CLICK-TO-DEPLOY banner everywhere except Battle Royale.
+  document.body.classList.remove('mode-br', 'mode-tdm', 'mode-ffa', 'mode-ctf', 'mode-elimination', 'mode-domination', 'mode-hardpoint', 'mode-koth', 'mode-sd', 'mode-training');
+  document.body.classList.add('mode-' + mode);
 
   if (mode === 'br') {
     await preloadBRModules();
@@ -55,8 +88,11 @@ export async function startMatchFromMenu(): Promise<void> {
   startDynamicMusic();
   Audio.startEnvironmentAmbience();
 
+  // Intro is done. Request pointer lock and unfreeze the simulation so
+  // the player and bots start the match at the same instant.
   setTimeout(() => {
     gameState.renderer?.domElement?.requestPointerLock();
+    gameState.paused = false;
   }, 60);
 }
 
@@ -73,20 +109,29 @@ export function togglePause(force?: boolean): void {
 }
 
 export function initMenus(): void {
-  dom.startBtn.onclick = () => startMatchFromMenu();
-  dom.modeSelect.onchange = () => updateMenuCopy();
+  // Legacy dropdown menu is kept in the DOM (its <select> elements are
+  // still referenced as data by startMatchFromMenu when no override is
+  // passed), but it is no longer shown to the user. The new career-
+  // style MainMenu (src/ui/MainMenu.ts) is the real boot UI.
+  if (dom.startBtn) dom.startBtn.onclick = () => startMatchFromMenu();
+  if (dom.modeSelect) dom.modeSelect.onchange = () => updateMenuCopy();
   dom.pauseResume.onclick = () => togglePause(false);
   dom.pauseRestart.onclick = () => { togglePause(false); resetMatch(gameState.mode); resetMatchMedals(); rollChallenges(3); };
   dom.pauseQuit.onclick = () => {
     gameState.paused = false;
     dom.pauseMenu.classList.remove('on');
-    setMainMenuVisible(true);
+    // Return to the career-style main menu, not the legacy dropdown.
+    gameState.mainMenuOpen = true;
+    document.body.classList.remove('in-match');
+    showMainMenu();
     document.exitPointerLock?.();
     stopDynamicMusic();
     playMusicState('lobby');
   };
   updateMenuCopy();
-  setMainMenuVisible(true);
+  // Legacy menu stays hidden (it's `display:none` in index.html). The
+  // new MainMenu drives boot UI via main.ts → showMainMenu().
+  dom.mainMenu.classList.remove('on');
 
   // Try playing lobby music on first interact
   const startLobbyMusic = () => {
@@ -113,6 +158,7 @@ const MODE_DESCRIPTIONS: Record<GameMode, string> = {
 };
 
 function updateMenuCopy(): void {
+  if (!dom.modeSelect || !dom.startBtn) return;
   const mode = (dom.modeSelect.value || 'tdm') as GameMode;
   const label = getModeLabel(mode);
   dom.startBtn.textContent = `DEPLOY ${label}`;

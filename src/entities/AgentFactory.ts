@@ -15,6 +15,7 @@ import { addHPBar } from '@/rendering/HPBar';
 import { NavAgentRuntime } from '@/ai/navigation/NavAgentRuntime';
 import { setupFuzzy } from '@/ai/FuzzyLogic';
 import { makePersonality } from '@/ai/Personality';
+import { resolveArenaSpawn } from '@/core/GameModes';
 import {
   preloadBlueSwatAssets, preloadEnemyAssets,
   hasBlueSwatAssets, hasEnemyAssets,
@@ -79,7 +80,7 @@ function mkAgent(
   ag.fleeB = new YUKA.FleeBehavior(new YUKA.Vector3(), 10);
   ag.pursuitB = new YUKA.PursuitBehavior(ag, 1.2);
   ag.avoidB = new YUKA.ObstacleAvoidanceBehavior(gameState.yukaObs);
-  ag.avoidB.weight = 3;
+  ag.avoidB.weight = 1.2;
 
   ag.steering.add(ag.wanderB);
   ag.steering.add(ag.arriveB);
@@ -149,9 +150,10 @@ export async function buildAgents(): Promise<void> {
   }
 
   // Player
+  const playerSpawn = resolveArenaSpawn(BLUE_SPAWNS[0], TEAM_BLUE);
   const player = new TDMAgent('Player', TEAM_BLUE, 'rifleman');
-  player.position.set(BLUE_SPAWNS[0][0], 0, BLUE_SPAWNS[0][2]);
-  player.spawnPos.set(BLUE_SPAWNS[0][0], 0, BLUE_SPAWNS[0][2]);
+  player.position.set(playerSpawn[0], 0, playerSpawn[2]);
+  player.spawnPos.set(playerSpawn[0], 0, playerSpawn[2]);
   player.maxSpeed = FP.moveSpeed;
   player.boundingRadius = 0.55;
 
@@ -169,7 +171,8 @@ export async function buildAgents(): Promise<void> {
   const blueClasses: BotClass[] = ['rifleman', 'rifleman', 'assault', 'sniper', 'flanker'];
   const blueNames = ['Falcon', 'Blaze', 'Storm', 'Ghost', 'Hawk'];
   for (let i = 0; i < 5; i++) {
-    const sp = BLUE_SPAWNS[i + 1] || BLUE_SPAWNS[i % BLUE_SPAWNS.length];
+    const rawSpawn = BLUE_SPAWNS[i + 1] || BLUE_SPAWNS[i % BLUE_SPAWNS.length];
+    const sp = resolveArenaSpawn(rawSpawn, TEAM_BLUE);
     const bot = mkAgent(
       blueNames[i], TEAM_BLUE, blueClasses[i], sp[0], sp[2],
       blueSwatReady ? 'swat' : 'placeholder',
@@ -183,7 +186,7 @@ export async function buildAgents(): Promise<void> {
   const redClasses: BotClass[] = ['rifleman', 'rifleman', 'assault', 'assault', 'sniper', 'flanker'];
   const redNames = ['Demon', 'Inferno', 'Hammer', 'Fang', 'Specter', 'Viper'];
   for (let i = 0; i < 6; i++) {
-    const sp = RED_SPAWNS[i % RED_SPAWNS.length];
+    const sp = resolveArenaSpawn(RED_SPAWNS[i % RED_SPAWNS.length], TEAM_RED);
     const bot = mkAgent(
       redNames[i], TEAM_RED, redClasses[i], sp[0], sp[2],
       enemyReady ? 'enemy' : 'placeholder',

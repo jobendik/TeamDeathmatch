@@ -41,6 +41,8 @@ export function buildNavMeshBlob(): Promise<string> {
       const cz = -half + (r + 0.5) * NAV_CELL;
 
       for (const col of gameState.arenaColliders) {
+        // Walk-on-top surfaces (platforms, ramp steps) are navigable — skip them
+        if (col.yTop !== undefined && col.yTop > 0) continue;
         // arenaColliders already include the agent-width padding (0.35–0.45 m)
         // so any cell whose centre is inside them is truly impassable.
         if (col.type === 'box') {

@@ -47,25 +47,60 @@ export class NavAgentRuntime {
     this.currentPosition.copy(this.owner.position);
     this.missingRegionLogged = false;
 
-    if (this.navManager.navMesh) {
-      this.recoverRegion('spawn');
+    if (!this.navManager.navMesh) return;
+
+    // Try to find the region the spawn is in. If the spawn is off-mesh
+    // (e.g. inside a hole or outside the baked mesh), resolveRegion will
+    // horizontally project to the nearest region and snap the agent onto it.
+    // This guarantees we never enter the frame loop with currentRegion=null.
+    if (!this.recoverRegion('spawn')) {
+      console.warn(
+        `[NavAgentRuntime] Spawn ${this.owner.position.x.toFixed(1)},${this.owner.position.z.toFixed(1)} has no reachable navmesh region at all — bot will stand still.`
+      );
     }
   }
 
-  private resolveRegion(): any {
-    for (const radius of REGION_SEARCH_RADII) {
-      const region = this.navManager.getRegionForPoint(this.owner.position, radius);
-      if (region) return region;
+  /**
+   * Find the region the agent is "on". YUKA's `getRegionForPoint(pt, epsilon)`
+   * ONLY uses `epsilon` as a vertical (Y) tolerance — it is NOT a horizontal
+   * search radius. So we first try an in-plane containment check with a generous
+   * vertical tolerance, and if that fails we fall back to NavMeshManager's
+   * global `getClosestRegion` / `projectPoint` which really does a horizontal
+   * nearest-point search across all regions.
+   */
+  private resolveRegion(): { region: any; snapped: YUKA.Vector3 | null } {
+    const navMesh = this.navManager.navMesh as any;
+    if (!navMesh) return { region: null, snapped: null };
+
+    const mainComponent = this.navManager.mainComponent;
+    const isInMain = (region: any) =>
+      region != null && (mainComponent.size === 0 || mainComponent.has(region));
+
+    // In-polygon (fast path) — try several Y tolerances for tall meshes,
+    // but reject regions that are on isolated baked islands (tops of
+    // walls/pillars): those are non-walkable stranded polygons.
+    for (const yTol of REGION_SEARCH_RADII) {
+      const region = navMesh.getRegionForPoint(this.owner.position, yTol);
+      if (region && isInMain(region)) return { region, snapped: null };
     }
 
-    return null;
+    // Horizontal nearest-region fallback on the MAIN component only.
+    const projected = this.navManager.projectPoint(this.owner.position);
+    let region = navMesh.getRegionForPoint(projected, 1);
+    if (!isInMain(region)) {
+      region = this.navManager.getClosestMainComponentRegion(projected);
+    }
+
+    return { region, snapped: region ? projected : null };
   }
 
-  private snapToRegion(region: any): void {
+  private snapToRegion(region: any, snapped?: YUKA.Vector3 | null): void {
     if (!region?.getClosestPointToPoint) return;
 
-    const closestPoint = new YUKA.Vector3();
-    region.getClosestPointToPoint(this.owner.position, closestPoint);
+    const closestPoint = snapped ?? new YUKA.Vector3();
+    if (!snapped) {
+      region.getClosestPointToPoint(this.owner.position, closestPoint);
+    }
     this.owner.position.copy(closestPoint);
     this.currentPosition.copy(closestPoint);
     this.previousPosition.copy(closestPoint);
@@ -74,7 +109,7 @@ export class NavAgentRuntime {
   private recoverRegion(reason: string): boolean {
     if (!this.navManager.navMesh) return false;
 
-    const region = this.resolveRegion();
+    const { region, snapped } = this.resolveRegion();
     if (!region) {
       if (!this.missingRegionLogged) {
         console.warn(
@@ -86,7 +121,7 @@ export class NavAgentRuntime {
     }
 
     this.currentRegion = region;
-    this.snapToRegion(region);
+    this.snapToRegion(region, snapped);
     this.missingRegionLogged = false;
     return true;
   }
@@ -126,45 +161,66 @@ export class NavAgentRuntime {
     return this.owner.position.squaredDistanceTo(target) <= toleranceSq;
   }
 
-  stayOnNavMesh(): void {
-    if (!this.navManager.navMesh) return;
-
-    if (!this.currentRegion && !this.recoverRegion('movement clamp')) {
-      return;
-    }
-
-    this.currentPosition.copy(this.owner.position);
-
+  /**
+   * Run YUKA.NavMesh.clampMovement but NEVER let it propagate —
+   * any exception is treated as "region geometry corrupted for this step":
+   * we simply drop the current region and rely on the next frame's
+   * recoverRegion() to snap us back on.
+   */
+  private safeClamp(): any {
     try {
-      this.currentRegion = this.navManager.clampMovement(
+      return this.navManager.clampMovement(
         this.currentRegion,
         this.previousPosition,
         this.currentPosition,
         this.owner.position
       );
     } catch (err) {
-      if (!this.recoverRegion('clamp recovery')) {
-        console.warn('[NavAgentRuntime] clampMovement recovery failed.', err);
-        return;
-      }
-
-      this.currentPosition.copy(this.owner.position);
-      this.currentRegion = this.navManager.clampMovement(
-        this.currentRegion,
-        this.previousPosition,
-        this.currentPosition,
-        this.owner.position
-      );
+      console.warn('[NavAgentRuntime] clampMovement threw — forcing region recovery.', err);
+      return null;
     }
+  }
 
-    if (!this.currentRegion && !this.recoverRegion('post-clamp recovery')) {
+  stayOnNavMesh(): void {
+    if (!this.navManager.navMesh) return;
+
+    if (!this.currentRegion && !this.recoverRegion('movement clamp')) {
+      // Still off-mesh. Keep previousPosition in sync with current so the
+      // next successful region-recovery starts from a sane baseline.
+      this.previousPosition.copy(this.owner.position);
       return;
     }
 
+    this.currentPosition.copy(this.owner.position);
+
+    let clamped = this.safeClamp();
+
+    // If the clamp failed or dropped the region (agent left the mesh), try
+    // once to recover and re-clamp with the rediscovered region.
+    if (!clamped) {
+      if (!this.recoverRegion('post-clamp recovery')) {
+        this.currentRegion = null;
+        this.previousPosition.copy(this.owner.position);
+        return;
+      }
+      this.currentPosition.copy(this.owner.position);
+      clamped = this.safeClamp();
+      if (!clamped) {
+        this.currentRegion = null;
+        this.previousPosition.copy(this.owner.position);
+        return;
+      }
+    }
+
+    this.currentRegion = clamped;
     this.previousPosition.copy(this.owner.position);
 
-    const distance = (this.currentRegion as any).plane.distanceToPoint(this.owner.position);
-    this.owner.position.y -= distance * NAV_CONFIG.HEIGHT_CHANGE_FACTOR;
+    // Height-plane correction
+    const plane = (this.currentRegion as any)?.plane;
+    if (plane) {
+      const distance = plane.distanceToPoint(this.owner.position);
+      this.owner.position.y -= distance * NAV_CONFIG.HEIGHT_CHANGE_FACTOR;
+    }
   }
 
   update(): void {

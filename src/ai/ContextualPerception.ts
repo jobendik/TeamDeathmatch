@@ -161,28 +161,40 @@ export function shouldBotHesitate(ag: TDMAgent, target: TDMAgent): number {
 /**
  * Hearing falloff through walls — real humans hear muffled sounds through cover.
  * Returns 0..1 hearing attenuation (1 = clear, 0 = inaudible).
+ *
+ * PERF: dedicated raycaster (so three-mesh-bvh's `firstHitOnly` doesn't leak
+ * into Hitscan's nearest-hit raycaster), and we stop as soon as we know the
+ * answer — one blocking wall already halves audibility and hitting a second
+ * drops it below the 0.1 threshold, so a two-hit cap is plenty.
  */
+const _hearingRc = new THREE.Raycaster();
+const _hearingOrigin = new THREE.Vector3();
+const _hearingTarget = new THREE.Vector3();
+const _hearingDir = new THREE.Vector3();
+
 export function getHearingAttenuation(
   listenerPos: YUKA.Vector3,
   sourcePos: YUKA.Vector3,
 ): number {
-  const _origin = new THREE.Vector3(listenerPos.x, 1.0, listenerPos.z);
-  const _target = new THREE.Vector3(sourcePos.x, 1.0, sourcePos.z);
-  const dir = _target.clone().sub(_origin);
-  const dist = dir.length();
+  _hearingOrigin.set(listenerPos.x, 1.0, listenerPos.z);
+  _hearingTarget.set(sourcePos.x, 1.0, sourcePos.z);
+  _hearingDir.subVectors(_hearingTarget, _hearingOrigin);
+  const dist = _hearingDir.length();
   if (dist < 0.01) return 1;
-  dir.normalize();
+  _hearingDir.multiplyScalar(1 / dist);
 
-  gameState.raycaster.set(_origin, dir);
-  gameState.raycaster.far = dist;
-  const hits = gameState.raycaster.intersectObjects(gameState.wallMeshes, false);
-  gameState.raycaster.far = Infinity;
+  _hearingRc.set(_hearingOrigin, _hearingDir);
+  _hearingRc.far = dist;
+  // We only need the count of blockers up to 2; three-mesh-bvh still
+  // walks intersections across meshes, but the wall BVH makes each one
+  // O(log triangles) so this is still cheap.
+  const hits = _hearingRc.intersectObjects(gameState.wallMeshes, false);
 
-  // Each wall between listener and source drops audibility by 50%
   let att = 1;
-  for (const hit of hits) {
-    if (hit.distance < dist) att *= 0.5;
-    if (att < 0.1) break;
+  for (let i = 0; i < hits.length; i++) {
+    if (hits[i].distance >= dist) break;
+    att *= 0.5;
+    if (att < 0.1) return att;
   }
   return att;
 }

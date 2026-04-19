@@ -9,12 +9,19 @@ import { WEAPONS } from '@/config/weapons';
 const _toTarget = new YUKA.Vector3();
 const _peekPos = new YUKA.Vector3();
 const _midPos = new YUKA.Vector3();
+const _navPos = new YUKA.Vector3();
 
 /**
  * Check if a world position is inside any wall/pillar collider.
  */
 export function isInsideWall(x: number, z: number): boolean {
   if (Math.abs(x) > ARENA_MARGIN || Math.abs(z) > ARENA_MARGIN) return true;
+
+  if (gameState.navMeshManager.navMesh) {
+    _navPos.set(x, 0, z);
+    return !gameState.navMeshManager.getRegionForPoint(_navPos, 0.45);
+  }
+
   for (const c of gameState.arenaColliders) {
     if (c.type === 'box') {
       if (Math.abs(x - c.x) < c.hw && Math.abs(z - c.z) < c.hd) return true;
@@ -31,6 +38,16 @@ export function isInsideWall(x: number, z: number): boolean {
  * Push a position out of any wall it's inside. Returns a safe position.
  */
 export function pushOutOfWall(x: number, z: number): { x: number; z: number } {
+  if (gameState.navMeshManager.navMesh) {
+    _navPos.set(x, 0, z);
+    const projected = gameState.navMeshManager.projectPoint(_navPos, 0.45);
+    x = projected.x;
+    z = projected.z;
+    x = Math.max(-ARENA_MARGIN + 1, Math.min(ARENA_MARGIN - 1, x));
+    z = Math.max(-ARENA_MARGIN + 1, Math.min(ARENA_MARGIN - 1, z));
+    return { x, z };
+  }
+
   for (const c of gameState.arenaColliders) {
     if (c.type === 'box') {
       const dx = x - c.x;

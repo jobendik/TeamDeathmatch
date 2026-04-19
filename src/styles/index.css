@@ -312,6 +312,24 @@ canvas { display: block; cursor: none; }
   box-shadow: 0 0 80px rgba(74, 168, 255, 0.15), inset 0 0 40px rgba(74, 168, 255, 0.05);
 }
 #lockHint.on { opacity: 1; pointer-events: auto; cursor: pointer; }
+
+/* Hard override: while the MainMenu overlay is in the DOM as `.active`,
+ * or while the loading screen is up, the CLICK-TO-DEPLOY banner MUST
+ * stay hidden no matter who flipped `.on`. lockHint has z-index 30 and
+ * would otherwise punch through the menu (z-index 20).
+ *
+ * Additionally: the CLICK-TO-DEPLOY banner is now only shown in Battle
+ * Royale mode (where the drop-plane phase legitimately waits for the
+ * player to engage). In every other game mode the match intro hands
+ * off to gameplay with an automatic pointer-lock request \u2014 no manual
+ * click-to-play step is needed. */
+#mainMenuRoot.active ~ #lockHint,
+#loadingScreen.on ~ #lockHint,
+body:not(.in-match) #lockHint,
+body.in-match:not(.mode-br) #lockHint {
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
 .lh-icon {
   font-size: 32px; color: var(--blue);
   text-shadow: 0 0 20px var(--blue);
@@ -1853,10 +1871,20 @@ canvas { display: block; cursor: none; }
 #loadingScreen {
   position: fixed; inset: 0; z-index: 9999;
   display: none; align-items: center; justify-content: center;
-  background: #0a0a12;
+  background:
+    linear-gradient(180deg, rgba(5,8,15,0.55) 0%, rgba(5,8,15,0.85) 100%),
+    url('/images/LoadingScreenBackground.png') center/cover no-repeat,
+    #0a0a12;
 }
 #loadingScreen.on { display: flex; }
-.ls-inner { text-align: center; }
+.ls-inner {
+  text-align: center;
+  padding: 32px 48px;
+  background: rgba(5, 10, 20, 0.55);
+  border: 1px solid rgba(74, 158, 255, 0.25);
+  border-radius: 8px;
+  backdrop-filter: blur(6px);
+}
 .ls-logo {
   font-size: 64px; color: var(--blue);
   text-shadow: 0 0 40px rgba(74, 168, 255, 0.6);

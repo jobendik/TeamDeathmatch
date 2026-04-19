@@ -11,18 +11,59 @@ const _dir = new THREE.Vector3();
 const _toTarget = new YUKA.Vector3();
 const _heading = new YUKA.Vector3();
 
+// Dedicated raycaster for LOS — keeps three-mesh-bvh's `firstHitOnly` flag
+// from leaking into other systems (Hitscan needs the *nearest* hit, not any).
+const _losRaycaster = new THREE.Raycaster();
+(_losRaycaster as any).firstHitOnly = true;
+
 const PERCEPTION_STAGGER = 3;
 
+// ── LOS cache ───────────────────────────────────────────────────────────────
+// CoverSystem and Perception query isOccluded() many times per frame. With
+// many agents engaging at once this becomes the dominant cost. Quantizing
+// from/to to a 0.5m grid and caching results inside a single frame gives a
+// large speedup with no perceivable accuracy loss (walls don't move and
+// agents barely move within one frame).
+const _losCache = new Map<number, boolean>();
+let _losCacheFrame = -1;
+const _LOS_GRID = 0.5; // meters per cell — tighter = more accurate, less reuse
+
+function _losKey(fx: number, fz: number, tx: number, tz: number): number {
+  // Pack four small ints (-256..255 range each) into one Number key.
+  const a = ((fx / _LOS_GRID) | 0) & 0x1ff;
+  const b = ((fz / _LOS_GRID) | 0) & 0x1ff;
+  const c = ((tx / _LOS_GRID) | 0) & 0x1ff;
+  const d = ((tz / _LOS_GRID) | 0) & 0x1ff;
+  return (a << 27) | (b << 18) | (c << 9) | d;
+}
+
 export function isOccluded(from: YUKA.Vector3, to: YUKA.Vector3): boolean {
+  // Drop the cache when the frame changes.
+  const frame = gameState.perceptionFrame;
+  if (frame !== _losCacheFrame) {
+    _losCache.clear();
+    _losCacheFrame = frame;
+  }
+
+  const key = _losKey(from.x, from.z, to.x, to.z);
+  const cached = _losCache.get(key);
+  if (cached !== undefined) return cached;
+
   _origin.set(from.x, 0.9, from.z);
   _target.set(to.x, 1.0, to.z);
   _dir.subVectors(_target, _origin);
   const dist = _dir.length();
-  if (dist < 0.01) return false;
+  if (dist < 0.01) {
+    _losCache.set(key, false);
+    return false;
+  }
   _dir.normalize();
-  gameState.raycaster.set(_origin, _dir);
-  const hits = gameState.raycaster.intersectObjects(gameState.wallMeshes, false);
-  return hits.length > 0 && hits[0].distance < dist;
+  _losRaycaster.set(_origin, _dir);
+  _losRaycaster.far = dist;
+  const hits = _losRaycaster.intersectObjects(gameState.wallMeshes, false);
+  const result = hits.length > 0 && hits[0].distance < dist;
+  _losCache.set(key, result);
+  return result;
 }
 
 export function canSee(ag: TDMAgent, target: TDMAgent): boolean {

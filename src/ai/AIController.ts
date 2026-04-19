@@ -381,6 +381,7 @@ export function updateAI(ag: TDMAgent, dt: number): void {
     ag.currentCover = null;
     ag.seekingPickup = false;
     ag.seekPickupPos = null;
+    ag.navRuntime.clearPath();
     const pushed = pushOutOfWall(ag.position.x, ag.position.z);
     if (ag.seekB) {
       (ag.seekB as any).target.set(

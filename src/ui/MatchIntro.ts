@@ -63,11 +63,11 @@ const introState: IntroState = {
   keyListener: null,
 };
 
-// Phase timings (seconds)
+// Phase timings (seconds). The intro is now map → sweep → rosters,
+// with a crisp cut into gameplay — no FIGHT slate and no fade-out.
 const T_MAP_END = 2.0;
 const T_SWEEP_END = 5.5;
 const T_ROSTERS_END = 7.5;
-const T_FIGHT_END = 8.5;
 
 // ─────────────────────────────────────────────────────────────────────
 //  OVERLAY DOM
@@ -131,8 +131,9 @@ function createOverlay(opts: MatchIntroOptions): HTMLDivElement {
       .mi-fade {
         position: absolute; inset: 0;
         background: black;
-        transition: opacity 0.6s ease;
-        opacity: 1;
+        transition: opacity 0.2s ease;
+        opacity: 0;
+        pointer-events: none;
       }
       .mi-fade.hide { opacity: 0; pointer-events: none; }
       .mi-content { position: absolute; inset: 0; display: grid; place-items: center; }
@@ -415,23 +416,10 @@ function stepIntro(elapsed: number, dt: number): void {
       overlay.classList.remove('sweep');
       rosterEl.classList.add('show');
     }
-  } else if (elapsed < T_FIGHT_END) {
-    if (introState.phase !== 'fight') {
-      introState.phase = 'fight';
-      rosterEl.classList.remove('show');
-      fightEl.classList.add('show');
-      // Ping
-      import('@/audio/SoundHooks').then(s => {
-        try { (s as any).playMelee?.() ?? (s as any).playHit?.(); } catch { /* */ }
-      }).catch(() => { /* */ });
-    }
   } else {
-    // Fade out and finish
-    const fade = overlay.querySelector('.mi-fade') as HTMLElement;
-    fade.classList.remove('hide');
-    if (elapsed > T_FIGHT_END + 0.5) {
-      introState.phase = 'done';
-    }
+    // Rosters finished — end the intro immediately with no fade-out,
+    // no black curtain, no FIGHT slate. Goes straight to gameplay.
+    introState.phase = 'done';
   }
 }
 

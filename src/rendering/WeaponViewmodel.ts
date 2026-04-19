@@ -1290,6 +1290,23 @@ async function tryLoadSpecialViewmodel(weaponId: WeaponId): Promise<void> {
   }
 }
 
+/**
+ * Preload all animated viewmodel GLBs (+ knife) up-front so the loading
+ * screen actually covers the asset download cost. Without this, the
+ * first weapon the player equips triggers an async fetch mid-game.
+ *
+ * Safe to call multiple times — `loadAnimatedViewmodel` / `loadKnifeViewmodel`
+ * return cached results once loaded. Errors are swallowed (the
+ * individual loaders fall back to procedural meshes).
+ */
+export async function preloadViewmodels(): Promise<void> {
+  const animatedIds: AnimatedWeaponId[] = ['assault_rifle', 'pistol', 'shotgun', 'sniper_rifle', 'rocket_launcher'];
+  await Promise.all([
+    ...animatedIds.map((id) => loadAnimatedViewmodel(id).catch(() => null)),
+    loadKnifeViewmodel().catch(() => null),
+  ]);
+}
+
 export function setViewmodelWeapon(weaponId: WeaponId, forceSwap = false): void {
   if (!vmGroup) {
     currentWeaponId = weaponId;

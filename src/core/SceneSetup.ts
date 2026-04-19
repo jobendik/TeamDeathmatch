@@ -25,11 +25,20 @@ function createSceneObjects() {
   const camera = new THREE.PerspectiveCamera(78, innerWidth / innerHeight, 0.05, 280);
   camera.rotation.order = 'YXZ';
 
-  const renderer = new THREE.WebGLRenderer({ antialias: true });
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+  const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+  // PERF: cap at 1.0 — higher DPR multiplies fragment-shader cost by DPR².
+  // MSAA via `antialias: true` already handles geometry edge smoothing.
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 1.0));
   renderer.setSize(innerWidth, innerHeight);
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+  // Tone mapping + sRGB output (previously applied only by PostProcess.OutputPass).
+  // With composer disabled, the renderer must handle this directly or
+  // colors look washed-out / too dark.
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.35;
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
 
   dom.cw.appendChild(renderer.domElement);
 

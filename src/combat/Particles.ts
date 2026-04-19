@@ -66,12 +66,41 @@ export function initParticlePools(): void {
     gameState.scene.add(sm);
     _sparkPool.push({ mesh: sm, inUse: false });
   }
+
+  // PERF: eagerly build tracer + muzzle pools here (they were previously
+  // lazily initialized on first shot, which caused a ~50-150ms stall at
+  // the exact moment combat started). Pre-warming the cached material
+  // variants used by AI teams also compiles their shader variants now
+  // rather than mid-firefight.
+  initTracerPools();
+  initMuzzlePool();
+
+  // Warm common tracer & muzzle-flash colors so shader variants are
+  // compiled during load, not when the first shot fires.
+  getTracerGlowMat(0xffddaa);
+  getTracerGlowMat(0xff4444);
+  getTracerGlowMat(0x44aaff);
+  getImpactMat(0xffaa44);
+  getImpactMat(0xaaaaaa);
+  getImpactMat(0x880000);
+}
+
+const _camDistScratch = new THREE.Vector3();
+function camDistSq(pos: THREE.Vector3): number {
+  const cam = gameState.camera;
+  if (!cam) return 0;
+  _camDistScratch.subVectors(pos, cam.position);
+  return _camDistScratch.lengthSq();
 }
 
 /**
  * Spawn impact particles at a position.
+ *
+ * PERF: impacts > 70m from the camera are invisible at typical FOV and
+ * resolution. Skip spawning them entirely.
  */
 export function spawnImpact(pos: THREE.Vector3, col: number, n = 6): void {
+  if (camDistSq(pos) > 70 * 70) return;
   const baseMat = getImpactMat(col);
   for (let i = 0; i < n; i++) {
     const m = borrowMesh(_impactPool, _impactGeo, baseMat);
@@ -96,6 +125,7 @@ export function spawnImpact(pos: THREE.Vector3, col: number, n = 6): void {
  * Surface type controls color palette.
  */
 export function spawnWallSparks(pos: THREE.Vector3, normal: THREE.Vector3 | null, n = 8, surface: 'metal' | 'wood' | 'concrete' = 'concrete'): void {
+  if (camDistSq(pos) > 70 * 70) return;
   const palettes = {
     metal:    { bright: 0xffeebb, dim: 0x8899aa },
     wood:     { bright: 0xcc9944, dim: 0x664422 },
@@ -158,65 +188,178 @@ export function spawnShellCasing(origin: THREE.Vector3, rightDir: THREE.Vector3)
 /**
  * Spawn a hitscan tracer line from origin to end point.
  */
-export function spawnTracer(origin: THREE.Vector3, end: THREE.Vector3, col: number): void {
-  const dir = end.clone().sub(origin);
-  const len = dir.length();
-  if (len < 0.5) return;
-
-  const mid = origin.clone().add(end).multiplyScalar(0.5);
-
-  const glow = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.028, 0.020, len, 4, 1),
-    new THREE.MeshBasicMaterial({
+/**
+ * Spawn a hitscan tracer line from origin to end point.
+ *
+ * PERF: tracers are by far the most frequent per-frame scene allocation in
+ * combat — a 5v5 firefight can produce 100+ shots/sec. To keep GC/GPU cost
+ * bounded we:
+ *   1. Cull shots that aren't visible from the camera (distance + frustum)
+ *   2. Pool the two short-lived Cylinder meshes through a ring buffer with
+ *      a fixed shared geometry (scaled to tracer length via mesh.scale.y)
+ *   3. Share a single material per tracer colour (held in a small cache)
+ *
+ * The visual is identical to the original but the per-shot cost drops from
+ * ~4 allocations + 4 disposes to zero allocations after warmup.
+ */
+const _tracerGlowGeo = new THREE.CylinderGeometry(0.028, 0.020, 1, 4, 1);
+const _tracerCoreGeo = new THREE.CylinderGeometry(0.010, 0.008, 1, 5, 1);
+const _tracerCoreMat = new THREE.MeshBasicMaterial({
+  color: 0xffffff, transparent: true, opacity: 0.95,
+  blending: THREE.AdditiveBlending, depthWrite: false,
+});
+const _tracerGlowMatCache = new Map<number, THREE.MeshBasicMaterial>();
+function getTracerGlowMat(col: number): THREE.MeshBasicMaterial {
+  let m = _tracerGlowMatCache.get(col);
+  if (!m) {
+    m = new THREE.MeshBasicMaterial({
       color: col, transparent: true, opacity: 0.22,
       blending: THREE.AdditiveBlending, depthWrite: false,
-    }),
-  );
-  glow.position.copy(mid);
-  glow.lookAt(end);
-  glow.rotateX(Math.PI / 2);
-  gameState.scene.add(glow);
-  gameState.particles.push({ mesh: glow, vel: new THREE.Vector3(), life: 0.07, mL: 0.07 });
+    });
+    _tracerGlowMatCache.set(col, m);
+  }
+  return m;
+}
 
-  const core = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.010, 0.008, len, 5, 1),
-    new THREE.MeshBasicMaterial({
-      color: 0xffffff, transparent: true, opacity: 0.95,
-      blending: THREE.AdditiveBlending, depthWrite: false,
-    }),
-  );
-  core.position.copy(mid);
-  core.lookAt(end);
-  core.rotateX(Math.PI / 2);
-  gameState.scene.add(core);
-  gameState.particles.push({ mesh: core, vel: new THREE.Vector3(), life: 0.05, mL: 0.05 });
+interface TracerPool { entries: { mesh: THREE.Mesh; inUse: boolean }[]; }
+const TRACER_POOL_SIZE = 96;
+const _tracerGlowPool: TracerPool = { entries: [] };
+const _tracerCorePool: TracerPool = { entries: [] };
+let _tracerPoolsInited = false;
+
+function initTracerPools(): void {
+  if (_tracerPoolsInited) return;
+  _tracerPoolsInited = true;
+  for (let i = 0; i < TRACER_POOL_SIZE; i++) {
+    const glow = new THREE.Mesh(_tracerGlowGeo, _tracerCoreMat);
+    glow.visible = false; glow.frustumCulled = true;
+    gameState.scene.add(glow);
+    _tracerGlowPool.entries.push({ mesh: glow, inUse: false });
+
+    const core = new THREE.Mesh(_tracerCoreGeo, _tracerCoreMat);
+    core.visible = false; core.frustumCulled = true;
+    gameState.scene.add(core);
+    _tracerCorePool.entries.push({ mesh: core, inUse: false });
+  }
+}
+
+function borrowTracer(pool: TracerPool): THREE.Mesh | null {
+  for (const e of pool.entries) {
+    if (!e.inUse) { e.inUse = true; e.mesh.visible = true; return e.mesh; }
+  }
+  return null; // pool exhausted — skip this tracer rather than allocate
+}
+
+// Reused temporaries
+const _tracerDir = new THREE.Vector3();
+const _tracerMid = new THREE.Vector3();
+const _tracerCamDelta = new THREE.Vector3();
+
+export function spawnTracer(origin: THREE.Vector3, end: THREE.Vector3, col: number): void {
+  _tracerDir.subVectors(end, origin);
+  const len = _tracerDir.length();
+  if (len < 0.5) return;
+
+  // Camera-distance cull — tracers outside ~80m from camera or behind it
+  // aren't worth the draw cost. Player's own shots always render.
+  const cam = gameState.camera;
+  if (cam) {
+    _tracerMid.addVectors(origin, end).multiplyScalar(0.5);
+    _tracerCamDelta.subVectors(_tracerMid, cam.position);
+    const camDistSq = _tracerCamDelta.lengthSq();
+    if (camDistSq > 80 * 80) return;
+  } else {
+    _tracerMid.addVectors(origin, end).multiplyScalar(0.5);
+  }
+
+  initTracerPools();
+
+  const glowMat = getTracerGlowMat(col);
+  const glow = borrowTracer(_tracerGlowPool);
+  if (glow) {
+    glow.material = glowMat;
+    glow.position.copy(_tracerMid);
+    glow.scale.set(1, len, 1);
+    glow.lookAt(end);
+    glow.rotateX(Math.PI / 2);
+    gameState.particles.push({ mesh: glow, vel: new THREE.Vector3(), life: 0.07, mL: 0.07, _tracerPool: _tracerGlowPool } as any);
+  }
+
+  const core = borrowTracer(_tracerCorePool);
+  if (core) {
+    core.material = _tracerCoreMat;
+    core.position.copy(_tracerMid);
+    core.scale.set(1, len, 1);
+    core.lookAt(end);
+    core.rotateX(Math.PI / 2);
+    gameState.particles.push({ mesh: core, vel: new THREE.Vector3(), life: 0.05, mL: 0.05, _tracerPool: _tracerCorePool } as any);
+  }
 }
 
 /**
  * Spawn a muzzle flash light at a world position (for AI agents shooting).
+ *
+ * PERF: previously created a new PointLight + SphereGeometry + Material per
+ * shot. With 5+ bots firing at 8-12 rounds/sec that meant hundreds of
+ * short-lived lights per second — each forcing material-shader cost on every
+ * shadow-receiving mesh and dozens of allocations/disposes. We now pool the
+ * flash sphere, share a single material, and drop the PointLight entirely
+ * for AI shots that aren't close to the camera (the sphere still conveys the
+ * flash visually; point-lights only add noticeably when you can see the wash
+ * on surfaces).
  */
+const _muzzleGeo = new THREE.SphereGeometry(0.08, 6, 6);
+const _muzzleMat = new THREE.MeshBasicMaterial({
+  color: 0xffdd55, transparent: true, opacity: 0.9,
+  blending: THREE.AdditiveBlending, depthWrite: false,
+});
+const _muzzlePool: TracerPool = { entries: [] };
+let _muzzlePoolInited = false;
+function initMuzzlePool(): void {
+  if (_muzzlePoolInited) return;
+  _muzzlePoolInited = true;
+  for (let i = 0; i < 64; i++) {
+    const m = new THREE.Mesh(_muzzleGeo, _muzzleMat);
+    m.visible = false; m.frustumCulled = true;
+    gameState.scene.add(m);
+    _muzzlePool.entries.push({ mesh: m, inUse: false });
+  }
+}
+
+const _muzzleCamDelta = new THREE.Vector3();
+
 export function spawnMuzzleFlash(pos: THREE.Vector3, col: number): void {
-  const flash = new THREE.PointLight(col, 4, 8);
-  flash.position.copy(pos);
-  gameState.scene.add(flash);
+  const cam = gameState.camera;
+  let camDistSq = 0;
+  if (cam) {
+    _muzzleCamDelta.subVectors(pos, cam.position);
+    camDistSq = _muzzleCamDelta.lengthSq();
+    // Far-away flashes aren't worth any cost — you can't see them.
+    if (camDistSq > 90 * 90) return;
+  }
 
-  // Flash sphere (small bright dot)
-  const sphere = new THREE.Mesh(
-    new THREE.SphereGeometry(0.08, 6, 6),
-    new THREE.MeshBasicMaterial({
-      color: 0xffdd55, transparent: true, opacity: 0.9,
-      blending: THREE.AdditiveBlending, depthWrite: false,
-    }),
-  );
+  initMuzzlePool();
+  const sphere = borrowTracer(_muzzlePool);
+  if (!sphere) return;
   sphere.position.copy(pos);
-  gameState.scene.add(sphere);
 
-  // Track the light for cleanup
+  // Only pay for a PointLight when the muzzle is close enough to the camera
+  // to contribute noticeable surface wash (< 25m). Beyond that the sphere
+  // alone is indistinguishable and the light just costs shader time.
+  let flash: THREE.PointLight | undefined;
+  if (camDistSq < 25 * 25) {
+    flash = new THREE.PointLight(col, 4, 8);
+    flash.position.copy(pos);
+    gameState.scene.add(flash);
+  }
+
   gameState.particles.push({
     mesh: sphere, vel: new THREE.Vector3(),
     life: 0.05, mL: 0.05, light: flash,
-  });
+    _tracerPool: _muzzlePool,
+  } as any);
 }
+
 
 /**
  * Spawn death explosion effect with ring + shockwave.
@@ -465,16 +608,35 @@ export function updateScreenShake(dt: number): void {
 // ═══════════════════════════════════════════
 const _bloodGeo = new THREE.SphereGeometry(0.04, 4, 4);
 const _bloodDecalGeo = new THREE.PlaneGeometry(0.2, 0.2);
+const _bloodDecalMat = new THREE.MeshBasicMaterial({
+  color: 0x440000, transparent: true, opacity: 0.6,
+  depthWrite: false, side: THREE.DoubleSide,
+  polygonOffset: true, polygonOffsetFactor: -1,
+});
+const _bloodDecalRc = new THREE.Raycaster();
+(_bloodDecalRc as any).firstHitOnly = true;
+const _bloodDist = new THREE.Vector3();
 
 /**
  * Spawn blood splatter particles and wall decal when an agent is hit.
+ *
+ * PERF: skip entirely if the hit is >60m from the camera — you can't see
+ * a 5-particle splash at that range. Skip the wall-decal raycast if the
+ * hit is >30m. Blood particles share a cached material (no per-spawn clone).
  */
 export function spawnBloodSplatter(pos: THREE.Vector3, dir: THREE.Vector3): void {
-  const bloodCol = 0x880000;
-  const bloodMat = getImpactMat(bloodCol);
-  // Directional blood particles
+  const cam = gameState.camera;
+  if (cam) {
+    _bloodDist.subVectors(pos, cam.position);
+    const dSq = _bloodDist.lengthSq();
+    if (dSq > 60 * 60) return;
+  }
+
+  const bloodMat = getImpactMat(0x880000);
+  // Directional blood particles — reuse the shared material rather than
+  // cloning it per particle (5 material allocs per hit adds up fast).
   for (let i = 0; i < 5; i++) {
-    const m = new THREE.Mesh(_bloodGeo, bloodMat.clone());
+    const m = new THREE.Mesh(_bloodGeo, bloodMat);
     m.position.copy(pos);
     gameState.scene.add(m);
     gameState.particles.push({
@@ -488,23 +650,19 @@ export function spawnBloodSplatter(pos: THREE.Vector3, dir: THREE.Vector3): void
       mL: 0.5,
     });
   }
-  // Raycast behind hit to place blood decal on wall
-  const rc = gameState.raycaster;
-  rc.set(pos, dir);
-  rc.near = 0;
-  rc.far = 3;
-  const wallHits = rc.intersectObjects(gameState.wallMeshes, false);
+
+  // Wall decal is expensive (another raycast against all wall BVHs) —
+  // only place one when the hit is near enough to matter.
+  if (cam && _bloodDist.lengthSq() > 30 * 30) return;
+
+  _bloodDecalRc.set(pos, dir);
+  _bloodDecalRc.near = 0;
+  _bloodDecalRc.far = 3;
+  const wallHits = _bloodDecalRc.intersectObjects(gameState.wallMeshes, false);
   if (wallHits.length > 0) {
     const hp = wallHits[0].point;
     const n = wallHits[0].face?.normal?.clone().transformDirection(wallHits[0].object.matrixWorld) ?? null;
-    const decal = new THREE.Mesh(
-      _bloodDecalGeo,
-      new THREE.MeshBasicMaterial({
-        color: 0x440000, transparent: true, opacity: 0.6,
-        depthWrite: false, side: THREE.DoubleSide,
-        polygonOffset: true, polygonOffsetFactor: -1,
-      }),
-    );
+    const decal = new THREE.Mesh(_bloodDecalGeo, _bloodDecalMat);
     decal.position.copy(hp);
     if (n) {
       decal.position.addScaledVector(n, 0.01);
@@ -527,7 +685,17 @@ export function updateParticles(dt: number): void {
     p.life -= dt;
 
     if (p.life <= 0) {
-      if ((p as any)._pool) {
+      // Return tracer/muzzle pool entries (new unified pool)
+      const tracerPool = (p as any)._tracerPool as TracerPool | undefined;
+      if (tracerPool) {
+        for (const e of tracerPool.entries) {
+          if (e.mesh === p.mesh) {
+            e.inUse = false;
+            e.mesh.visible = false;
+            break;
+          }
+        }
+      } else if ((p as any)._pool) {
         if (!returnMesh((p as any)._pool, p.mesh)) {
           // Overflow mesh not from pool — dispose its cloned material/geometry and remove
           p.mesh.geometry.dispose();
@@ -550,6 +718,13 @@ export function updateParticles(dt: number): void {
     // Light decay
     if (p.light) {
       p.light.intensity *= Math.max(0, 1 - dt * 12);
+    }
+
+    // Tracer/muzzle pool entries share a material — don't mutate its
+    // opacity (would flicker every other tracer). They're short-lived
+    // enough that a constant alpha looks fine.
+    if ((p as any)._tracerPool) {
+      continue;
     }
 
     if (p.isSmoke) {

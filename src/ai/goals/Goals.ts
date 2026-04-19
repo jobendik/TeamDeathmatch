@@ -113,7 +113,7 @@ export class MoveToPositionGoal extends YUKA.Goal<TDMAgent> {
     if (ag.arriveB) ag.arriveB.weight = 0;
 
     if (!ag.navRuntime.path && !ag.navRuntime.pathPending) {
-      this.status = YUKA.Goal.STATUS.COMPLETED;
+      this.status = YUKA.Goal.STATUS.FAILED;
     }
     if (ag.stateTime > 8) {
       this.status = YUKA.Goal.STATUS.COMPLETED; // timeout fallback
@@ -132,6 +132,7 @@ export class EngageCombatGoal extends YUKA.Goal<TDMAgent> {
     const ag = this.owner;
     ag.stateName = 'ENGAGE';
     ag.stateTime = 0;
+    ag.navRuntime.clearPath();
     this.status = YUKA.Goal.STATUS.ACTIVE;
   }
 
@@ -311,6 +312,7 @@ export class PeekGoal extends YUKA.Goal<TDMAgent> {
     }
     const baseDuration = 0.6 + Math.random() * 0.8;
     this.peekDuration = baseDuration * (1 - ag.pressureLevel * 0.5);
+    ag.navRuntime.clearPath();
     this.status = YUKA.Goal.STATUS.ACTIVE;
   }
 
@@ -375,8 +377,10 @@ export class FlankGoal extends YUKA.Goal<TDMAgent> {
     if (ag.arriveB) ag.arriveB.weight = 0;
     if (ag.seekB) ag.seekB.weight = 0;
 
-    if (!ag.navRuntime.path && !ag.navRuntime.pathPending && this.flankPos && ag.position.distanceTo(this.flankPos) < 4) {
-      this.status = YUKA.Goal.STATUS.COMPLETED;
+    if (!ag.navRuntime.path && !ag.navRuntime.pathPending) {
+      this.status = this.flankPos && ag.position.distanceTo(this.flankPos) < 4
+        ? YUKA.Goal.STATUS.COMPLETED
+        : YUKA.Goal.STATUS.FAILED;
     }
     if (ag.stateTime > 8) {
       this.status = YUKA.Goal.STATUS.COMPLETED;
@@ -428,8 +432,10 @@ export class SeekPickupGoal extends YUKA.Goal<TDMAgent> {
     if (ag.seekB) ag.seekB.weight = 0;
     if (ag.arriveB) ag.arriveB.weight = 0;
 
-    if (!ag.navRuntime.path && !ag.navRuntime.pathPending && ag.seekPickupPos && ag.position.distanceTo(ag.seekPickupPos) < 3) {
-      this.status = YUKA.Goal.STATUS.COMPLETED;
+    if (!ag.navRuntime.path && !ag.navRuntime.pathPending) {
+      this.status = ag.seekPickupPos && ag.position.distanceTo(ag.seekPickupPos) < 3
+        ? YUKA.Goal.STATUS.COMPLETED
+        : YUKA.Goal.STATUS.FAILED;
     }
     if (ag.weaponId !== 'unarmed' && ag.currentTarget && ag.position.distanceTo(ag.currentTarget.position) < 12) {
       this.status = YUKA.Goal.STATUS.FAILED;
@@ -453,6 +459,7 @@ export class TeamPushGoal extends YUKA.Goal<TDMAgent> {
     const ag = this.owner;
     ag.stateName = 'TEAM_PUSH';
     ag.stateTime = 0;
+    ag.navRuntime.clearPath();
     this.status = YUKA.Goal.STATUS.ACTIVE;
   }
 
