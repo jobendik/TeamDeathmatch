@@ -16,13 +16,7 @@ function disposeMeshChildren(grp: THREE.Group): void {
 /**
  * Add a floating HP bar above an agent's mesh.
  */
-export function addHPBar(ag: TDMAgent): void {
-  // Dispose existing HP bar if re-adding
-  if (ag.hpBarGroup) {
-    disposeMeshChildren(ag.hpBarGroup);
-    ag.hpBarGroup.parent?.remove(ag.hpBarGroup);
-  }
-
+export function createHPBarGroup(): { group: THREE.Group; fg: THREE.Mesh } {
   const grp = new THREE.Group();
 
   const bg = new THREE.Mesh(
@@ -45,6 +39,18 @@ export function addHPBar(ag: TDMAgent): void {
   grp.add(fg);
 
   grp.position.y = 2.3;
+  return { group: grp, fg };
+}
+
+export function addHPBar(ag: TDMAgent): void {
+  // Dispose existing HP bar if re-adding
+  if (ag.hpBarGroup) {
+    disposeMeshChildren(ag.hpBarGroup);
+    ag.hpBarGroup.parent?.remove(ag.hpBarGroup);
+  }
+
+  const { group, fg } = createHPBarGroup();
+  const grp = group;
   ag.renderComponent!.add(grp);
   ag.hpBarGroup = grp;
   ag.hpBarFg = fg;

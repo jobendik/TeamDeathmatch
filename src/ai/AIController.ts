@@ -13,7 +13,7 @@ import { hitscanShot, shotgunBlast, spawnRocket, spawnGrenade } from '@/combat/H
 import { spawnMuzzleFlash } from '@/combat/Particles';
 import { keepInside, getFloorY } from '@/entities/Player';
 import { updateAim, getAimDirection } from './HumanAim';
-import { playFootstep, playBotCallout } from '@/audio/SoundHooks';
+import { playFootstep, playBotCallout, playReload } from '@/audio/SoundHooks';
 import { CLASS_CONFIGS } from '@/config/classes';
 import { WEAPONS, CLASS_DEFAULT_WEAPON, type WeaponId } from '@/config/weapons';
 
@@ -520,6 +520,7 @@ export function updateAI(ag: TDMAgent, dt: number): void {
       } else if (ag.ammo <= 0) {
         ag.isReloading = true;
         ag.reloadTimer = ag.reloadTime;
+        playReload(false, new THREE.Vector3(ag.position.x, 1.2, ag.position.z), ag.weaponId);
         // BotVoice — reload callout
         BotVoice.onReload(agentToCalloutSource(ag));
         if (ag.team === gameState.player.team) {
@@ -601,6 +602,7 @@ export function updateAI(ag: TDMAgent, dt: number): void {
       if (ag.ammo < ag.magSize * 0.6 && Math.random() < 0.02) {
         ag.isReloading = true;
         ag.reloadTimer = ag.reloadTime;
+        playReload(false, new THREE.Vector3(ag.position.x, 1.2, ag.position.z), ag.weaponId);
       }
     }
 

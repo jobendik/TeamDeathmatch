@@ -45,6 +45,7 @@ export interface Bullet {
   isGrenade?: boolean;
   splashRadius?: number;
   grenadeType?: 'frag' | 'smoke' | 'flash';
+  release?: (() => void) | null;
 }
 
 export interface Particle {
@@ -56,6 +57,9 @@ export interface Particle {
   isSmoke?: boolean;
   light?: THREE.PointLight;
   _pool?: any;
+  _sharedGeometry?: boolean;
+  _sharedMaterial?: boolean;
+  _lightPool?: any;
 }
 
 export interface Pickup {

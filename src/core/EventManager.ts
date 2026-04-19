@@ -13,7 +13,7 @@ import { getPlayerInventory, setBRActiveSlotByOrder, syncInventoryFromCombat, to
 import { getAmmoPool, getAttachmentModifiers } from '@/br/Inventory';
 import { requestJump, toggleCrouch, setLean, attemptSlide, movement } from '@/movement/MovementController';
 import { Audio } from '@/audio/AudioManager';
-import { playEmptyClick, playWeaponSwap } from '@/audio/SoundHooks';
+import { playEmptyClick, playWeaponSwap, playReload } from '@/audio/SoundHooks';
 import { applyPlayerRecoil } from '@/combat/Recoil';
 import { getSuppressionSpreadMul } from '@/combat/Suppression';
 import { shakeOnShot } from '@/movement/CameraShake';
@@ -124,6 +124,7 @@ function startReload(): void {
   gameState.pReloadDuration = wep.reloadTime * tacMul * reloadMul;
   dom.reloadBar.classList.add('on');
   dom.reloadText.classList.add('on');
+  playReload(gameState.pAmmo > 0, true, undefined, gameState.pWeaponId);
 }
 
 function switchWeapon(slot: number): void {
@@ -168,9 +169,12 @@ export function onShoot(): void {
   if (gameState.pWeaponId === 'unarmed') return; // can't shoot unarmed
   if (gameState.pShootTimer > 0) return;
   if (isPlayerInAir()) return; // no shooting during BR drop
-  // Sprint-to-fire delay — can't shoot while sprinting or within 150ms of stopping
-  if (movement.isSprinting) return;
-  if (movement.sprintT > 0.3) return; // sprintT decays at dt*8, ~150ms to drop below 0.3
+  // Firing forcefully and instantly cancels sprinting so the shot is never eaten.
+  if (movement.isSprinting || movement.isTacSprinting || movement.sprintT > 0) {
+    movement.isSprinting = false;
+    movement.isTacSprinting = false;
+    movement.sprintT = 0; // eliminate sprint-to-fire delay for responsiveness
+  }
 
   const { player, pWeaponId } = gameState;
   const wep = WEAPONS[pWeaponId];

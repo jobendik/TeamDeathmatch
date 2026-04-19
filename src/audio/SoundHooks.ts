@@ -52,7 +52,7 @@ const WEAPON_RELOAD_SOUND: Record<WeaponId, string> = {
   assault_rifle: 'reload_ar',
   shotgun: 'reload_shotgun',
   sniper_rifle: 'reload_sniper',
-  rocket_launcher: 'reload',
+  rocket_launcher: 'reload_rocket',
 };
 
 const FOOTSTEP_POOL = ['footstep_1', 'footstep_2', 'footstep_3', 'footstep_4', 'footstep_5', 'footstep_6'];
@@ -122,8 +122,20 @@ export function playFootstep(pos: THREE.Vector3, fromPlayer = false, sprintMul =
   }
 }
 
-export function playReload(fromPlayer = false, pos?: THREE.Vector3, weaponId?: WeaponId): void {
-  const id = weaponId ? WEAPON_RELOAD_SOUND[weaponId] : 'reload';
+export function playReload(isTactical: boolean, fromPlayer = false, pos?: THREE.Vector3, weaponId?: WeaponId): void {
+  const baseId = weaponId ? WEAPON_RELOAD_SOUND[weaponId] : 'reload';
+  let id = baseId;
+
+  if (isTactical) {
+    if (weaponId === 'smg') id = 'load_smg';
+    else if (weaponId === 'assault_rifle') id = 'load_ar';
+    else if (weaponId === 'sniper_rifle') id = 'load_sniper';
+    else id = baseId;
+  } else {
+    if (weaponId === 'shotgun') id = 'shotgun_cock';
+    else id = baseId;
+  }
+
   if (fromPlayer) Audio.play(id, { volume: 0.85 });
   else if (pos) Audio.play(id, { pos, volume: 0.6 });
 }

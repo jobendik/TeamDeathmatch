@@ -277,7 +277,7 @@ export function updateMovement(dt: number): {
   // ── Tactical sprint cooldown ──
   if (movement.tacSprintCooldown > 0) movement.tacSprintCooldown -= dt;
 
-  const wantingToSprint = keys.shift && keys.w && !movement.isCrouching && !gameState.isADS;
+  const wantingToSprint = keys.shift && keys.w && !movement.isCrouching && !gameState.isADS && !gameState.mouseHeld;
   movement.isSprinting = wantingToSprint && movement.isGrounded;
 
   // Tactical sprint: faster tier with limited duration

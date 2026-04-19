@@ -4,16 +4,70 @@ import { gameState } from '@/core/GameState';
 // ── Particle mesh pool ──
 // Pre-allocate meshes to avoid GC spikes from frequent new THREE.Mesh() calls.
 const POOL_SIZE = 128;
+const BLOOD_POOL_SIZE = 96;
+const BLOOD_DECAL_POOL_SIZE = 32;
+const SHELL_POOL_SIZE = 40;
+const SMOKE_PUFF_POOL_SIZE = 48;
+const TRAIL_SMOKE_POOL_SIZE = 96;
+const TRAIL_EMBER_POOL_SIZE = 96;
+const RING_POOL_SIZE = 16;
 
 interface PoolEntry { mesh: THREE.Mesh; inUse: boolean; }
 const _impactPool: PoolEntry[] = [];
 const _sparkPool: PoolEntry[] = [];
+const _smokePuffPool: PoolEntry[] = [];
+const _trailSmokePool: PoolEntry[] = [];
+const _trailEmberPool: PoolEntry[] = [];
+const _deathRingPool: PoolEntry[] = [];
+const _shockRingPool: PoolEntry[] = [];
+const _scorchPool: PoolEntry[] = [];
+const _bloodPool: PoolEntry[] = [];
+const _bloodDecalPool: PoolEntry[] = [];
+const _shellPool: PoolEntry[] = [];
+
+interface LightPoolEntry { light: THREE.PointLight; inUse: boolean; }
+const _transientLightPool: LightPoolEntry[] = [];
+const TRANSIENT_LIGHT_POOL_SIZE = 16;
+let _transientLightsInited = false;
 
 // Shared geometry/material for impact particles to avoid per-spawn allocations
 const _impactGeo = new THREE.SphereGeometry(0.06, 4, 4);
 const _sparkGeo = new THREE.SphereGeometry(0.03, 3, 3);
 const _smokePuffGeo = new THREE.SphereGeometry(0.2, 5, 5);
 const _impactMatCache = new Map<number, THREE.MeshBasicMaterial>();
+const _sharedBasicMatCache = new Map<string, THREE.MeshBasicMaterial>();
+const _deathRingGeo = new THREE.RingGeometry(0.1, 1.4, 24);
+const _shockRingGeo = new THREE.RingGeometry(0.2, 0.5, 20);
+const _scorchGeo = new THREE.RingGeometry(0.3, 1, 20);
+const _bloodMat = getImpactMat(0x880000);
+const _trailSmokeMat = getSharedBasicMat(0x666666, 0.45);
+const _trailEmberMat = getSharedBasicMat(0xff6600, 0.9, true, THREE.FrontSide, false);
+const _explosionSmokeMat = getSharedBasicMat(0x222222, 0.5);
+const _shockRingMat = getSharedBasicMat(0xffffff, 0.4, true, THREE.DoubleSide, false);
+const _bloodDecalMatShared = getSharedBasicMat(0x440000, 0.6, false, THREE.DoubleSide, false);
+
+function getSharedBasicMat(
+  col: number,
+  opacity = 1,
+  additive = false,
+  side: THREE.Side = THREE.FrontSide,
+  depthWrite = true,
+): THREE.MeshBasicMaterial {
+  const key = `${col}:${opacity}:${additive ? 1 : 0}:${side}:${depthWrite ? 1 : 0}`;
+  let mat = _sharedBasicMatCache.get(key);
+  if (!mat) {
+    mat = new THREE.MeshBasicMaterial({
+      color: col,
+      transparent: opacity < 1 || additive,
+      opacity,
+      side,
+      depthWrite,
+      blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending,
+    });
+    _sharedBasicMatCache.set(key, mat);
+  }
+  return mat;
+}
 
 function getImpactMat(col: number): THREE.MeshBasicMaterial {
   let mat = _impactMatCache.get(col);
@@ -33,6 +87,7 @@ function borrowMesh(pool: PoolEntry[], geo: THREE.BufferGeometry, mat: THREE.Mes
       (m.material as THREE.MeshBasicMaterial).copy(mat);
       m.visible = true;
       m.scale.setScalar(1);
+      m.rotation.set(0, 0, 0);
       return m;
     }
   }
@@ -52,6 +107,118 @@ function returnMesh(pool: PoolEntry[], mesh: THREE.Mesh): boolean {
   return false; // not from pool — scene.remove as before
 }
 
+function initTransientLightPool(): void {
+  if (_transientLightsInited) return;
+  _transientLightsInited = true;
+  for (let i = 0; i < TRANSIENT_LIGHT_POOL_SIZE; i++) {
+    const light = new THREE.PointLight(0xffaa55, 0, 8);
+    light.castShadow = false;
+    gameState.scene.add(light);
+    _transientLightPool.push({ light, inUse: false });
+  }
+}
+
+function borrowTransientLight(col: number, intensity: number, distance: number): THREE.PointLight | undefined {
+  initTransientLightPool();
+  for (const entry of _transientLightPool) {
+    if (entry.inUse) continue;
+    entry.inUse = true;
+    entry.light.color.setHex(col);
+    entry.light.intensity = intensity;
+    entry.light.distance = distance;
+    return entry.light;
+  }
+  return undefined;
+}
+
+function returnTransientLight(light: THREE.PointLight): boolean {
+  for (const entry of _transientLightPool) {
+    if (entry.light !== light) continue;
+    entry.inUse = false;
+    entry.light.intensity = 0;
+    entry.light.distance = 0;
+    return true;
+  }
+  return false;
+}
+
+let _combatFxWarmupGroup: THREE.Group | null = null;
+let _combatFxWarmupLight: THREE.PointLight | null = null;
+
+export function attachCombatFXWarmupProxies(): void {
+  if (_combatFxWarmupGroup || !gameState.scene || !gameState.camera) return;
+  initTransientLightPool();
+
+  const cam = gameState.camera;
+  const group = new THREE.Group();
+  group.position.copy(cam.position);
+  group.position.z -= 2.5;
+  group.position.y += 1.5;
+
+  const warmMeshes: Array<THREE.Mesh> = [
+    new THREE.Mesh(_impactGeo, getSharedBasicMat(0xff6600, 1, true, THREE.FrontSide, false)),
+    new THREE.Mesh(_smokePuffGeo, _explosionSmokeMat),
+    new THREE.Mesh(_deathRingGeo, getSharedBasicMat(0xff6644, 0.8, false, THREE.DoubleSide, true)),
+    new THREE.Mesh(_shockRingGeo, _shockRingMat),
+    new THREE.Mesh(_bloodGeo, _bloodMat),
+    new THREE.Mesh(_bloodDecalGeo, _bloodDecalMatShared),
+    new THREE.Mesh(_scorchGeo, getSharedBasicMat(0xff6600, 0.7, true, THREE.DoubleSide, false)),
+  ];
+
+  warmMeshes.forEach((mesh, index) => {
+    mesh.position.set((index - 3) * 0.18, 0, 0);
+    group.add(mesh);
+  });
+
+  gameState.scene.add(group);
+  _combatFxWarmupGroup = group;
+
+  const light = borrowTransientLight(0xffaa55, 1.5, 10);
+  if (light) {
+    light.position.copy(group.position);
+    _combatFxWarmupLight = light;
+  }
+}
+
+export function detachCombatFXWarmupProxies(): void {
+  if (_combatFxWarmupGroup) {
+    gameState.scene.remove(_combatFxWarmupGroup);
+    _combatFxWarmupGroup.clear();
+    _combatFxWarmupGroup = null;
+  }
+  if (_combatFxWarmupLight) {
+    returnTransientLight(_combatFxWarmupLight);
+    _combatFxWarmupLight = null;
+  }
+}
+
+function cleanupParticleVisual(p: typeof gameState.particles[number], scene: THREE.Scene): void {
+  const tracerPool = (p as any)._tracerPool as TracerPool | undefined;
+  if (tracerPool) {
+    for (const e of tracerPool.entries) {
+      if (e.mesh === p.mesh) {
+        e.inUse = false;
+        e.mesh.visible = false;
+        break;
+      }
+    }
+  } else if ((p as any)._pool) {
+    if (!returnMesh((p as any)._pool, p.mesh)) {
+      scene.remove(p.mesh);
+      if (!p._sharedGeometry) p.mesh.geometry.dispose();
+      if (!p._sharedMaterial) (p.mesh.material as THREE.Material).dispose();
+    }
+  } else {
+    scene.remove(p.mesh);
+    if (!p._sharedGeometry) p.mesh.geometry.dispose();
+    if (!p._sharedMaterial) (p.mesh.material as THREE.Material).dispose();
+  }
+
+  if (p.light) {
+    if (!returnTransientLight(p.light)) scene.remove(p.light);
+  }
+}
+
 /** Initialize mesh pools. Call once after scene is ready. */
 export function initParticlePools(): void {
   const defaultMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true });
@@ -67,11 +234,73 @@ export function initParticlePools(): void {
     _sparkPool.push({ mesh: sm, inUse: false });
   }
 
+  for (let i = 0; i < SMOKE_PUFF_POOL_SIZE; i++) {
+    const puff = new THREE.Mesh(_smokePuffGeo, _explosionSmokeMat.clone());
+    puff.visible = false;
+    gameState.scene.add(puff);
+    _smokePuffPool.push({ mesh: puff, inUse: false });
+  }
+
+  for (let i = 0; i < TRAIL_SMOKE_POOL_SIZE; i++) {
+    const smoke = new THREE.Mesh(_smokeGeo, _trailSmokeMat.clone());
+    smoke.visible = false;
+    gameState.scene.add(smoke);
+    _trailSmokePool.push({ mesh: smoke, inUse: false });
+  }
+
+  for (let i = 0; i < TRAIL_EMBER_POOL_SIZE; i++) {
+    const ember = new THREE.Mesh(_trailEmberGeo, _trailEmberMat.clone());
+    ember.visible = false;
+    gameState.scene.add(ember);
+    _trailEmberPool.push({ mesh: ember, inUse: false });
+  }
+
+  for (let i = 0; i < RING_POOL_SIZE; i++) {
+    const deathRing = new THREE.Mesh(_deathRingGeo, defaultMat.clone());
+    deathRing.visible = false;
+    gameState.scene.add(deathRing);
+    _deathRingPool.push({ mesh: deathRing, inUse: false });
+
+    const shockRing = new THREE.Mesh(_shockRingGeo, defaultMat.clone());
+    shockRing.visible = false;
+    gameState.scene.add(shockRing);
+    _shockRingPool.push({ mesh: shockRing, inUse: false });
+
+    const scorch = new THREE.Mesh(_scorchGeo, defaultMat.clone());
+    scorch.visible = false;
+    gameState.scene.add(scorch);
+    _scorchPool.push({ mesh: scorch, inUse: false });
+  }
+
+  for (let i = 0; i < BLOOD_POOL_SIZE; i++) {
+    const blood = new THREE.Mesh(_bloodGeo, _bloodMat.clone());
+    blood.visible = false;
+    gameState.scene.add(blood);
+    _bloodPool.push({ mesh: blood, inUse: false });
+  }
+
+  for (let i = 0; i < BLOOD_DECAL_POOL_SIZE; i++) {
+    const decal = new THREE.Mesh(_bloodDecalGeo, _bloodDecalMat.clone());
+    decal.visible = false;
+    gameState.scene.add(decal);
+    _bloodDecalPool.push({ mesh: decal, inUse: false });
+  }
+
+  for (let i = 0; i < SHELL_POOL_SIZE; i++) {
+    const shell = new THREE.Mesh(_shellGeo, _shellMat.clone());
+    shell.visible = false;
+    gameState.scene.add(shell);
+    _shellPool.push({ mesh: shell, inUse: false });
+  }
+
+  initBulletHolePool();
+
   // PERF: eagerly build tracer + muzzle pools here (they were previously
   // lazily initialized on first shot, which caused a ~50-150ms stall at
   // the exact moment combat started). Pre-warming the cached material
   // variants used by AI teams also compiles their shader variants now
   // rather than mid-firefight.
+  initTransientLightPool();
   initTracerPools();
   initMuzzlePool();
 
@@ -83,6 +312,9 @@ export function initParticlePools(): void {
   getImpactMat(0xffaa44);
   getImpactMat(0xaaaaaa);
   getImpactMat(0x880000);
+  getSharedBasicMat(0xff6600, 1, true, THREE.FrontSide, false);
+  getSharedBasicMat(0xff6644, 0.8, false, THREE.DoubleSide, true);
+  getSharedBasicMat(0xff6600, 0.7, true, THREE.DoubleSide, false);
 }
 
 const _camDistScratch = new THREE.Vector3();
@@ -169,10 +401,9 @@ const _shellMat = new THREE.MeshBasicMaterial({ color: 0xccaa44 });
  * Spawn a shell casing particle ejected to the right of the camera.
  */
 export function spawnShellCasing(origin: THREE.Vector3, rightDir: THREE.Vector3): void {
-  const m = new THREE.Mesh(_shellGeo, _shellMat.clone());
+  const m = borrowMesh(_shellPool, _shellGeo, _shellMat);
   m.position.copy(origin);
   m.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, 0);
-  gameState.scene.add(m);
   gameState.particles.push({
     mesh: m,
     vel: new THREE.Vector3(
@@ -182,6 +413,8 @@ export function spawnShellCasing(origin: THREE.Vector3, rightDir: THREE.Vector3)
     ),
     life: 0.6 + Math.random() * 0.3,
     mL: 0.9,
+    _pool: _shellPool,
+    _sharedGeometry: true,
   });
 }
 
@@ -348,9 +581,8 @@ export function spawnMuzzleFlash(pos: THREE.Vector3, col: number): void {
   // alone is indistinguishable and the light just costs shader time.
   let flash: THREE.PointLight | undefined;
   if (camDistSq < 25 * 25) {
-    flash = new THREE.PointLight(col, 4, 8);
-    flash.position.copy(pos);
-    gameState.scene.add(flash);
+    flash = borrowTransientLight(col, 4, 8);
+    flash?.position.copy(pos);
   }
 
   gameState.particles.push({
@@ -368,48 +600,36 @@ export function spawnDeath(pos: THREE.Vector3, col: number): void {
   spawnImpact(pos, col, 22);
 
   // Death flash light
-  const flash = new THREE.PointLight(col, 6, 12);
-  flash.position.copy(pos);
-  flash.position.y = 1;
-  gameState.scene.add(flash);
+  const flash = borrowTransientLight(col, 6, 12);
+  if (flash) {
+    flash.position.copy(pos);
+    flash.position.y = 1;
+  }
 
   // Expanding ring
-  const ring = new THREE.Mesh(
-    new THREE.RingGeometry(0.1, 1.4, 24),
-    new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.8, side: THREE.DoubleSide }),
+  const ring = borrowMesh(
+    _deathRingPool,
+    _deathRingGeo,
+    getSharedBasicMat(col, 0.8, false, THREE.DoubleSide, true),
   );
   ring.rotation.x = -Math.PI / 2;
   ring.position.copy(pos);
   ring.position.y = 0.08;
-  gameState.scene.add(ring);
-  gameState.particles.push({ mesh: ring, vel: new THREE.Vector3(), life: 0.7, mL: 0.7, isRing: true });
+  gameState.particles.push({ mesh: ring, vel: new THREE.Vector3(), life: 0.7, mL: 0.7, isRing: true, _sharedGeometry: true, _sharedMaterial: true, _pool: _deathRingPool });
 
   // Second outer shockwave ring
-  const ring2 = new THREE.Mesh(
-    new THREE.RingGeometry(0.2, 0.5, 20),
-    new THREE.MeshBasicMaterial({
-      color: 0xffffff, transparent: true, opacity: 0.4,
-      side: THREE.DoubleSide, blending: THREE.AdditiveBlending,
-    }),
-  );
+  const ring2 = borrowMesh(_shockRingPool, _shockRingGeo, _shockRingMat);
   ring2.rotation.x = -Math.PI / 2;
   ring2.position.copy(pos);
   ring2.position.y = 0.1;
-  gameState.scene.add(ring2);
-  gameState.particles.push({ mesh: ring2, vel: new THREE.Vector3(), life: 0.5, mL: 0.5, isRing: true, light: flash });
+  gameState.particles.push({ mesh: ring2, vel: new THREE.Vector3(), life: 0.5, mL: 0.5, isRing: true, light: flash, _sharedGeometry: true, _sharedMaterial: true, _pool: _shockRingPool });
 
   // Upward ember sparks
+  const emberMat = getSharedBasicMat(col, 1, true, THREE.FrontSide, false);
   for (let i = 0; i < 8; i++) {
-    const ember = new THREE.Mesh(
-      _sparkGeo,
-      new THREE.MeshBasicMaterial({
-        color: col, transparent: true, opacity: 1,
-        blending: THREE.AdditiveBlending,
-      }),
-    );
+    const ember = borrowMesh(_sparkPool, _sparkGeo, emberMat);
     ember.position.copy(pos);
     ember.position.y += 0.5;
-    gameState.scene.add(ember);
     gameState.particles.push({
       mesh: ember,
       vel: new THREE.Vector3(
@@ -419,6 +639,9 @@ export function spawnDeath(pos: THREE.Vector3, col: number): void {
       ),
       life: 0.6 + Math.random() * 0.4,
       mL: 1.0,
+      _sharedGeometry: true,
+      _sharedMaterial: true,
+      _pool: _sparkPool,
     });
   }
 }
@@ -428,24 +651,16 @@ export function spawnDeath(pos: THREE.Vector3, col: number): void {
  */
 export function spawnExplosion(pos: THREE.Vector3, radius: number): void {
   // Bright flash
-  const flash = new THREE.PointLight(0xff6600, 10, radius * 3);
-  flash.position.copy(pos);
-  gameState.scene.add(flash);
+  const flash = borrowTransientLight(0xff6600, 10, radius * 3);
+  flash?.position.copy(pos);
 
   // Fire particles
   const fireColors = [0xff6600, 0xff4400, 0xffaa00, 0xff2200];
   for (let i = 0; i < 30; i++) {
     const col = fireColors[Math.floor(Math.random() * fireColors.length)];
-    const m = new THREE.Mesh(
-      _impactGeo,
-      new THREE.MeshBasicMaterial({
-        color: col, transparent: true, opacity: 1,
-        blending: THREE.AdditiveBlending,
-      }),
-    );
+    const m = borrowMesh(_impactPool, _impactGeo, getSharedBasicMat(col, 1, true, THREE.FrontSide, false));
     m.position.copy(pos);
     const spd = 3 + Math.random() * 8;
-    gameState.scene.add(m);
     gameState.particles.push({
       mesh: m,
       vel: new THREE.Vector3(
@@ -455,21 +670,18 @@ export function spawnExplosion(pos: THREE.Vector3, radius: number): void {
       ),
       life: 0.3 + Math.random() * 0.4,
       mL: 0.7,
+      _sharedGeometry: true,
+      _sharedMaterial: true,
+      _pool: _impactPool,
     });
   }
 
   // Smoke puffs (dark, larger, slower)
   for (let i = 0; i < 6; i++) {
     const s = 0.15 + Math.random() * 0.15;
-    const m = new THREE.Mesh(
-      _smokePuffGeo,
-      new THREE.MeshBasicMaterial({
-        color: 0x222222, transparent: true, opacity: 0.5,
-      }),
-    );
+    const m = borrowMesh(_smokePuffPool, _smokePuffGeo, _explosionSmokeMat);
     m.scale.setScalar(s / 0.2);
     m.position.copy(pos);
-    gameState.scene.add(m);
     gameState.particles.push({
       mesh: m,
       vel: new THREE.Vector3(
@@ -480,22 +692,24 @@ export function spawnExplosion(pos: THREE.Vector3, radius: number): void {
       life: 0.6 + Math.random() * 0.5,
       mL: 1.1,
       isSmoke: true,
+      _sharedGeometry: true,
+      _sharedMaterial: true,
+      _pool: _smokePuffPool,
     });
   }
 
   // Ground scorch ring
-  const scorch = new THREE.Mesh(
-    new THREE.RingGeometry(0.3, radius * 0.6, 20),
-    new THREE.MeshBasicMaterial({
-      color: 0xff6600, transparent: true, opacity: 0.7,
-      side: THREE.DoubleSide, blending: THREE.AdditiveBlending,
-    }),
+  const scorch = borrowMesh(
+    _scorchPool,
+    _scorchGeo,
+    getSharedBasicMat(0xff6600, 0.7, true, THREE.DoubleSide, false),
   );
   scorch.rotation.x = -Math.PI / 2;
   scorch.position.copy(pos);
   scorch.position.y = 0.05;
-  gameState.scene.add(scorch);
-  gameState.particles.push({ mesh: scorch, vel: new THREE.Vector3(), life: 0.8, mL: 0.8, isRing: true, light: flash });
+  const scorchScale = Math.max(0.65, radius * 0.6);
+  scorch.scale.set(scorchScale, scorchScale, scorchScale);
+  gameState.particles.push({ mesh: scorch, vel: new THREE.Vector3(), life: 0.8, mL: 0.8, isRing: true, light: flash, _sharedGeometry: true, _sharedMaterial: true, _pool: _scorchPool });
 
   // Trigger screen shake for nearby player
   const playerDist = gameState.player.position.distanceTo(pos as any);
@@ -517,36 +731,31 @@ const _trailEmberGeo = new THREE.SphereGeometry(0.04, 3, 3);
  */
 export function spawnRocketTrail(pos: THREE.Vector3): void {
   // Smoke puff
-  const smoke = new THREE.Mesh(
-    _smokeGeo,
-    new THREE.MeshBasicMaterial({ color: 0x666666, transparent: true, opacity: 0.45 }),
-  );
+  const smoke = borrowMesh(_trailSmokePool, _smokeGeo, _trailSmokeMat);
   smoke.position.copy(pos);
-  gameState.scene.add(smoke);
   gameState.particles.push({
     mesh: smoke,
     vel: new THREE.Vector3((Math.random() - 0.5) * 0.8, 0.3 + Math.random() * 0.6, (Math.random() - 0.5) * 0.8),
     life: 0.35 + Math.random() * 0.25,
     mL: 0.6,
     isSmoke: true,
+    _sharedGeometry: true,
+    _sharedMaterial: true,
+    _pool: _trailSmokePool,
   });
 
   // Ember spark
   if (Math.random() < 0.6) {
-    const ember = new THREE.Mesh(
-      _trailEmberGeo,
-      new THREE.MeshBasicMaterial({
-        color: 0xff6600, transparent: true, opacity: 0.9,
-        blending: THREE.AdditiveBlending, depthWrite: false,
-      }),
-    );
+    const ember = borrowMesh(_trailEmberPool, _trailEmberGeo, _trailEmberMat);
     ember.position.copy(pos);
-    gameState.scene.add(ember);
     gameState.particles.push({
       mesh: ember,
       vel: new THREE.Vector3((Math.random() - 0.5) * 2, Math.random() * 1.5, (Math.random() - 0.5) * 2),
       life: 0.12 + Math.random() * 0.12,
       mL: 0.24,
+      _sharedGeometry: true,
+      _sharedMaterial: true,
+      _pool: _trailEmberPool,
     });
   }
 }
@@ -563,10 +772,25 @@ const _decalMat = new THREE.MeshBasicMaterial({
   polygonOffset: true, polygonOffsetFactor: -1,
 });
 const MAX_DECALS = 64;
-const _decals: THREE.Mesh[] = [];
+const _decalPool: THREE.Mesh[] = [];
+let _decalCursor = 0;
+
+function initBulletHolePool(): void {
+  if (_decalPool.length > 0) return;
+  for (let i = 0; i < MAX_DECALS; i++) {
+    const decal = new THREE.Mesh(_decalGeo, _decalMat);
+    decal.visible = false;
+    gameState.scene.add(decal);
+    _decalPool.push(decal);
+  }
+}
 
 export function spawnBulletHole(pos: THREE.Vector3, normal: THREE.Vector3 | null): void {
-  const decal = new THREE.Mesh(_decalGeo, _decalMat);
+  initBulletHolePool();
+  const decal = _decalPool[_decalCursor];
+  _decalCursor = (_decalCursor + 1) % MAX_DECALS;
+  decal.visible = true;
+  decal.scale.set(1, 1, 1);
   decal.position.copy(pos);
   if (normal) {
     decal.position.addScaledVector(normal, 0.01);
@@ -574,12 +798,6 @@ export function spawnBulletHole(pos: THREE.Vector3, normal: THREE.Vector3 | null
   } else {
     decal.rotation.x = -Math.PI / 2;
     decal.position.y = 0.02;
-  }
-  gameState.scene.add(decal);
-  _decals.push(decal);
-  if (_decals.length > MAX_DECALS) {
-    const old = _decals.shift()!;
-    gameState.scene.remove(old);
   }
 }
 
@@ -608,11 +826,7 @@ export function updateScreenShake(dt: number): void {
 // ═══════════════════════════════════════════
 const _bloodGeo = new THREE.SphereGeometry(0.04, 4, 4);
 const _bloodDecalGeo = new THREE.PlaneGeometry(0.2, 0.2);
-const _bloodDecalMat = new THREE.MeshBasicMaterial({
-  color: 0x440000, transparent: true, opacity: 0.6,
-  depthWrite: false, side: THREE.DoubleSide,
-  polygonOffset: true, polygonOffsetFactor: -1,
-});
+const _bloodDecalMat = _bloodDecalMatShared;
 const _bloodDecalRc = new THREE.Raycaster();
 (_bloodDecalRc as any).firstHitOnly = true;
 const _bloodDist = new THREE.Vector3();
@@ -632,13 +846,11 @@ export function spawnBloodSplatter(pos: THREE.Vector3, dir: THREE.Vector3): void
     if (dSq > 60 * 60) return;
   }
 
-  const bloodMat = getImpactMat(0x880000);
   // Directional blood particles — reuse the shared material rather than
-  // cloning it per particle (5 material allocs per hit adds up fast).
+  // allocating new meshes/materials per hit.
   for (let i = 0; i < 5; i++) {
-    const m = new THREE.Mesh(_bloodGeo, bloodMat);
+    const m = borrowMesh(_bloodPool, _bloodGeo, _bloodMat);
     m.position.copy(pos);
-    gameState.scene.add(m);
     gameState.particles.push({
       mesh: m,
       vel: new THREE.Vector3(
@@ -648,6 +860,8 @@ export function spawnBloodSplatter(pos: THREE.Vector3, dir: THREE.Vector3): void
       ),
       life: 0.3 + Math.random() * 0.2,
       mL: 0.5,
+      _pool: _bloodPool,
+      _sharedGeometry: true,
     });
   }
 
@@ -662,15 +876,14 @@ export function spawnBloodSplatter(pos: THREE.Vector3, dir: THREE.Vector3): void
   if (wallHits.length > 0) {
     const hp = wallHits[0].point;
     const n = wallHits[0].face?.normal?.clone().transformDirection(wallHits[0].object.matrixWorld) ?? null;
-    const decal = new THREE.Mesh(_bloodDecalGeo, _bloodDecalMat);
+    const decal = borrowMesh(_bloodDecalPool, _bloodDecalGeo, _bloodDecalMat);
     decal.position.copy(hp);
     if (n) {
       decal.position.addScaledVector(n, 0.01);
       decal.lookAt(hp.clone().add(n));
     }
-    gameState.scene.add(decal);
     // Fade out as particle
-    gameState.particles.push({ mesh: decal, vel: new THREE.Vector3(), life: 4, mL: 4 });
+    gameState.particles.push({ mesh: decal, vel: new THREE.Vector3(), life: 4, mL: 4, _pool: _bloodDecalPool, _sharedGeometry: true });
   }
 }
 
@@ -685,35 +898,13 @@ export function updateParticles(dt: number): void {
     p.life -= dt;
 
     if (p.life <= 0) {
-      // Return tracer/muzzle pool entries (new unified pool)
-      const tracerPool = (p as any)._tracerPool as TracerPool | undefined;
-      if (tracerPool) {
-        for (const e of tracerPool.entries) {
-          if (e.mesh === p.mesh) {
-            e.inUse = false;
-            e.mesh.visible = false;
-            break;
-          }
-        }
-      } else if ((p as any)._pool) {
-        if (!returnMesh((p as any)._pool, p.mesh)) {
-          // Overflow mesh not from pool — dispose its cloned material/geometry and remove
-          p.mesh.geometry.dispose();
-          (p.mesh.material as THREE.Material).dispose();
-          scene.remove(p.mesh);
-        }
-      } else {
-        p.mesh.geometry.dispose();
-        (p.mesh.material as THREE.Material).dispose();
-        scene.remove(p.mesh);
-      }
-      if (p.light) scene.remove(p.light);
+      cleanupParticleVisual(p, scene);
       particles.splice(i, 1);
       continue;
     }
 
     const t = p.life / p.mL;
-    p.mesh.position.add(p.vel.clone().multiplyScalar(dt));
+    p.mesh.position.addScaledVector(p.vel, dt);
 
     // Light decay
     if (p.light) {

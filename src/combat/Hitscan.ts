@@ -11,6 +11,137 @@ import { movement } from '@/movement/MovementController';
 import { showHitMarker } from '@/ui/HitMarkers';
 import { checkSuppressionFromShot } from './Suppression';
 
+interface ProjectilePoolEntry {
+  mesh: THREE.Mesh;
+  light: THREE.PointLight;
+  inUse: boolean;
+}
+
+const ROCKET_POOL_SIZE = 6;
+const GRENADE_POOL_SIZE = 12;
+const _rocketGeo = new THREE.CylinderGeometry(0.05, 0.05, 0.3, 6);
+const _rocketMat = new THREE.MeshStandardMaterial({ color: 0xaa4400, emissive: 0xff6600, emissiveIntensity: 2 });
+const _grenadeGeo = new THREE.SphereGeometry(0.1, 8, 8);
+const _grenadeMats: Record<GrenadeType, THREE.MeshStandardMaterial> = {
+  frag: new THREE.MeshStandardMaterial({ color: 0x445500, emissive: 0x445500, emissiveIntensity: 0.5 }),
+  smoke: new THREE.MeshStandardMaterial({ color: 0x888888, emissive: 0x888888, emissiveIntensity: 0.5 }),
+  flash: new THREE.MeshStandardMaterial({ color: 0xffffaa, emissive: 0xffffaa, emissiveIntensity: 0.5 }),
+};
+const _smokeCloudGeo = new THREE.SphereGeometry(5, 12, 12);
+const _smokeCloudMat = new THREE.MeshBasicMaterial({
+  color: 0xcccccc, transparent: true, opacity: 0.45,
+  depthWrite: false, side: THREE.DoubleSide,
+});
+const _rocketPool: ProjectilePoolEntry[] = [];
+const _grenadePool: ProjectilePoolEntry[] = [];
+let _projectilePoolsInited = false;
+let _combatProjectileWarmupGroup: THREE.Group | null = null;
+
+function initProjectilePools(): void {
+  if (_projectilePoolsInited) return;
+  _projectilePoolsInited = true;
+
+  for (let i = 0; i < ROCKET_POOL_SIZE; i++) {
+    const mesh = new THREE.Mesh(_rocketGeo, _rocketMat);
+    mesh.rotation.x = Math.PI / 2;
+    mesh.visible = false;
+    const light = new THREE.PointLight(0xff6600, 0, 6);
+    mesh.add(light);
+    gameState.scene.add(mesh);
+    _rocketPool.push({ mesh, light, inUse: false });
+  }
+
+  for (let i = 0; i < GRENADE_POOL_SIZE; i++) {
+    const mesh = new THREE.Mesh(
+      _grenadeGeo,
+      _grenadeMats.frag,
+    );
+    mesh.visible = false;
+    const light = new THREE.PointLight(0x88aa00, 0, 3);
+    mesh.add(light);
+    gameState.scene.add(mesh);
+    _grenadePool.push({ mesh, light, inUse: false });
+  }
+}
+
+function borrowProjectileEntry(pool: ProjectilePoolEntry[]): ProjectilePoolEntry | null {
+  for (const entry of pool) {
+    if (entry.inUse) continue;
+    entry.inUse = true;
+    entry.mesh.visible = true;
+    return entry;
+  }
+  return null;
+}
+
+function releaseProjectileEntry(entry: ProjectilePoolEntry): void {
+  entry.inUse = false;
+  entry.mesh.visible = false;
+  entry.light.intensity = 0;
+  entry.mesh.position.set(0, -1000, 0);
+}
+
+export function warmCombatProjectilePools(): void {
+  initProjectilePools();
+  initSmokeCloudPool();
+}
+
+export function attachCombatProjectileWarmupProxies(): void {
+  if (_combatProjectileWarmupGroup || !gameState.scene || !gameState.camera) return;
+  initProjectilePools();
+
+  const group = new THREE.Group();
+  group.position.copy(gameState.camera.position);
+  group.position.z -= 2.6;
+  group.position.y += 1.2;
+
+  const rocket = new THREE.Mesh(_rocketGeo, _rocketMat);
+  rocket.rotation.x = Math.PI / 2;
+  rocket.position.set(-0.45, 0.1, 0);
+  group.add(rocket);
+
+  const frag = new THREE.Mesh(_grenadeGeo, _grenadeMats.frag);
+  frag.position.set(-0.15, 0.05, 0);
+  group.add(frag);
+
+  const smoke = new THREE.Mesh(_grenadeGeo, _grenadeMats.smoke);
+  smoke.position.set(0.15, 0.05, 0);
+  group.add(smoke);
+
+  const flash = new THREE.Mesh(_grenadeGeo, _grenadeMats.flash);
+  flash.position.set(0.45, 0.05, 0);
+  group.add(flash);
+
+  const cloud = new THREE.Mesh(_smokeCloudGeo, _smokeCloudMat);
+  cloud.position.set(0, 0.65, -0.5);
+  cloud.scale.setScalar(0.18);
+  group.add(cloud);
+
+  gameState.scene.add(group);
+  _combatProjectileWarmupGroup = group;
+}
+
+export function detachCombatProjectileWarmupProxies(): void {
+  if (!_combatProjectileWarmupGroup) return;
+  gameState.scene.remove(_combatProjectileWarmupGroup);
+  _combatProjectileWarmupGroup.clear();
+  _combatProjectileWarmupGroup = null;
+}
+
+function releaseBullet(b: typeof gameState.bullets[number], scene: THREE.Scene): void {
+  if (b.release) {
+    b.release();
+    return;
+  }
+  b.mesh.geometry.dispose();
+  if (Array.isArray(b.mesh.material)) b.mesh.material.forEach(m => m.dispose());
+  else (b.mesh.material as THREE.Material).dispose();
+  b.mesh.children.forEach(c => {
+    if ((c as THREE.Light).isLight) (c as THREE.Light).dispose();
+  });
+  scene.remove(b.mesh);
+}
+
 export function hitscanShot(
   origin: THREE.Vector3,
   dir: THREE.Vector3,
@@ -227,21 +358,25 @@ export function spawnRocket(
   const wep = WEAPONS.rocket_launcher;
   const isPlayerShot = ownerType === 'player';
   playShot('rocket_launcher', isPlayerShot ? undefined : new THREE.Vector3(origin.x, origin.y, origin.z), isPlayerShot);
-  const mesh = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.05, 0.05, 0.3, 6),
-    new THREE.MeshStandardMaterial({ color: 0xaa4400, emissive: 0xff6600, emissiveIntensity: 2 }),
-  );
-  mesh.rotation.x = Math.PI / 2;
+  initProjectilePools();
+  const entry = borrowProjectileEntry(_rocketPool);
+  const mesh = entry?.mesh ?? new THREE.Mesh(_rocketGeo, _rocketMat.clone());
+  if (!entry) {
+    mesh.rotation.x = Math.PI / 2;
+    gameState.scene.add(mesh);
+  }
   mesh.position.copy(origin);
-  gameState.scene.add(mesh);
-
-  const trail = new THREE.PointLight(0xff6600, 2, 6);
-  mesh.add(trail);
+  const trail = entry?.light ?? new THREE.PointLight(0xff6600, 2, 6);
+  trail.color.setHex(0xff6600);
+  trail.intensity = 2;
+  trail.distance = 6;
+  if (!entry) mesh.add(trail);
 
   gameState.bullets.push({
     mesh, pl: trail, dir: dir.clone(), ownerType, ownerTeam, ownerAgent,
     dmg: wep.damage, spd: wep.projectileSpeed, life: 4,
     isRocket: true, splashRadius: wep.splashRadius,
+    release: entry ? () => releaseProjectileEntry(entry) : null,
   });
 }
 
@@ -256,35 +391,37 @@ export function spawnGrenade(
   life = GRENADE_CONFIG.fuseTime,
   grenadeType: GrenadeType = 'frag',
 ): void {
+  initProjectilePools();
   const colors: Record<GrenadeType, number> = {
     frag: 0x445500,
     smoke: 0x888888,
     flash: 0xffffaa,
   };
-  const mesh = new THREE.Mesh(
-    new THREE.SphereGeometry(0.1, 8, 8),
-    new THREE.MeshStandardMaterial({ color: colors[grenadeType], emissive: colors[grenadeType], emissiveIntensity: 0.5 }),
+  const material = _grenadeMats[grenadeType];
+  const entry = borrowProjectileEntry(_grenadePool);
+  const mesh = entry?.mesh ?? new THREE.Mesh(
+    _grenadeGeo,
+    material.clone(),
   );
   mesh.position.copy(origin);
-  gameState.scene.add(mesh);
+  if (entry) {
+    mesh.material = material;
+  } else {
+    gameState.scene.add(mesh);
+  }
 
-  const light = new THREE.PointLight(grenadeType === 'flash' ? 0xffffff : 0x88aa00, 0.5, 3);
-  mesh.add(light);
+  const light = entry?.light ?? new THREE.PointLight(grenadeType === 'flash' ? 0xffffff : 0x88aa00, 0.5, 3);
+  light.color.setHex(grenadeType === 'flash' ? 0xffffff : 0x88aa00);
+  light.intensity = 0.5;
+  light.distance = 3;
+  if (!entry) mesh.add(light);
 
   gameState.bullets.push({
     mesh, pl: light, dir: new THREE.Vector3(dir.x * GRENADE_CONFIG.throwSpeed, 6, dir.z * GRENADE_CONFIG.throwSpeed),
     ownerType, ownerTeam, ownerAgent, dmg: grenadeType === 'frag' ? GRENADE_CONFIG.damage : 0, spd: 1, life,
     isGrenade: true, splashRadius: GRENADE_CONFIG.splashRadius,
     grenadeType,
-  });
-}
-
-function disposeProjectile(mesh: THREE.Mesh): void {
-  mesh.geometry.dispose();
-  if (Array.isArray(mesh.material)) mesh.material.forEach(m => m.dispose());
-  else (mesh.material as THREE.Material).dispose();
-  mesh.children.forEach(c => {
-    if ((c as THREE.Light).isLight) (c as THREE.Light).dispose();
+    release: entry ? () => releaseProjectileEntry(entry) : null,
   });
 }
 
@@ -317,8 +454,7 @@ export function updateProjectiles(dt: number): void {
         } else {
           explode(b.mesh.position.clone(), b.splashRadius!, b.dmg, b.ownerAgent ?? null);
         }
-        disposeProjectile(b.mesh);
-        scene.remove(b.mesh);
+        releaseBullet(b, scene);
         bullets.splice(i, 1);
       }
       continue;
@@ -359,8 +495,7 @@ export function updateProjectiles(dt: number): void {
 
       if (hit || b.life <= 0) {
         explode(b.mesh.position.clone(), b.splashRadius!, b.dmg, b.ownerAgent ?? null);
-        disposeProjectile(b.mesh);
-        scene.remove(b.mesh);
+        releaseBullet(b, scene);
         bullets.splice(i, 1);
       }
       continue;
@@ -370,8 +505,7 @@ export function updateProjectiles(dt: number): void {
     b.mesh.position.y += b.dir.y * b.spd * dt;
     b.mesh.position.z += b.dir.z * b.spd * dt;
     if (b.life <= 0) {
-      disposeProjectile(b.mesh);
-      scene.remove(b.mesh);
+      releaseBullet(b, scene);
       bullets.splice(i, 1);
     }
   }
@@ -415,32 +549,58 @@ function explode(pos: THREE.Vector3, radius: number, damage: number, ownerAgent:
 }
 
 // ── Smoke grenade cloud ──
-const _smokeClouds: { pos: THREE.Vector3; mesh: THREE.Mesh; life: number }[] = [];
+interface SmokeCloudEntry {
+  pos: THREE.Vector3;
+  mesh: THREE.Mesh;
+  life: number;
+  active: boolean;
+}
+
+const SMOKE_CLOUD_POOL_SIZE = 4;
+const _smokeClouds: SmokeCloudEntry[] = [];
 const SMOKE_DURATION = 8;
 const SMOKE_RADIUS = 5;
 
+function initSmokeCloudPool(): void {
+  if (_smokeClouds.length > 0) return;
+  for (let i = 0; i < SMOKE_CLOUD_POOL_SIZE; i++) {
+    const mesh = new THREE.Mesh(_smokeCloudGeo, _smokeCloudMat.clone());
+    mesh.visible = false;
+    gameState.scene.add(mesh);
+    _smokeClouds.push({ pos: new THREE.Vector3(), mesh, life: 0, active: false });
+  }
+}
+
+function borrowSmokeCloud(): SmokeCloudEntry {
+  initSmokeCloudPool();
+  let best = _smokeClouds[0];
+  for (const cloud of _smokeClouds) {
+    if (!cloud.active) return cloud;
+    if (cloud.life < best.life) best = cloud;
+  }
+  return best;
+}
+
 function spawnSmokeCloud(pos: THREE.Vector3): void {
-  const geo = new THREE.SphereGeometry(SMOKE_RADIUS, 12, 12);
-  const mat = new THREE.MeshBasicMaterial({
-    color: 0xcccccc, transparent: true, opacity: 0.45,
-    depthWrite: false, side: THREE.DoubleSide,
-  });
-  const mesh = new THREE.Mesh(geo, mat);
+  const cloud = borrowSmokeCloud();
+  const mesh = cloud.mesh;
+  cloud.active = true;
+  cloud.life = SMOKE_DURATION;
+  cloud.pos.copy(pos);
   mesh.position.copy(pos);
   mesh.position.y = 1.5;
   mesh.scale.setScalar(0.1);
-  gameState.scene.add(mesh);
-  _smokeClouds.push({ pos: pos.clone(), mesh, life: SMOKE_DURATION });
+  mesh.visible = true;
+  (mesh.material as THREE.MeshBasicMaterial).opacity = 0.45;
 }
 
 export function resetHitscanState(): void {
   // Clear smoke clouds
   for (const s of _smokeClouds) {
-    gameState.scene.remove(s.mesh);
-    s.mesh.geometry.dispose();
-    (s.mesh.material as THREE.Material).dispose();
+    s.active = false;
+    s.life = 0;
+    s.mesh.visible = false;
   }
-  _smokeClouds.length = 0;
   // Reset flash
   _flashTimer = 0;
   if (_flashOverlay) _flashOverlay.style.opacity = '0';
@@ -449,7 +609,7 @@ export function resetHitscanState(): void {
 /** Returns true if a position is obscured by any active smoke cloud. */
 export function isInSmoke(pos: THREE.Vector3): boolean {
   for (const s of _smokeClouds) {
-    if (s.life <= 0) continue;
+    if (!s.active || s.life <= 0) continue;
     const dx = pos.x - s.pos.x;
     const dz = pos.z - s.pos.z;
     if (dx * dx + dz * dz < SMOKE_RADIUS * SMOKE_RADIUS) return true;
@@ -458,14 +618,14 @@ export function isInSmoke(pos: THREE.Vector3): boolean {
 }
 
 export function updateSmokeClouds(dt: number): void {
+  if (_smokeClouds.length === 0) return;
   for (let i = _smokeClouds.length - 1; i >= 0; i--) {
     const s = _smokeClouds[i];
+    if (!s.active) continue;
     s.life -= dt;
     if (s.life <= 0) {
-      gameState.scene.remove(s.mesh);
-      s.mesh.geometry.dispose();
-      (s.mesh.material as THREE.Material).dispose();
-      _smokeClouds.splice(i, 1);
+      s.active = false;
+      s.mesh.visible = false;
       continue;
     }
     // Fade in/out

@@ -13,6 +13,57 @@ interface FloatingNumber {
 const active: FloatingNumber[] = [];
 const POOL_SIZE = 40;
 const pool: THREE.Sprite[] = [];
+let poolInited = false;
+let warmupSprite: THREE.Sprite | null = null;
+
+const blankDamageTexture = new THREE.DataTexture(
+  new Uint8Array([255, 255, 255, 0]),
+  1,
+  1,
+  THREE.RGBAFormat,
+);
+blankDamageTexture.needsUpdate = true;
+
+function createDamageSprite(): THREE.Sprite {
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+    transparent: true,
+    depthTest: true,
+    depthWrite: false,
+    map: blankDamageTexture,
+  }));
+  sprite.renderOrder = 30;
+  sprite.visible = false;
+  return sprite;
+}
+
+export function initFloatingDamagePool(): void {
+  if (poolInited) return;
+  poolInited = true;
+  for (let i = 0; i < POOL_SIZE; i++) {
+    pool.push(createDamageSprite());
+  }
+}
+
+export function attachFloatingDamageWarmupProxy(): void {
+  if (warmupSprite || !gameState.scene || !gameState.camera) return;
+  initFloatingDamagePool();
+  warmupSprite = createDamageSprite();
+  warmupSprite.visible = true;
+  warmupSprite.position.copy(gameState.camera.position);
+  warmupSprite.position.z -= 2;
+  warmupSprite.position.y += 1.2;
+  warmupSprite.scale.set(1.2, 0.6, 1);
+  gameState.scene.add(warmupSprite);
+}
+
+export function detachFloatingDamageWarmupProxy(): void {
+  if (!warmupSprite) return;
+  gameState.scene.remove(warmupSprite);
+  const material = warmupSprite.material as THREE.SpriteMaterial;
+  if (material.map && material.map !== blankDamageTexture) material.map.dispose();
+  material.dispose();
+  warmupSprite = null;
+}
 
 function makeTextTexture(text: string, color: string, size: number, glow: string): THREE.CanvasTexture {
   const canvas = document.createElement('canvas');
@@ -47,21 +98,18 @@ function makeTextTexture(text: string, color: string, size: number, glow: string
 }
 
 function acquireSprite(): THREE.Sprite {
+  if (!poolInited) initFloatingDamagePool();
   const s = pool.pop();
   if (s) { s.visible = true; return s; }
-  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
-    transparent: true,
-    depthTest: true,
-    depthWrite: false,
-  }));
-  sprite.renderOrder = 30;
-  return sprite;
+  return createDamageSprite();
 }
 
 function releaseSprite(s: THREE.Sprite): void {
   s.visible = false;
   const mat = s.material as THREE.SpriteMaterial;
-  if (mat.map) { mat.map.dispose(); mat.map = null; }
+  if (mat.map && mat.map !== blankDamageTexture) mat.map.dispose();
+  mat.map = blankDamageTexture;
+  mat.opacity = 1;
   pool.push(s);
   gameState.scene.remove(s);
 }
@@ -121,7 +169,7 @@ export function spawnDamageNumber(worldPos: THREE.Vector3, opts: DamagePopupOpts
 
   const sprite = acquireSprite();
   const mat = sprite.material as THREE.SpriteMaterial;
-  if (mat.map) mat.map.dispose();
+  if (mat.map && mat.map !== blankDamageTexture) mat.map.dispose();
   mat.map = makeTextTexture(text, color, fontSize, glow);
   mat.opacity = 1;
 

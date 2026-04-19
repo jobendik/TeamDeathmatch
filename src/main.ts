@@ -1,5 +1,7 @@
 import '@/styles/index.css';
 
+import * as THREE from 'three';
+
 import { Audio } from '@/audio/AudioManager';
 import { initScene } from '@/core/SceneSetup';
 import { bindEvents } from '@/core/EventManager';
@@ -11,15 +13,16 @@ import { buildAgents } from '@/entities/AgentFactory';
 import { buildPickups } from '@/combat/Pickups';
 import { buildObjectives } from '@/combat/Objectives';
 import { AsyncPathPlanner } from '@/ai/navigation/PathPlanner';
-import { initViewmodel, preloadViewmodels } from '@/rendering/WeaponViewmodel';
+import { initViewmodel, preloadViewmodels, precompileViewmodelScene } from '@/rendering/WeaponViewmodel';
 import { initMenus } from '@/ui/Menus';
 import { initSettings } from '@/ui/Settings';
-import { initAmbientDust, initParticlePools } from '@/combat/Particles';
+import { initAmbientDust, initParticlePools, attachCombatFXWarmupProxies, detachCombatFXWarmupProxies } from '@/combat/Particles';
 import { updateHUD } from '@/ui/HUD';
 import { updateScoreboard } from '@/ui/Scoreboard';
 import { initPostProcess } from '@/rendering/PostProcess';
 import { initScreenFX } from '@/rendering/ScreenFX';
 import { setPostFX } from '@/rendering/PostProcess.Bridge';
+import { initFloatingDamagePool, attachFloatingDamageWarmupProxy, detachFloatingDamageWarmupProxy } from '@/ui/FloatingDamage';
 
 // MORESCRIPTS — new system imports
 import { initPlayerProfile } from '@/core/PlayerProfile';
@@ -42,12 +45,54 @@ import { getSunLight, getAmbientLight } from '@/world/Lights';
 import { initNavDebug } from '@/core/NavDebug';
 import { gameState } from '@/core/GameState';
 import type { GameMode } from '@/core/GameModes';
+import { warmCombatProjectilePools, attachCombatProjectileWarmupProxies, detachCombatProjectileWarmupProxies } from '@/combat/Hitscan';
+import { TEAM_BLUE, TEAM_RED, TEAM_COLORS } from '@/config/constants';
+import { buildSoldierMesh } from '@/rendering/SoldierMesh';
+import { makeNameTag } from '@/rendering/NameTag';
+import { createHPBarGroup } from '@/rendering/HPBar';
+import { createBlueSwatWarmupClone, createEnemyWarmupClone } from '@/rendering/AgentAnimations';
 
 function setLoadProgress(pct: number, text: string): void {
   const fill = document.getElementById('lsFill');
   const txt = document.getElementById('lsText');
   if (fill) fill.style.width = pct + '%';
   if (txt) txt.textContent = text;
+}
+
+async function precompileSceneViews(): Promise<void> {
+  const { renderer, scene, camera } = gameState;
+  if (!renderer || !scene || !camera) return;
+
+  const compile = async () => {
+    if (typeof (renderer as any).compileAsync === 'function') {
+      await (renderer as any).compileAsync(scene, camera);
+    } else {
+      renderer.compile(scene, camera);
+    }
+  };
+
+  const originalPosition = camera.position.clone();
+  const originalQuaternion = camera.quaternion.clone();
+  const views = [
+    { pos: new THREE.Vector3(0, 8, 22), lookAt: new THREE.Vector3(0, 2, 0) },
+    { pos: new THREE.Vector3(24, 8, 24), lookAt: new THREE.Vector3(0, 2, 0) },
+    { pos: new THREE.Vector3(-24, 8, 24), lookAt: new THREE.Vector3(0, 2, 0) },
+    { pos: new THREE.Vector3(24, 8, -24), lookAt: new THREE.Vector3(0, 2, 0) },
+    { pos: new THREE.Vector3(-24, 8, -24), lookAt: new THREE.Vector3(0, 2, 0) },
+  ];
+
+  try {
+    for (const view of views) {
+      camera.position.copy(view.pos);
+      camera.lookAt(view.lookAt);
+      camera.updateMatrixWorld(true);
+      await compile();
+    }
+  } finally {
+    camera.position.copy(originalPosition);
+    camera.quaternion.copy(originalQuaternion);
+    camera.updateMatrixWorld(true);
+  }
 }
 
 function initModeState(mode: GameMode): void {
@@ -86,6 +131,62 @@ function initModeState(mode: GameMode): void {
  */
 let matchAssetsLoaded = false;
 let matchAssetsLoading: Promise<void> | null = null;
+let _agentWarmupGroup: THREE.Group | null = null;
+
+function attachAgentWarmupProxies(): void {
+  if (_agentWarmupGroup || !gameState.scene || !gameState.camera) return;
+
+  const group = new THREE.Group();
+  group.position.copy(gameState.camera.position);
+  group.position.z -= 3.2;
+  group.position.y -= 0.5;
+
+  const placeholderBlue = buildSoldierMesh(TEAM_COLORS[TEAM_BLUE], 'rifleman', TEAM_BLUE);
+  placeholderBlue.position.set(-1.35, 0, 0.35);
+  group.add(placeholderBlue);
+
+  const placeholderRed = buildSoldierMesh(TEAM_COLORS[TEAM_RED], 'assault', TEAM_RED);
+  placeholderRed.position.set(1.35, 0, 0.35);
+  group.add(placeholderRed);
+
+  const swat = createBlueSwatWarmupClone();
+  if (swat) {
+    swat.position.set(-0.45, 0, -0.25);
+    group.add(swat);
+  }
+
+  const enemy = createEnemyWarmupClone();
+  if (enemy) {
+    enemy.position.set(0.45, 0, -0.25);
+    group.add(enemy);
+  }
+
+  const blueTag = makeNameTag('FALCON', TEAM_COLORS[TEAM_BLUE]);
+  blueTag.position.set(-1.35, 2.8, 0.35);
+  group.add(blueTag);
+
+  const redTag = makeNameTag('VIPER', TEAM_COLORS[TEAM_RED]);
+  redTag.position.set(1.35, 2.8, 0.35);
+  group.add(redTag);
+
+  const blueHp = createHPBarGroup().group;
+  blueHp.position.set(-1.35, 0, 0.35);
+  group.add(blueHp);
+
+  const redHp = createHPBarGroup().group;
+  redHp.position.set(1.35, 0, 0.35);
+  group.add(redHp);
+
+  gameState.scene.add(group);
+  _agentWarmupGroup = group;
+}
+
+function detachAgentWarmupProxies(): void {
+  if (!_agentWarmupGroup) return;
+  gameState.scene.remove(_agentWarmupGroup);
+  _agentWarmupGroup.clear();
+  _agentWarmupGroup = null;
+}
 
 async function loadMatchAssets(): Promise<void> {
   if (matchAssetsLoaded) return;
@@ -141,6 +242,7 @@ async function loadMatchAssets(): Promise<void> {
     setLoadProgress(80, 'Initializing FX…');
     initAmbientDust();
     initParticlePools();
+    warmCombatProjectilePools();
 
     // Match-level systems that need the built scene/lights/camera.
     initFieldUpgrade();
@@ -149,17 +251,24 @@ async function loadMatchAssets(): Promise<void> {
     initDynamicWeather(gameState.scene, getAmbientLight(), getSunLight());
     initPingSystem();
     initEmotes(gameState.camera);
+    initFloatingDamagePool();
 
     setLoadProgress(90, 'Compiling shaders…');
     try {
-      if (typeof (gameState.renderer as any).compileAsync === 'function') {
-        await (gameState.renderer as any).compileAsync(gameState.scene, gameState.camera);
-      } else {
-        gameState.renderer.compile(gameState.scene, gameState.camera);
-      }
+      attachCombatFXWarmupProxies();
+      attachCombatProjectileWarmupProxies();
+      attachFloatingDamageWarmupProxy();
+      attachAgentWarmupProxies();
+      await precompileSceneViews();
+      await precompileViewmodelScene();
       console.info('[perf] Shader precompile complete.');
     } catch (err) {
       console.warn('[perf] Shader precompile failed (non-fatal):', err);
+    } finally {
+      detachCombatFXWarmupProxies();
+      detachCombatProjectileWarmupProxies();
+      detachFloatingDamageWarmupProxy();
+      detachAgentWarmupProxies();
     }
 
     // Navigation debug tools — need the loaded navmesh.

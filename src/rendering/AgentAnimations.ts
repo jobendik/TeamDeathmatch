@@ -100,6 +100,12 @@ type CharacterAssetBundle = {
   loadPromise: Promise<void> | null;
   ready: boolean;
   clips: Partial<Record<AgentAnimKey, THREE.AnimationClip>>;
+  clonePool: THREE.Group[];
+};
+
+const PREWARMED_CLONE_POOL_SIZE: Record<CharacterVariant, number> = {
+  swat: 8,
+  enemy: 9,
 };
 
 const loader = new FBXLoader();
@@ -112,6 +118,7 @@ const bundles: Record<CharacterVariant, CharacterAssetBundle> = {
     loadPromise: null,
     ready: false,
     clips: {},
+    clonePool: [],
   },
   enemy: {
     modelUrl: ENEMY_MODEL_URL,
@@ -120,6 +127,7 @@ const bundles: Record<CharacterVariant, CharacterAssetBundle> = {
     loadPromise: null,
     ready: false,
     clips: {},
+    clonePool: [],
   },
 };
 
@@ -280,6 +288,11 @@ async function preloadCharacterAssets(variant: CharacterVariant): Promise<void> 
       const key = keys[i];
       const rawClip = getFirstClip(animObjs[i], animUrl(variant, key));
       bundle.clips[key] = makeClipInPlace(rawClip, key);
+    }
+
+    bundle.clonePool = [];
+    for (let i = 0; i < PREWARMED_CLONE_POOL_SIZE[variant]; i++) {
+      bundle.clonePool.push(makeCharacterClone(variant));
     }
 
     bundle.ready = true;
@@ -558,12 +571,9 @@ function attachCharacter(renderComponent: THREE.Group, variant: CharacterVariant
     throw new Error(`${variant} assets not preloaded.`);
   }
 
-  const model = skeletonClone(bundle.baseModel) as THREE.Group;
+  const model = borrowCharacterClone(variant);
   model.name = variant === 'swat' ? 'BlueSwatCharacter' : 'EnemyCharacter';
-  model.scale.setScalar(CHARACTER_SCALE);
   model.position.set(0, 0, 0);
-
-  prepRenderable(model);
 
   renderComponent.add(model);
 
@@ -582,6 +592,40 @@ export function attachBlueSwatCharacter(renderComponent: THREE.Group): void {
 
 export function attachEnemyCharacter(renderComponent: THREE.Group): void {
   attachCharacter(renderComponent, 'enemy');
+}
+
+export function createBlueSwatWarmupClone(): THREE.Group | null {
+  const bundle = bundles.swat;
+  if (!bundle.baseModel || !bundle.ready) return null;
+  const model = makeCharacterClone('swat');
+  model.name = 'BlueSwatWarmup';
+  return model;
+}
+
+export function createEnemyWarmupClone(): THREE.Group | null {
+  const bundle = bundles.enemy;
+  if (!bundle.baseModel || !bundle.ready) return null;
+  const model = makeCharacterClone('enemy');
+  model.name = 'EnemyWarmup';
+  return model;
+}
+
+function makeCharacterClone(variant: CharacterVariant): THREE.Group {
+  const bundle = bundles[variant];
+  if (!bundle.baseModel) {
+    throw new Error(`${variant} base model not loaded.`);
+  }
+
+  const model = skeletonClone(bundle.baseModel) as THREE.Group;
+  model.scale.setScalar(CHARACTER_SCALE);
+  prepRenderable(model);
+  return model;
+}
+
+function borrowCharacterClone(variant: CharacterVariant): THREE.Group {
+  const bundle = bundles[variant];
+  const model = bundle.clonePool.pop();
+  return model ?? makeCharacterClone(variant);
 }
 
 export function updateAgentAnimations(agents: readonly TDMAgent[], dt: number): void {

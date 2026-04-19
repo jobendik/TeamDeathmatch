@@ -239,6 +239,17 @@ let currentKnifeWrapper: THREE.Group | null = null;
 let currentKnifeAction: THREE.AnimationAction | null = null;
 let activeKnifeRange: KnifeRangeName | null = null;
 let knifeDebugOverlay: HTMLDivElement | null = null;
+const proceduralWeaponTemplates = new Map<WeaponId, THREE.Group>();
+const ALL_VIEWMODEL_WEAPON_IDS: WeaponId[] = [
+  'unarmed',
+  'knife',
+  'pistol',
+  'smg',
+  'assault_rifle',
+  'shotgun',
+  'sniper_rifle',
+  'rocket_launcher',
+];
 
 function prepRenderable(root: THREE.Object3D): void {
   root.traverse((obj) => {
@@ -626,6 +637,72 @@ function buildWeaponMesh(weaponId: WeaponId): THREE.Group {
   return g;
 }
 
+function getProceduralWeaponTemplate(weaponId: WeaponId): THREE.Group {
+  let template = proceduralWeaponTemplates.get(weaponId);
+  if (!template) {
+    template = buildWeaponMesh(weaponId);
+    proceduralWeaponTemplates.set(weaponId, template);
+  }
+  return template;
+}
+
+function cloneProceduralWeapon(weaponId: WeaponId): THREE.Group {
+  return getProceduralWeaponTemplate(weaponId).clone(true) as THREE.Group;
+}
+
+function normalizeViewmodelWrapper(
+  cloneRoot: THREE.Group,
+  desiredMaxDimension: number,
+  position: THREE.Vector3,
+  rotation: THREE.Euler,
+): THREE.Group {
+  const wrapper = new THREE.Group();
+  const rawBox = new THREE.Box3().setFromObject(cloneRoot);
+  const rawSize = new THREE.Vector3();
+  const rawCenter = new THREE.Vector3();
+  rawBox.getSize(rawSize);
+  rawBox.getCenter(rawCenter);
+
+  cloneRoot.position.sub(rawCenter);
+  wrapper.add(cloneRoot);
+
+  const maxDim = Math.max(rawSize.x, rawSize.y, rawSize.z);
+  const scale = desiredMaxDimension / Math.max(maxDim, 0.0001);
+  wrapper.scale.setScalar(scale);
+  wrapper.position.copy(position);
+  wrapper.rotation.copy(rotation);
+  wrapper.visible = true;
+  return wrapper;
+}
+
+function createAnimatedWarmupClone(weaponId: AnimatedWeaponId): THREE.Group | null {
+  const cached = cachedAnimated.get(weaponId);
+  if (!cached) return null;
+  const cfg = ANIMATED_VIEWMODEL_CONFIGS[weaponId];
+  const cloneRoot = skeletonClone(cached.scene) as THREE.Group;
+  prepRenderable(cloneRoot);
+  return normalizeViewmodelWrapper(cloneRoot, cfg.desiredMaxDimension, cfg.position, cfg.rotation);
+}
+
+function createKnifeWarmupClone(): THREE.Group | null {
+  if (!cachedKnife) return null;
+  const cloneRoot = skeletonClone(cachedKnife.scene) as THREE.Group;
+  prepRenderable(cloneRoot);
+  return normalizeViewmodelWrapper(cloneRoot, KNIFE_VIEWMODEL_TUNE.desiredMaxDimension, KNIFE_VIEWMODEL_TUNE.position, KNIFE_VIEWMODEL_TUNE.rotation);
+}
+
+function createViewmodelWarmupVariant(weaponId: WeaponId): THREE.Group | null {
+  if (weaponId === 'knife') return createKnifeWarmupClone();
+  if (isAnimatedWeapon(weaponId)) return createAnimatedWarmupClone(weaponId) ?? cloneProceduralWeapon(weaponId);
+
+  const variant = cloneProceduralWeapon(weaponId);
+  const layout = VM_LAYOUTS[weaponId];
+  variant.position.set(layout.pos[0], layout.pos[1], layout.pos[2]);
+  variant.rotation.set(layout.rot[0], layout.rot[1], layout.rot[2]);
+  variant.scale.setScalar(layout.scale);
+  return variant;
+}
+
 function ensureM16DebugOverlay(): void {
   if (!M16_DEBUG_TUNER.enabled) return;
   if (m16DebugOverlay) return;
@@ -891,9 +968,6 @@ function attachLoadedAnimatedWeapon(weaponId: AnimatedWeaponId): void {
   }
 
   const cfg = ANIMATED_VIEWMODEL_CONFIGS[weaponId];
-  const wrapper = new THREE.Group();
-  wrapper.name = `${weaponId}ViewmodelWrapper`;
-
   const cloneRoot = skeletonClone(cached.scene) as THREE.Group;
   prepRenderable(cloneRoot);
 
@@ -908,28 +982,23 @@ function attachLoadedAnimatedWeapon(weaponId: AnimatedWeaponId): void {
     console.info('[WeaponViewmodel] M16 raw bounds center:', rawCenter.toArray());
   }
 
-  cloneRoot.position.sub(rawCenter);
-  wrapper.add(cloneRoot);
-
-  const maxDim = Math.max(rawSize.x, rawSize.y, rawSize.z);
   const desiredDim = weaponId === 'assault_rifle' && M16_DEBUG_TUNER.enabled
     ? M16_DEBUG_TUNER.desiredMaxDimension
     : cfg.desiredMaxDimension;
-  const scale = desiredDim / Math.max(maxDim, 0.0001);
+  const wrapper = normalizeViewmodelWrapper(
+    cloneRoot,
+    desiredDim,
+    weaponId === 'assault_rifle' && M16_DEBUG_TUNER.enabled ? M16_DEBUG_TUNER.position : cfg.position,
+    weaponId === 'assault_rifle' && M16_DEBUG_TUNER.enabled ? M16_DEBUG_TUNER.rotation : cfg.rotation,
+  );
 
-  wrapper.scale.setScalar(scale);
+  wrapper.name = `${weaponId}ViewmodelWrapper`;
 
   if (weaponId === 'assault_rifle') {
-    wrapper.position.copy(M16_DEBUG_TUNER.enabled ? M16_DEBUG_TUNER.position : cfg.position);
-    wrapper.rotation.copy(M16_DEBUG_TUNER.enabled ? M16_DEBUG_TUNER.rotation : cfg.rotation);
     currentM16Wrapper = wrapper;
   } else {
-    wrapper.position.copy(cfg.position);
-    wrapper.rotation.copy(cfg.rotation);
     currentM16Wrapper = null;
   }
-
-  wrapper.visible = true;
 
   currentAnimatedWeaponId = weaponId;
   currentWeaponMesh = wrapper;
@@ -1191,31 +1260,15 @@ function attachLoadedKnife(): void {
     return;
   }
 
-  const wrapper = new THREE.Group();
-  wrapper.name = 'KnifeViewmodelWrapper';
-
   const cloneRoot = skeletonClone(cachedKnife.scene) as THREE.Group;
   prepRenderable(cloneRoot);
-
-  const rawBox = new THREE.Box3().setFromObject(cloneRoot);
-  const rawSize = new THREE.Vector3();
-  const rawCenter = new THREE.Vector3();
-  rawBox.getSize(rawSize);
-  rawBox.getCenter(rawCenter);
-
-  cloneRoot.position.sub(rawCenter);
-  wrapper.add(cloneRoot);
-
-  const maxDim = Math.max(rawSize.x, rawSize.y, rawSize.z);
-  const desiredDim = KNIFE_DEBUG_TUNER.enabled
-    ? KNIFE_DEBUG_TUNER.desiredMaxDimension
-    : KNIFE_VIEWMODEL_TUNE.desiredMaxDimension;
-  const scale = desiredDim / Math.max(maxDim, 0.0001);
-
-  wrapper.scale.setScalar(scale);
-  wrapper.position.copy(KNIFE_DEBUG_TUNER.enabled ? KNIFE_DEBUG_TUNER.position : KNIFE_VIEWMODEL_TUNE.position);
-  wrapper.rotation.copy(KNIFE_DEBUG_TUNER.enabled ? KNIFE_DEBUG_TUNER.rotation : KNIFE_VIEWMODEL_TUNE.rotation);
-  wrapper.visible = true;
+  const wrapper = normalizeViewmodelWrapper(
+    cloneRoot,
+    KNIFE_DEBUG_TUNER.enabled ? KNIFE_DEBUG_TUNER.desiredMaxDimension : KNIFE_VIEWMODEL_TUNE.desiredMaxDimension,
+    KNIFE_DEBUG_TUNER.enabled ? KNIFE_DEBUG_TUNER.position : KNIFE_VIEWMODEL_TUNE.position,
+    KNIFE_DEBUG_TUNER.enabled ? KNIFE_DEBUG_TUNER.rotation : KNIFE_VIEWMODEL_TUNE.rotation,
+  );
+  wrapper.name = 'KnifeViewmodelWrapper';
 
   currentKnifeWrapper = wrapper;
   currentWeaponMesh = wrapper;
@@ -1239,7 +1292,7 @@ function attachLoadedKnife(): void {
 }
 
 function applyProceduralWeapon(weaponId: WeaponId): void {
-  currentWeaponMesh = buildWeaponMesh(weaponId);
+  currentWeaponMesh = cloneProceduralWeapon(weaponId);
   const layout = VM_LAYOUTS[weaponId];
   currentWeaponMesh.scale.setScalar(layout.scale);
   vmGroup.add(currentWeaponMesh);
@@ -1307,10 +1360,63 @@ async function tryLoadSpecialViewmodel(weaponId: WeaponId): Promise<void> {
  */
 export async function preloadViewmodels(): Promise<void> {
   const animatedIds: AnimatedWeaponId[] = ['assault_rifle', 'pistol', 'shotgun', 'sniper_rifle', 'rocket_launcher'];
+  for (const weaponId of ALL_VIEWMODEL_WEAPON_IDS) {
+    if (weaponId === 'knife' || isAnimatedWeapon(weaponId)) continue;
+    getProceduralWeaponTemplate(weaponId);
+  }
   await Promise.all([
     ...animatedIds.map((id) => loadAnimatedViewmodel(id).catch(() => null)),
     loadKnifeViewmodel().catch(() => null),
   ]);
+}
+
+export async function precompileViewmodelScene(): Promise<void> {
+  if (!vmScene || !vmCamera || !gameState.renderer) return;
+
+  const renderer = gameState.renderer;
+  const compile = async () => {
+    if (typeof (renderer as any).compileAsync === 'function') {
+      await (renderer as any).compileAsync(vmScene, vmCamera);
+    } else {
+      renderer.compile(vmScene, vmCamera);
+    }
+  };
+
+  const warmupGroup = new THREE.Group();
+  const prevVisible = vmGroup.visible;
+  const prevFlashIntensity = vmMuzzleFlash.intensity;
+  const prevMeshOpacity = (vmMuzzleMesh.material as THREE.MeshBasicMaterial).opacity;
+  const prevSpriteOpacity = (vmMuzzleSprite.material as THREE.SpriteMaterial).opacity;
+  const prevSpriteScale = vmMuzzleSprite.scale.clone();
+
+  vmScene.add(warmupGroup);
+
+  try {
+    vmGroup.visible = true;
+
+    for (const weaponId of ALL_VIEWMODEL_WEAPON_IDS) {
+      const variant = createViewmodelWarmupVariant(weaponId);
+      if (!variant) continue;
+      warmupGroup.add(variant);
+      await compile();
+      warmupGroup.remove(variant);
+      warmupGroup.clear();
+    }
+
+    vmMuzzleFlash.intensity = 2;
+    (vmMuzzleMesh.material as THREE.MeshBasicMaterial).opacity = 1;
+    (vmMuzzleSprite.material as THREE.SpriteMaterial).opacity = 0.9;
+    vmMuzzleSprite.scale.set(0.12, 0.12, 1);
+    await compile();
+  } finally {
+    vmScene.remove(warmupGroup);
+    warmupGroup.clear();
+    vmGroup.visible = prevVisible;
+    vmMuzzleFlash.intensity = prevFlashIntensity;
+    (vmMuzzleMesh.material as THREE.MeshBasicMaterial).opacity = prevMeshOpacity;
+    (vmMuzzleSprite.material as THREE.SpriteMaterial).opacity = prevSpriteOpacity;
+    vmMuzzleSprite.scale.copy(prevSpriteScale);
+  }
 }
 
 export function setViewmodelWeapon(weaponId: WeaponId, forceSwap = false): void {
