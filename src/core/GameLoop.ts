@@ -203,7 +203,7 @@ export function animate(): void {
 
     // keepInside is cheap per-call but iterates arena colliders each time.
     // In BR there are hundreds of wall colliders — skip inactive agents.
-    if (!brOnPlane) {
+    if (!brOnPlane && !gameState.navMeshManager.navMesh) {
       for (const ag of gameState.agents) {
         if (ag === gameState.player || ag.isDead || !ag.active) continue;
         keepInside(ag);

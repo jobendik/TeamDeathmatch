@@ -558,12 +558,7 @@ export function respawnAgent(ag: TDMAgent): void {
   // Reset nav state so the clamp doesn't try to bridge from the death position to the
   // respawn position (previously caused agents to teleport or snap to wrong locations).
   if (ag.navRuntime) {
-    ag.navRuntime.previousPosition.set(sp[0], 0, sp[2]);
-    ag.navRuntime.currentPosition.set(sp[0], 0, sp[2]);
-    ag.navRuntime.clearPath();
-    if (ag.navRuntime.navManager.navMesh) {
-      ag.navRuntime.currentRegion = ag.navRuntime.navManager.getRegionForPoint(ag.position, 3);
-    }
+    ag.navRuntime.initFromSpawn(ag.position);
   }
   // Spawn protection for bots (2 seconds)
   (ag as any)._spawnProtectUntil = gameState.worldElapsed + 2;

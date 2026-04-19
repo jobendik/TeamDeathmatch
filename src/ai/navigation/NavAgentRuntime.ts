@@ -2,6 +2,8 @@ import * as YUKA from 'yuka';
 import { NAV_CONFIG } from './NavConfig';
 import type { NavMeshManager } from './NavMeshManager';
 
+const REGION_SEARCH_RADII = [NAV_CONFIG.REGION_EPSILON, 3, 6, 10] as const;
+
 export class NavAgentRuntime {
   owner: YUKA.Vehicle;
   navManager: NavMeshManager;
@@ -11,6 +13,7 @@ export class NavAgentRuntime {
   previousPosition = new YUKA.Vector3();
   path: YUKA.Vector3[] | null = null;
   pathPending: boolean = false;
+  missingRegionLogged: boolean = false;
 
   followPathBehavior: YUKA.FollowPathBehavior;
   onPathBehavior: YUKA.OnPathBehavior;
@@ -38,24 +41,54 @@ export class NavAgentRuntime {
   }
 
   initFromSpawn(spawnPosition: YUKA.Vector3): void {
+    this.clearPath();
     this.owner.position.copy(spawnPosition);
     this.previousPosition.copy(this.owner.position);
     this.currentPosition.copy(this.owner.position);
+    this.missingRegionLogged = false;
 
     if (this.navManager.navMesh) {
-      this.currentRegion = this.navManager.getRegionForPoint(
-        this.owner.position,
-        NAV_CONFIG.REGION_EPSILON
-      );
-
-      // Progressively widen the search if the spawn point is slightly off the mesh.
-      if (!this.currentRegion) {
-        this.currentRegion = this.navManager.getRegionForPoint(this.owner.position, 3);
-      }
-      if (!this.currentRegion) {
-        console.warn(`[NavAgentRuntime] Entity spawned off-navmesh at ${spawnPosition.x.toFixed(2)}, ${spawnPosition.y.toFixed(2)}, ${spawnPosition.z.toFixed(2)}`);
-      }
+      this.recoverRegion('spawn');
     }
+  }
+
+  private resolveRegion(): any {
+    for (const radius of REGION_SEARCH_RADII) {
+      const region = this.navManager.getRegionForPoint(this.owner.position, radius);
+      if (region) return region;
+    }
+
+    return null;
+  }
+
+  private snapToRegion(region: any): void {
+    if (!region?.getClosestPointToPoint) return;
+
+    const closestPoint = new YUKA.Vector3();
+    region.getClosestPointToPoint(this.owner.position, closestPoint);
+    this.owner.position.copy(closestPoint);
+    this.currentPosition.copy(closestPoint);
+    this.previousPosition.copy(closestPoint);
+  }
+
+  private recoverRegion(reason: string): boolean {
+    if (!this.navManager.navMesh) return false;
+
+    const region = this.resolveRegion();
+    if (!region) {
+      if (!this.missingRegionLogged) {
+        console.warn(
+          `[NavAgentRuntime] No navmesh region for ${reason} at ${this.owner.position.x.toFixed(2)}, ${this.owner.position.y.toFixed(2)}, ${this.owner.position.z.toFixed(2)}`
+        );
+        this.missingRegionLogged = true;
+      }
+      return false;
+    }
+
+    this.currentRegion = region;
+    this.snapToRegion(region);
+    this.missingRegionLogged = false;
+    return true;
   }
 
   applyPath(path: YUKA.Vector3[]): boolean {
@@ -96,22 +129,35 @@ export class NavAgentRuntime {
   stayOnNavMesh(): void {
     if (!this.navManager.navMesh) return;
 
+    if (!this.currentRegion && !this.recoverRegion('movement clamp')) {
+      return;
+    }
+
     this.currentPosition.copy(this.owner.position);
 
-    this.currentRegion = this.navManager.clampMovement(
-      this.currentRegion,
-      this.previousPosition,
-      this.currentPosition,
-      this.owner.position
-    );
-
-    if (!this.currentRegion) {
-      // Entity fell off the navmesh — try to snap back to the nearest region.
-      this.currentRegion = this.navManager.getRegionForPoint(this.owner.position, 3);
-      if (this.currentRegion) {
-        // Reset previousPosition so the next clamp starts from a valid location.
-        this.previousPosition.copy(this.owner.position);
+    try {
+      this.currentRegion = this.navManager.clampMovement(
+        this.currentRegion,
+        this.previousPosition,
+        this.currentPosition,
+        this.owner.position
+      );
+    } catch (err) {
+      if (!this.recoverRegion('clamp recovery')) {
+        console.warn('[NavAgentRuntime] clampMovement recovery failed.', err);
+        return;
       }
+
+      this.currentPosition.copy(this.owner.position);
+      this.currentRegion = this.navManager.clampMovement(
+        this.currentRegion,
+        this.previousPosition,
+        this.currentPosition,
+        this.owner.position
+      );
+    }
+
+    if (!this.currentRegion && !this.recoverRegion('post-clamp recovery')) {
       return;
     }
 

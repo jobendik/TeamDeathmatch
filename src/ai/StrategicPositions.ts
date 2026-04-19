@@ -2,6 +2,7 @@ import * as YUKA from 'yuka';
 import type { TDMAgent } from '@/entities/TDMAgent';
 import { gameState } from '@/core/GameState';
 import { TEAM_BLUE } from '@/config/constants';
+import { ARENA_MARGIN } from '@/config/constants';
 import { isInsideWall, pushOutOfWall } from './CoverSystem';
 
 /**
@@ -71,6 +72,7 @@ export const STRATEGIC_POSITIONS: StrategicPosition[] = [
 export function getPreferredPosition(ag: TDMAgent): YUKA.Vector3 | null {
   const isBlue = ag.team === TEAM_BLUE;
   const teamSign = isBlue ? -1 : 1; // blue = negative bias, red = positive
+  const isArenaPushMode = gameState.mode === 'tdm' || gameState.mode === 'elimination' || gameState.mode === 'training';
 
   const scored: { pos: YUKA.Vector3; score: number }[] = [];
 
@@ -80,6 +82,17 @@ export function getPreferredPosition(ag: TDMAgent): YUKA.Vector3 | null {
     // Team bias: prefer positions biased toward own team
     const biasDiff = sp.teamBias * teamSign;
     score += biasDiff * 30;
+
+    if (isArenaPushMode) {
+      const enemyProgress = isBlue ? (sp.pos.x + sp.pos.z) : -(sp.pos.x + sp.pos.z);
+      const normalizedProgress = Math.max(-1, Math.min(1, enemyProgress / (ARENA_MARGIN * 1.6)));
+
+      // In arena TDM, bots need a default forward objective so they don't mill around
+      // their own side waiting for perfect intel.
+      score += normalizedProgress * 18;
+      if (sp.type === 'power' || sp.type === 'choke') score += 8;
+      if (normalizedProgress < -0.2) score -= 14;
+    }
 
     // Distance penalty: prefer closer positions (don't run across the entire map)
     const dist = ag.position.distanceTo(sp.pos);

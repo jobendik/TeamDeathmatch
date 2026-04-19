@@ -654,6 +654,7 @@ export function updateAI(ag: TDMAgent, dt: number): void {
   }
 
   // NavMesh clamping is handled by GameLoop after entityManager.update() moves entities.
-
-  keepInside(ag);
+  if (!gameState.navMeshManager.navMesh) {
+    keepInside(ag);
+  }
 }

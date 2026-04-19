@@ -4,13 +4,16 @@ import { gameState } from '@/core/GameState';
 import { ARENA_HALF } from '@/config/constants';
 import { FP } from '@/config/player';
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
 const arenaMeshes: THREE.Object3D[] = [];
+const ARENA_MODEL_URL = `${import.meta.env.BASE_URL}models/arena.glb`;
+const arenaLoader = new GLTFLoader();
 
 /**
  * Build the arena: floor, boundary rings, walls, pillars, and team bases.
  */
-export function buildArena(): void {
+export async function buildArena(): Promise<void> {
   const { scene } = gameState;
 
   // ── Floor with hex-grid shader ──
@@ -233,6 +236,48 @@ void main(){
   };
   
   console.log("NavMesh exporter ready! Type exportMap() in the console.");
+
+  try {
+    const arenaRenderModel = await loadArenaRenderModel();
+    scene.add(arenaRenderModel);
+    arenaMeshes.push(arenaRenderModel);
+
+    for (const mesh of arenaMeshes) {
+      if (mesh !== arenaRenderModel) {
+        mesh.visible = false;
+      }
+    }
+
+    gameState.floorMat = null;
+    gameState.wallMeshes.length = 0;
+    arenaRenderModel.traverse((obj) => {
+      const mesh = obj as THREE.Mesh;
+      if (!mesh.isMesh) return;
+
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      gameState.wallMeshes.push(mesh);
+    });
+
+    console.info(`[Arena] Rendering from ${ARENA_MODEL_URL}`);
+  } catch (err) {
+    console.warn('[Arena] Failed to load arena.glb, keeping procedural arena rendering.', err);
+  }
+}
+
+function loadArenaRenderModel(): Promise<THREE.Group> {
+  return new Promise((resolve, reject) => {
+    arenaLoader.load(
+      ARENA_MODEL_URL,
+      (gltf) => {
+        const root = gltf.scene;
+        root.name = 'ArenaRenderModel';
+        resolve(root);
+      },
+      undefined,
+      reject,
+    );
+  });
 }
 
 /**

@@ -63,19 +63,25 @@ async function init(): Promise<void> {
   Audio.init();
   setLoadProgress(15, 'Building arena…');
   buildLights();
-  buildArena();
+  await buildArena();
   buildCoverPoints();
 
-  setLoadProgress(20, 'Building NavMesh…');
+  setLoadProgress(20, 'Loading NavMesh…');
   try {
-    // Generate the navmesh at runtime from the current arena colliders so it
-    // always matches the procedural layout — no static .gltf file needed.
-    const navBlobUrl = await buildNavMeshBlob();
-    await gameState.navMeshManager.load(navBlobUrl);
-    URL.revokeObjectURL(navBlobUrl);
+    const bakedNavMeshUrl = `${import.meta.env.BASE_URL}models/arena_navmesh.gltf`;
+    await gameState.navMeshManager.load(bakedNavMeshUrl);
     gameState.pathPlanner = new AsyncPathPlanner(gameState.navMeshManager);
   } catch (err) {
-    console.error('[main] Failed to build NavMesh:', err);
+    console.warn('[main] Failed to load baked NavMesh, falling back to runtime build.', err);
+
+    try {
+      const navBlobUrl = await buildNavMeshBlob();
+      await gameState.navMeshManager.load(navBlobUrl);
+      URL.revokeObjectURL(navBlobUrl);
+      gameState.pathPlanner = new AsyncPathPlanner(gameState.navMeshManager);
+    } catch (fallbackErr) {
+      console.error('[main] Failed to build NavMesh:', fallbackErr);
+    }
   }
 
   setLoadProgress(30, 'Spawning agents…');

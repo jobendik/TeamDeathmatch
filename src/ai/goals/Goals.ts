@@ -871,10 +871,10 @@ function findHuntTarget(ag: TDMAgent): YUKA.Vector3 | null {
   const enemySpawnZ = ag.team === TEAM_BLUE ? -45 : 45;
   scores.push({
     pos: new YUKA.Vector3(enemySpawnX + (Math.random() - 0.5) * 20, 0, enemySpawnZ + (Math.random() - 0.5) * 20),
-    score: 40 + ag.confidence * 0.3,
+    score: 70 + ag.confidence * 0.3,
   });
 
-  if (!gameState.player.isDead) {
+  if (!gameState.player.isDead && (gameState.mode === 'ffa' || gameState.player.team !== ag.team)) {
     scores.push({
       pos: new YUKA.Vector3(
         gameState.player.position.x + (Math.random() - 0.5) * 20, 0,
@@ -915,7 +915,18 @@ function findHuntTarget(ag: TDMAgent): YUKA.Vector3 | null {
   if (scores.length === 0) return null;
 
   scores.sort((a, b) => b.score - a.score);
-  const pick = scores[Math.floor(Math.random() * Math.min(3, scores.length))];
+  const top = scores.slice(0, Math.min(3, scores.length));
+  const totalScore = top.reduce((sum, entry) => sum + Math.max(1, entry.score), 0);
+  let choice = Math.random() * totalScore;
+  let pick = top[0];
+
+  for (const entry of top) {
+    choice -= Math.max(1, entry.score);
+    if (choice <= 0) {
+      pick = entry;
+      break;
+    }
+  }
 
   if (isInsideWall(pick.pos.x, pick.pos.z)) {
     const safe = pushOutOfWall(pick.pos.x, pick.pos.z);

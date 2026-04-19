@@ -20,12 +20,48 @@ export class NavMeshManager {
     return this.navMesh;
   }
 
+  private getClosestRegion(point: YUKA.Vector3): any {
+    const navMesh = this.requireNavMesh() as any;
+    if (typeof navMesh.getClosestRegion === 'function') {
+      return navMesh.getClosestRegion(point);
+    }
+
+    let bestRegion: any = null;
+    let bestDistanceSq = Number.POSITIVE_INFINITY;
+
+    for (const region of navMesh.regions ?? []) {
+      const centroid = region?.centroid;
+      if (!centroid) continue;
+
+      const distanceSq = centroid.squaredDistanceTo(point);
+      if (distanceSq < bestDistanceSq) {
+        bestDistanceSq = distanceSq;
+        bestRegion = region;
+      }
+    }
+
+    return bestRegion;
+  }
+
   getRegionForPoint(point: YUKA.Vector3, epsilon = 1): any {
     return this.requireNavMesh().getRegionForPoint(point, epsilon);
   }
 
+  projectPoint(point: YUKA.Vector3, epsilon = 1): YUKA.Vector3 {
+    const region = this.getRegionForPoint(point, epsilon) ?? this.getClosestRegion(point);
+    if (!region?.getClosestPointToPoint) {
+      return point.clone();
+    }
+
+    const projectedPoint = new YUKA.Vector3();
+    region.getClosestPointToPoint(point, projectedPoint);
+    return projectedPoint;
+  }
+
   findPath(from: YUKA.Vector3, to: YUKA.Vector3): YUKA.Vector3[] {
-    return this.requireNavMesh().findPath(from, to);
+    const safeFrom = this.projectPoint(from);
+    const safeTo = this.projectPoint(to);
+    return this.requireNavMesh().findPath(safeFrom, safeTo);
   }
 
   clampMovement(

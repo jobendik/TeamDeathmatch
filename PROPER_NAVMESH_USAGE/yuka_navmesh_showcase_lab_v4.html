@@ -1,0 +1,1120 @@
+<!DOCTYPE html>
+<html lang="no">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>YUKA NavMesh Showcase Lab v4</title>
+  <style>
+    :root {
+      --bg: #0b1020;
+      --panel: rgba(12, 18, 34, 0.9);
+      --panel2: rgba(18, 27, 48, 0.95);
+      --border: rgba(110, 160, 255, 0.25);
+      --text: #e8eefc;
+      --muted: #9db0d5;
+      --good: #3ddc97;
+      --warn: #f6c445;
+      --bad: #ff6b6b;
+      --accent: #57a0ff;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--text); font: 14px/1.4 Inter, Segoe UI, Arial, sans-serif; }
+    #app { position: fixed; inset: 0; }
+    #viewport { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+    .panel {
+      position: absolute; z-index: 5; background: var(--panel); border: 1px solid var(--border);
+      border-radius: 16px; backdrop-filter: blur(10px); box-shadow: 0 12px 40px rgba(0,0,0,.3);
+    }
+    #controls { top: 10px; left: 10px; width: 430px; padding: 16px; max-height: calc(100% - 20px); overflow: auto; }
+    #analysis { top: 10px; right: 10px; width: 420px; padding: 16px; max-height: calc(100% - 20px); overflow: auto; }
+    #hint { left: 50%; bottom: 12px; transform: translateX(-50%); padding: 10px 14px; }
+    h1, h2, h3 { margin: 0 0 10px 0; }
+    .muted { color: var(--muted); }
+    .tiny { font-size: 12px; }
+    .row { margin-bottom: 8px; }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+    input[type="text"], input[type="file"], button {
+      width: 100%; border-radius: 10px; border: 1px solid rgba(255,255,255,.08); background: var(--panel2);
+      color: var(--text); padding: 11px 12px; font: inherit;
+    }
+    button { cursor: pointer; background: linear-gradient(180deg, #2d6bff, #1f58db); border: none; }
+    button.secondary { background: linear-gradient(180deg, #26324f, #1b2438); }
+    button:disabled { opacity: .45; cursor: not-allowed; }
+    #log {
+      margin-top: 10px; padding: 10px; border-radius: 12px; border: 1px solid rgba(255,255,255,.08);
+      background: rgba(255,255,255,.03); max-height: 220px; overflow: auto; white-space: pre-wrap;
+    }
+    .dropzone {
+      margin-top: 10px; padding: 14px; border-radius: 12px; border: 2px dashed rgba(87,160,255,.35);
+      background: rgba(255,255,255,.03); text-align: center; transition: .15s ease;
+    }
+    .dropzone.dragover { border-color: rgba(61,220,151,.85); background: rgba(61,220,151,.10); transform: scale(1.01); }
+    .drop-overlay {
+      position: fixed; inset: 0; display: none; align-items: center; justify-content: center; z-index: 9999;
+      background: rgba(4, 10, 24, 0.72); border: 3px dashed rgba(61,220,151,.85); color: #dff7eb; font-size: 22px; font-weight: 700;
+      pointer-events: none;
+    }
+    .drop-overlay.visible { display: flex; }
+    .status {
+      display: flex; gap: 12px; align-items: center; padding: 12px; border-radius: 14px; font-weight: 700; margin-bottom: 10px;
+      border: 1px solid rgba(255,255,255,.1);
+    }
+    .status.good { background: rgba(61,220,151,.10); color: #dff7eb; }
+    .status.warn { background: rgba(246,196,69,.10); color: #fff4d3; }
+    .status.bad  { background: rgba(255,107,107,.10); color: #ffe0e0; }
+    .result { padding: 10px 0; border-top: 1px solid rgba(255,255,255,.07); }
+    .label { font-weight: 700; }
+    .good { color: var(--good); }
+    .warn { color: var(--warn); }
+    .bad { color: var(--bad); }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  </style>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.184.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.184.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+<div id="app">
+  <canvas id="viewport"></canvas>
+
+  <section id="controls" class="panel">
+    <h1>YUKA NavMesh Showcase Lab v4</h1>
+    <div class="muted tiny">Denne versjonen følger YUKA-showcasen mye tettere: <b>FollowPath + OnPath</b>, kontinuerlig <b>clampMovement()</b>, <b>currentRegion/previousPosition</b> og høydejustering mot navmesh-planet.</div>
+
+    <div class="row"><input id="levelUrl" type="text" value="./arena.glb"></div>
+    <div class="row tiny muted" style="margin-top:-4px">Level URL</div>
+    <div class="row"><input id="navUrl" type="text" value="./navmesh.gltf"></div>
+    <div class="row tiny muted" style="margin-top:-4px">Navmesh URL</div>
+
+    <div class="grid2" style="margin-top:10px;">
+      <button id="loadUrlsBtn">Last fra URL-er</button>
+      <button id="resetBtn" class="secondary">Reset scene</button>
+    </div>
+
+    <div class="row" style="margin-top:10px;"><input id="levelFile" type="file" accept=".glb,.gltf"></div>
+    <div class="row"><input id="navFile" type="file" accept=".glb,.gltf"></div>
+
+    <div id="dropZone" class="dropzone tiny">
+      <strong>Drag & drop GLB/GLTF-filer her</strong>
+      Slipp begge samtidig, eller én etter én. Appen prøver å kjenne igjen navmesh-filen automatisk.
+    </div>
+
+    <div class="grid2" style="margin-top:10px;">
+      <button id="loadFilesBtn">Last fra filer</button>
+      <button id="smokeBtn" class="secondary" disabled>Kjør smoke tests</button>
+    </div>
+
+    <div class="grid3" style="margin-top:8px;">
+      <button id="toggleNavBtn" class="secondary" disabled>Skjul navmesh</button>
+      <button id="frameBtn" class="secondary" disabled>Frame scene</button>
+      <button id="respawnBtn" class="secondary" disabled>Respawn agent</button>
+    </div>
+
+    <div class="row" style="margin-top:12px; padding:12px; border-radius:12px; border:1px solid rgba(255,255,255,.08); background:rgba(255,255,255,.03);">
+      <div class="label" style="margin-bottom:8px;">Showcase-style movement tuning</div>
+      <div class="grid2">
+        <div>
+          <div class="tiny muted">Max speed</div>
+          <input id="maxSpeedEl" type="text" value="3.0">
+        </div>
+        <div>
+          <div class="tiny muted">Max force</div>
+          <input id="maxForceEl" type="text" value="18.0">
+        </div>
+        <div>
+          <div class="tiny muted">Next waypoint distance</div>
+          <input id="nextWaypointEl" type="text" value="0.50">
+        </div>
+        <div>
+          <div class="tiny muted">Arrive deceleration</div>
+          <input id="arriveDecelEl" type="text" value="2.0">
+        </div>
+        <div>
+          <div class="tiny muted">Arrival distance</div>
+          <input id="arrivalDistanceEl" type="text" value="1.00">
+        </div>
+        <div>
+          <div class="tiny muted">Path radius (OnPath)</div>
+          <input id="pathRadiusEl" type="text" value="0.10">
+        </div>
+        <div>
+          <div class="tiny muted">OnPath weight</div>
+          <input id="onPathWeightEl" type="text" value="1.00">
+        </div>
+        <div>
+          <div class="tiny muted">Height factor</div>
+          <input id="heightFactorEl" type="text" value="0.20">
+        </div>
+        <div>
+          <div class="tiny muted">Min segment length</div>
+          <input id="minSegmentEl" type="text" value="0.35">
+        </div>
+        <div>
+          <div class="tiny muted">Straighten angle (deg)</div>
+          <input id="angleDegEl" type="text" value="6.0">
+        </div>
+      </div>
+      <div class="grid2" style="margin-top:8px;">
+        <label class="tiny muted" style="display:flex; align-items:center; gap:8px;">
+          <input id="simplifyPathEl" type="checkbox">
+          Forenkle path litt
+        </label>
+        <label class="tiny muted" style="display:flex; align-items:center; gap:8px;">
+          <input id="drawWaypointsEl" type="checkbox" checked>
+          Vis waypoints
+        </label>
+      </div>
+      <div class="grid2" style="margin-top:8px;">
+        <button id="applyMoveBtn" class="secondary">Bruk movement settings</button>
+        <button id="defaultMoveBtn" class="secondary">Sett showcase-defaults</button>
+      </div>
+      <div class="tiny muted" style="margin-top:8px;">Tips: denne versjonen bruker <code>FollowPath</code> + <code>OnPath</code> og høydejustering med faktor <code>0.2</code>. Hvis agenten fortsatt surrer, prøv litt større <code>Path radius</code> eller litt lavere <code>Max speed</code>.</div>
+    </div>
+
+    <div id="log">Klar.</div>
+  </section>
+
+  <section id="analysis" class="panel">
+    <div id="overallStatus" class="status warn"><span>VENTER</span><span class="muted">Last inn level og navmesh.</span></div>
+    <div id="results"></div>
+  </section>
+
+  <section id="hint" class="panel tiny muted">
+    Klikk på grønn navmesh for å flytte agenten. Denne versjonen bruker samme grunnmønster som showcase-koden: path -> FollowPath/OnPath -> clampMovement hver frame.
+  </section>
+</div>
+<div id="dropOverlay" class="drop-overlay">Slipp GLB/GLTF-filene her</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import * as YUKA from 'https://cdn.jsdelivr.net/npm/yuka@0.7.8/build/yuka.module.js';
+
+const canvas = document.getElementById('viewport');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x09101d);
+scene.fog = new THREE.Fog(0x09101d, 80, 240);
+
+const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 2000);
+camera.position.set(60, 55, 60);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 0, 0);
+controls.enableDamping = true;
+
+scene.add(new THREE.HemisphereLight(0xbfd8ff, 0x243248, 1.25));
+const dir = new THREE.DirectionalLight(0xffffff, 1.6);
+dir.position.set(40, 60, 20);
+dir.castShadow = true;
+dir.shadow.mapSize.set(2048, 2048);
+dir.shadow.camera.left = -120; dir.shadow.camera.right = 120; dir.shadow.camera.top = 120; dir.shadow.camera.bottom = -120;
+scene.add(dir);
+
+const loader = new GLTFLoader();
+const raycaster = new THREE.Raycaster();
+const mouse = new THREE.Vector2();
+const entityManager = new YUKA.EntityManager();
+
+const levelUrlEl = document.getElementById('levelUrl');
+const navUrlEl = document.getElementById('navUrl');
+const levelFileEl = document.getElementById('levelFile');
+const navFileEl = document.getElementById('navFile');
+const loadUrlsBtn = document.getElementById('loadUrlsBtn');
+const loadFilesBtn = document.getElementById('loadFilesBtn');
+const smokeBtn = document.getElementById('smokeBtn');
+const toggleNavBtn = document.getElementById('toggleNavBtn');
+const frameBtn = document.getElementById('frameBtn');
+const respawnBtn = document.getElementById('respawnBtn');
+const resetBtn = document.getElementById('resetBtn');
+const maxSpeedEl = document.getElementById('maxSpeedEl');
+const maxForceEl = document.getElementById('maxForceEl');
+const nextWaypointEl = document.getElementById('nextWaypointEl');
+const arriveDecelEl = document.getElementById('arriveDecelEl');
+const arrivalDistanceEl = document.getElementById('arrivalDistanceEl');
+const pathRadiusEl = document.getElementById('pathRadiusEl');
+const onPathWeightEl = document.getElementById('onPathWeightEl');
+const heightFactorEl = document.getElementById('heightFactorEl');
+const minSegmentEl = document.getElementById('minSegmentEl');
+const angleDegEl = document.getElementById('angleDegEl');
+const simplifyPathEl = document.getElementById('simplifyPathEl');
+const drawWaypointsEl = document.getElementById('drawWaypointsEl');
+const applyMoveBtn = document.getElementById('applyMoveBtn');
+const defaultMoveBtn = document.getElementById('defaultMoveBtn');
+const overallStatusEl = document.getElementById('overallStatus');
+const resultsEl = document.getElementById('results');
+const logEl = document.getElementById('log');
+const dropZone = document.getElementById('dropZone');
+const dropOverlay = document.getElementById('dropOverlay');
+
+let levelRoot = null;
+let navRoot = null;
+let navClickable = [];
+let navVisible = true;
+let navMesh = null;
+let navAnalysis = null;
+let regionIndexMap = null;
+let adjacency = [];
+let components = [];
+let mainComponent = null;
+let mainComponentSet = new Set();
+let vehicle = null;
+let followPath = null;
+let onPath = null;
+let agentMesh = null;
+let pathLine = null;
+let waypointMarkers = [];
+let targetMarker = null;
+let currentRegion = null;
+let lastPlannedPath = [];
+let pathStats = { rawPoints: 0, finalPoints: 0 };
+const defaultMoveSettings = {
+  maxSpeed: 3.0,
+  maxForce: 18.0,
+  nextWaypointDistance: 0.50,
+  arriveDeceleration: 2.0,
+  arrivalDistance: 1.00,
+  pathRadius: 0.10,
+  onPathWeight: 1.00,
+  heightChangeFactor: 0.20,
+  minSegmentLength: 0.35,
+  straightenAngleDeg: 6.0,
+  simplifyPath: false,
+  drawWaypoints: true,
+};
+let moveSettings = { ...defaultMoveSettings };
+let currentLevelObjectUrl = null;
+let currentNavObjectUrl = null;
+let droppedLevelFile = null;
+let droppedNavFile = null;
+let globalDragDepth = 0;
+const moveStart = new YUKA.Vector3();
+const moveEnd = new YUKA.Vector3();
+let lastFrameTime = performance.now() * 0.001;
+
+function log(msg) {
+  const time = new Date().toLocaleTimeString();
+  logEl.textContent += `\n[${time}] ${msg}`;
+  logEl.scrollTop = logEl.scrollHeight;
+}
+function clearLog() { logEl.textContent = 'Klar.'; }
+function clearResults() { resultsEl.innerHTML = ''; }
+
+function parseNum(el, fallback) {
+  const n = Number.parseFloat(el.value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function syncMoveUiFromState() {
+  maxSpeedEl.value = moveSettings.maxSpeed.toFixed(2);
+  maxForceEl.value = moveSettings.maxForce.toFixed(2);
+  nextWaypointEl.value = moveSettings.nextWaypointDistance.toFixed(2);
+  arriveDecelEl.value = moveSettings.arriveDeceleration.toFixed(2);
+  arrivalDistanceEl.value = moveSettings.arrivalDistance.toFixed(2);
+  pathRadiusEl.value = moveSettings.pathRadius.toFixed(2);
+  onPathWeightEl.value = moveSettings.onPathWeight.toFixed(2);
+  heightFactorEl.value = moveSettings.heightChangeFactor.toFixed(2);
+  minSegmentEl.value = moveSettings.minSegmentLength.toFixed(2);
+  angleDegEl.value = moveSettings.straightenAngleDeg.toFixed(1);
+  simplifyPathEl.checked = !!moveSettings.simplifyPath;
+  drawWaypointsEl.checked = !!moveSettings.drawWaypoints;
+}
+
+function readMoveUiIntoState() {
+  moveSettings = {
+    maxSpeed: Math.max(0.1, parseNum(maxSpeedEl, defaultMoveSettings.maxSpeed)),
+    maxForce: Math.max(0.1, parseNum(maxForceEl, defaultMoveSettings.maxForce)),
+    nextWaypointDistance: Math.max(0.05, parseNum(nextWaypointEl, defaultMoveSettings.nextWaypointDistance)),
+    arriveDeceleration: Math.max(0.1, parseNum(arriveDecelEl, defaultMoveSettings.arriveDeceleration)),
+    arrivalDistance: Math.max(0.05, parseNum(arrivalDistanceEl, defaultMoveSettings.arrivalDistance)),
+    pathRadius: Math.max(0.01, parseNum(pathRadiusEl, defaultMoveSettings.pathRadius)),
+    onPathWeight: Math.max(0.0, parseNum(onPathWeightEl, defaultMoveSettings.onPathWeight)),
+    heightChangeFactor: Math.max(0.0, Math.min(1.0, parseNum(heightFactorEl, defaultMoveSettings.heightChangeFactor))),
+    minSegmentLength: Math.max(0.0, parseNum(minSegmentEl, defaultMoveSettings.minSegmentLength)),
+    straightenAngleDeg: Math.min(45, Math.max(0, parseNum(angleDegEl, defaultMoveSettings.straightenAngleDeg))),
+    simplifyPath: !!simplifyPathEl.checked,
+    drawWaypoints: !!drawWaypointsEl.checked,
+  };
+  applyMoveSettingsToVehicle();
+}
+
+function resetMoveSettings() {
+  moveSettings = { ...defaultMoveSettings };
+  syncMoveUiFromState();
+  applyMoveSettingsToVehicle();
+}
+
+function applyMoveSettingsToVehicle() {
+  if (!vehicle || !followPath) return;
+  vehicle.maxSpeed = moveSettings.maxSpeed;
+  vehicle.maxForce = moveSettings.maxForce;
+  followPath.nextWaypointDistance = moveSettings.nextWaypointDistance;
+  if (followPath._arrive) followPath._arrive.deceleration = moveSettings.arriveDeceleration;
+  if (onPath) {
+    onPath.radius = moveSettings.pathRadius;
+    onPath.weight = moveSettings.onPathWeight;
+  }
+}
+
+function xzDistance(a, b) {
+  const dx = a.x - b.x;
+  const dz = a.z - b.z;
+  return Math.hypot(dx, dz);
+}
+
+function pointToSegmentDistanceXZ(p, a, b) {
+  const abx = b.x - a.x;
+  const abz = b.z - a.z;
+  const apx = p.x - a.x;
+  const apz = p.z - a.z;
+  const abLenSq = abx * abx + abz * abz;
+  if (abLenSq <= 1e-8) return Math.hypot(apx, apz);
+  const t = Math.max(0, Math.min(1, (apx * abx + apz * abz) / abLenSq));
+  const cx = a.x + abx * t;
+  const cz = a.z + abz * t;
+  return Math.hypot(p.x - cx, p.z - cz);
+}
+
+function simplifyPathPoints(points) {
+  const clones = points.map((p) => (p.clone ? p.clone() : new YUKA.Vector3(p.x, p.y, p.z)));
+  if (!moveSettings.simplifyPath || clones.length <= 2) return clones;
+  const minSeg = moveSettings.minSegmentLength;
+  const cosTol = Math.cos((moveSettings.straightenAngleDeg * Math.PI) / 180);
+  const out = [clones[0].clone()];
+
+  for (let i = 1; i < clones.length - 1; i++) {
+    const prev = out[out.length - 1];
+    const cur = clones[i];
+    const next = clones[i + 1];
+    const dPrev = xzDistance(prev, cur);
+    const dNext = xzDistance(cur, next);
+    const dAcross = xzDistance(prev, next);
+
+    if (dPrev < minSeg) continue;
+
+    const v1x = cur.x - prev.x, v1z = cur.z - prev.z;
+    const v2x = next.x - cur.x, v2z = next.z - cur.z;
+    const l1 = Math.hypot(v1x, v1z);
+    const l2 = Math.hypot(v2x, v2z);
+    if (l1 <= 1e-8 || l2 <= 1e-8) continue;
+
+    const dot = (v1x * v2x + v1z * v2z) / (l1 * l2);
+    const lineDist = pointToSegmentDistanceXZ(cur, prev, next);
+
+    if (dot > cosTol && lineDist < Math.max(0.15, minSeg * 0.45) && dAcross > minSeg) {
+      continue;
+    }
+
+    out.push(cur.clone());
+  }
+
+  out.push(clones[clones.length - 1].clone());
+  return out;
+}
+
+function drawWaypointMarkers(points) {
+  if (waypointMarkers.length) {
+    for (const m of waypointMarkers) { scene.remove(m); m.geometry.dispose(); m.material.dispose(); }
+    waypointMarkers = [];
+  }
+  if (!moveSettings.drawWaypoints || !points?.length) return;
+  for (let i = 0; i < points.length; i++) {
+    const p = points[i];
+    const marker = new THREE.Mesh(
+      new THREE.SphereGeometry(i === points.length - 1 ? 0.22 : 0.14, 12, 12),
+      new THREE.MeshBasicMaterial({ color: i === points.length - 1 ? 0xff6b6b : 0x57a0ff, transparent: true, opacity: 0.95 })
+    );
+    marker.position.set(p.x, p.y + 0.08, p.z);
+    scene.add(marker);
+    waypointMarkers.push(marker);
+  }
+}
+
+function addResult(kind, title, body) {
+  const div = document.createElement('div');
+  div.className = 'result';
+  div.innerHTML = `<div class="label ${kind}">${kind.toUpperCase()}</div><div class="label">${title}</div><div class="muted">${body}</div>`;
+  resultsEl.appendChild(div);
+}
+function setOverallStatus(kind, title, body) {
+  overallStatusEl.className = `status ${kind}`;
+  overallStatusEl.innerHTML = `<span>${title}</span><span class="muted">${body}</span>`;
+}
+
+function disposeObject3D(root) {
+  if (!root) return;
+  root.traverse((obj) => {
+    if (obj.geometry) obj.geometry.dispose?.();
+    if (obj.material) {
+      const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+      for (const m of mats) m.dispose?.();
+    }
+  });
+  root.removeFromParent();
+}
+
+function resetScene() {
+  disposeObject3D(levelRoot); levelRoot = null;
+  disposeObject3D(navRoot); navRoot = null;
+  navClickable = [];
+  navVisible = true;
+  navMesh = null;
+  navAnalysis = null;
+  regionIndexMap = null;
+  adjacency = [];
+  components = [];
+  mainComponent = null;
+  mainComponentSet = new Set();
+
+  if (vehicle) entityManager.remove(vehicle);
+  vehicle = null;
+  followPath = null;
+  onPath = null;
+  currentRegion = null;
+
+  if (agentMesh) { scene.remove(agentMesh); agentMesh.geometry.dispose(); agentMesh.material.dispose(); agentMesh = null; }
+  if (pathLine) { scene.remove(pathLine); pathLine.geometry.dispose(); pathLine.material.dispose(); pathLine = null; }
+  if (waypointMarkers.length) {
+    for (const m of waypointMarkers) { scene.remove(m); m.geometry.dispose(); m.material.dispose(); }
+    waypointMarkers = [];
+  }
+  if (targetMarker) { scene.remove(targetMarker); targetMarker.geometry.dispose(); targetMarker.material.dispose(); targetMarker = null; }
+  lastPlannedPath = [];
+  pathStats = { rawPoints: 0, finalPoints: 0 };
+
+  smokeBtn.disabled = true;
+  toggleNavBtn.disabled = true;
+  frameBtn.disabled = true;
+  respawnBtn.disabled = true;
+  if (currentLevelObjectUrl) URL.revokeObjectURL(currentLevelObjectUrl);
+  if (currentNavObjectUrl) URL.revokeObjectURL(currentNavObjectUrl);
+  currentLevelObjectUrl = null;
+  currentNavObjectUrl = null;
+}
+
+function frameObject(root) {
+  const box = new THREE.Box3().setFromObject(root);
+  if (box.isEmpty()) return;
+  const size = box.getSize(new THREE.Vector3());
+  const center = box.getCenter(new THREE.Vector3());
+  const maxDim = Math.max(size.x, size.y, size.z);
+  const dist = Math.max(25, maxDim * 1.15);
+  camera.position.copy(center.clone().add(new THREE.Vector3(dist, dist * 0.85, dist)));
+  controls.target.copy(center);
+  controls.update();
+}
+
+function setNavVisibility(show) {
+  navVisible = show;
+  if (!navRoot) return;
+  navRoot.traverse((obj) => {
+    if (!obj.isMesh) return;
+    const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+    for (const mat of mats) {
+      mat.opacity = show ? 0.28 : 0.001;
+      mat.transparent = true;
+      mat.depthWrite = false;
+      mat.needsUpdate = true;
+    }
+  });
+  toggleNavBtn.textContent = show ? 'Skjul navmesh' : 'Vis navmesh';
+}
+
+function countRegionVertices(region) {
+  const edge = region?.edge;
+  if (!edge) return 0;
+  let count = 0, e = edge;
+  do { count++; e = e.next; } while (e && e !== edge && count < 10000);
+  return count;
+}
+
+function centroidForRegion(region) {
+  if (region?.centroid) return region.centroid.clone();
+  const edge = region?.edge;
+  if (!edge) return new YUKA.Vector3();
+  let e = edge;
+  const out = new YUKA.Vector3();
+  let count = 0;
+  do {
+    out.add(e.vertex);
+    count++;
+    e = e.next;
+  } while (e && e !== edge && count < 10000);
+  if (count > 0) out.divideScalar(count);
+  return out;
+}
+
+function analyzeFirstMesh(gltf) {
+  const meshes = [];
+  gltf.scene.traverse((obj) => { if (obj.isMesh) meshes.push(obj); });
+  const firstMesh = meshes[0] || null;
+  const result = {
+    totalMeshes: meshes.length,
+    firstMeshName: firstMesh?.name || '(unnamed)',
+    hasFirstMesh: !!firstMesh,
+    indexed: false,
+    vertexCount: 0,
+    triangleCount: 0,
+    primitiveMultipleOf3: false,
+    hasPosition: false,
+    finitePositions: false,
+  };
+  if (!firstMesh?.geometry) return result;
+  const geom = firstMesh.geometry;
+  const pos = geom.getAttribute('position');
+  result.hasPosition = !!pos;
+  result.vertexCount = pos?.count || 0;
+  result.finitePositions = !!pos && Array.from(pos.array).every(Number.isFinite);
+  if (geom.index) {
+    result.indexed = true;
+    result.triangleCount = geom.index.count / 3;
+    result.primitiveMultipleOf3 = geom.index.count % 3 === 0;
+  } else if (pos) {
+    result.triangleCount = pos.count / 3;
+    result.primitiveMultipleOf3 = pos.count % 3 === 0;
+  }
+  return result;
+}
+
+function buildNavVisual(gltf) {
+  const group = new THREE.Group();
+  const normalMat = new THREE.MeshBasicMaterial({ color: 0x40f5a2, transparent: true, opacity: 0.22, side: THREE.DoubleSide, depthWrite: false });
+  gltf.scene.updateMatrixWorld(true);
+  gltf.scene.traverse((obj) => {
+    if (!obj.isMesh || !obj.geometry) return;
+    const mesh = new THREE.Mesh(obj.geometry.clone(), normalMat.clone());
+    mesh.name = obj.name || 'navmesh';
+    mesh.applyMatrix4(obj.matrixWorld);
+    group.add(mesh);
+    navClickable.push(mesh);
+  });
+  return group;
+}
+
+function buildRegionIndexMap(regions) {
+  const map = new Map();
+  regions.forEach((r, i) => map.set(r, i));
+  return map;
+}
+
+function twinNeighborRegion(edge) {
+  const twin = edge?.twin;
+  if (!twin) return null;
+  return twin.polygon || twin.face || twin.region || null;
+}
+
+function buildAdjacency(regions) {
+  const map = buildRegionIndexMap(regions);
+  const adj = Array.from({ length: regions.length }, () => new Set());
+  let twinEdges = 0;
+  for (let i = 0; i < regions.length; i++) {
+    const region = regions[i];
+    const edge = region?.edge;
+    if (!edge) continue;
+    let e = edge;
+    let guard = 0;
+    do {
+      const neighborRegion = twinNeighborRegion(e);
+      if (neighborRegion && map.has(neighborRegion)) {
+        const j = map.get(neighborRegion);
+        if (j !== i) {
+          adj[i].add(j);
+          twinEdges++;
+        }
+      }
+      e = e.next;
+      guard++;
+    } while (e && e !== edge && guard < 10000);
+  }
+  return { map, adj, twinEdges: Math.floor(twinEdges / 2) };
+}
+
+function computeComponents(adj) {
+  const visited = new Uint8Array(adj.length);
+  const comps = [];
+  for (let i = 0; i < adj.length; i++) {
+    if (visited[i]) continue;
+    const comp = [];
+    const queue = [i];
+    visited[i] = 1;
+    while (queue.length) {
+      const n = queue.shift();
+      comp.push(n);
+      for (const m of adj[n]) {
+        if (!visited[m]) { visited[m] = 1; queue.push(m); }
+      }
+    }
+    comps.push(comp);
+  }
+  comps.sort((a, b) => b.length - a.length);
+  return comps;
+}
+
+function chooseSpawnRegion(regions, component) {
+  if (!component?.length) return null;
+  let best = component[0];
+  let bestScore = Infinity;
+  for (const idx of component) {
+    const c = centroidForRegion(regions[idx]);
+    const score = c.x * c.x + c.z * c.z + c.y * 10.0;
+    if (score < bestScore) { bestScore = score; best = idx; }
+  }
+  return regions[best];
+}
+
+function safeFindPath(from, to) {
+  try {
+    const path = navMesh.findPath(from, to);
+    return Array.isArray(path) ? path : [];
+  } catch (err) {
+    return [];
+  }
+}
+
+function makeAgent(startPos) {
+  if (vehicle) entityManager.remove(vehicle);
+  if (agentMesh) { scene.remove(agentMesh); agentMesh.geometry.dispose(); agentMesh.material.dispose(); }
+  vehicle = new YUKA.Vehicle();
+  vehicle.maxSpeed = moveSettings.maxSpeed;
+  vehicle.maxForce = moveSettings.maxForce;
+  vehicle.updateOrientation = false;
+  vehicle.position.copy(startPos);
+
+  followPath = new YUKA.FollowPathBehavior();
+  followPath.active = false;
+  followPath.path.loop = false;
+  followPath.nextWaypointDistance = moveSettings.nextWaypointDistance;
+  if (followPath._arrive) followPath._arrive.deceleration = moveSettings.arriveDeceleration;
+  vehicle.steering.add(followPath);
+
+  onPath = new YUKA.OnPathBehavior();
+  onPath.active = false;
+  onPath.path = followPath.path;
+  onPath.radius = moveSettings.pathRadius;
+  onPath.weight = moveSettings.onPathWeight;
+  vehicle.steering.add(onPath);
+
+  entityManager.add(vehicle);
+  currentRegion = navMesh.getRegionForPoint(vehicle.position, 0.5) || navMesh.getClosestRegion(vehicle.position) || null;
+
+  agentMesh = new THREE.Mesh(
+    new THREE.CapsuleGeometry(0.45, 1.0, 4, 10),
+    new THREE.MeshStandardMaterial({ color: 0xf4f7ff, emissive: 0x1e40af, emissiveIntensity: 0.45, roughness: 0.45, metalness: 0.1 })
+  );
+  agentMesh.castShadow = true;
+  agentMesh.receiveShadow = true;
+  const nose = new THREE.Mesh(new THREE.ConeGeometry(0.22, 0.55, 10), new THREE.MeshStandardMaterial({ color: 0x57a0ff, emissive: 0x57a0ff, emissiveIntensity: 0.5 }));
+  nose.rotation.x = Math.PI * 0.5;
+  nose.position.set(0, 0.15, 0.85);
+  agentMesh.add(nose);
+  scene.add(agentMesh);
+  updateAgentMesh();
+}
+
+function updateAgentMesh() {
+  if (!vehicle || !agentMesh) return;
+  agentMesh.position.set(vehicle.position.x, vehicle.position.y + 0.95, vehicle.position.z);
+  const v = vehicle.velocity;
+  const speedSq = v.x * v.x + v.y * v.y + v.z * v.z;
+  if (speedSq > 0.0001) agentMesh.rotation.y = Math.atan2(v.x, v.z);
+}
+
+function drawPath(points) {
+  if (pathLine) { scene.remove(pathLine); pathLine.geometry.dispose(); pathLine.material.dispose(); pathLine = null; }
+  drawWaypointMarkers(points);
+  if (!points || points.length < 2) return;
+  const positions = [];
+  for (const p of points) positions.push(p.x, p.y + 0.08, p.z);
+  const geom = new THREE.BufferGeometry();
+  geom.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  pathLine = new THREE.Line(geom, new THREE.LineBasicMaterial({ color: 0xffd166, transparent: true, opacity: 0.95 }));
+  scene.add(pathLine);
+}
+
+function setTargetMarker(point, ok=true) {
+  if (!targetMarker) {
+    targetMarker = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, 0.12, 16), new THREE.MeshBasicMaterial({ color: 0xff5d5d, transparent: true, opacity: 0.95 }));
+    scene.add(targetMarker);
+  }
+  targetMarker.material.color.setHex(ok ? 0xffd166 : 0xff5d5d);
+  targetMarker.position.copy(point);
+  targetMarker.position.y += 0.06;
+}
+
+function colorNavByComponents() {
+  if (!navRoot || !navMesh || !components.length) return;
+  const largestSet = mainComponentSet;
+  // leave actual meshes green/orange; region-level coloring would be heavier. We tint whole navmesh green and use islands count in report.
+  navRoot.traverse((obj) => {
+    if (!obj.isMesh) return;
+    const mat = obj.material;
+    if (!mat) return;
+    mat.color.setHex(0x40f5a2);
+    mat.opacity = navVisible ? 0.26 : 0.001;
+    mat.transparent = true;
+    mat.depthWrite = false;
+  });
+}
+
+function evaluateUsability(a) {
+  clearResults();
+  let fails = 0;
+  let warns = 0;
+
+  addResult(a.firstMesh.hasFirstMesh ? 'good' : 'bad', 'First mesh', a.firstMesh.hasFirstMesh ? `Found first mesh "${a.firstMesh.firstMeshName}".` : 'No mesh found in navmesh file.');
+  if (!a.firstMesh.hasFirstMesh) fails++;
+
+  if (a.firstMesh.totalMeshes === 1) addResult('good', 'Mesh count', 'Exactly one mesh found in the navmesh file.');
+  else { addResult('warn', 'Mesh count', `Found ${a.firstMesh.totalMeshes} meshes. YUKA uses the first mesh only.`); warns++; }
+
+  addResult(a.firstMesh.hasPosition ? 'good' : 'bad', 'Positions', a.firstMesh.hasPosition ? `Position attribute present with ${a.firstMesh.vertexCount} vertices.` : 'Position attribute missing.');
+  if (!a.firstMesh.hasPosition) fails++;
+
+  addResult(a.firstMesh.primitiveMultipleOf3 ? 'good' : 'bad', 'Triangles', a.firstMesh.primitiveMultipleOf3 ? `${a.firstMesh.triangleCount} source triangles detected.` : 'First mesh is not triangle-compatible for YUKA.');
+  if (!a.firstMesh.primitiveMultipleOf3) fails++;
+
+  addResult(a.firstMesh.finitePositions ? 'good' : 'bad', 'Numeric check', a.firstMesh.finitePositions ? 'All mesh vertex coordinates are finite numbers.' : 'At least one vertex coordinate is NaN or Infinity.');
+  if (!a.firstMesh.finitePositions) fails++;
+
+  addResult(a.yukaLoaded ? 'good' : 'bad', 'YUKA loader', a.yukaLoaded ? 'YUKA.NavMeshLoader successfully parsed the navmesh file (merge=false).' : `YUKA.NavMeshLoader failed: ${a.yukaError || 'unknown error'}`);
+  if (!a.yukaLoaded) fails++;
+
+  if (a.yukaLoaded) addResult('good', 'Regions', `${a.regionCount} convex regions generated by YUKA.`);
+  else fails++;
+  if (a.yukaLoaded) addResult('good', 'Region vertices', `Minimum vertices per region: ${a.minRegionVerts}. Maximum vertices per region: ${a.maxRegionVerts}.`);
+
+  if (a.twinEdges <= 0) {
+    addResult('bad', 'Shared edges', 'YUKA fant ingen delte twin-edges mellom regionene. Da blir pathfinding i praksis ødelagt.');
+    fails++;
+  } else {
+    addResult('good', 'Shared edges', `${a.twinEdges} delte twin-edges ble oppdaget mellom regionene.`);
+  }
+
+  if (a.componentCount > 1) {
+    addResult('warn', 'Disconnected islands', `${a.disconnectedCount} av ${a.regionCount} regioner ligger utenfor hovedkomponenten. Dette betyr vanligvis topper/øyer som ikke er koblet til hovedgulvet.`);
+    warns++;
+  } else {
+    addResult('good', 'Disconnected islands', 'Hele navmesh-en ser ut til å være én sammenhengende komponent.');
+  }
+
+  if (a.smoke.total === 0) {
+    addResult('warn', 'Smoke tests', 'Ingen smoke tests ble kjørt i hovedkomponenten.'); warns++;
+  } else if (a.smoke.failed > 0) {
+    addResult('bad', 'Smoke tests', `${a.smoke.failed} av ${a.smoke.total} path-tester i hovedkomponenten feilet.`); fails++;
+  } else {
+    addResult('good', 'Smoke tests', `${a.smoke.total}/${a.smoke.total} random path tests inside the main component succeeded.`);
+  }
+
+  addResult(a.spawnOk ? 'good' : 'bad', 'Agent spawn', a.spawnOk ? 'Agenten ble plassert i største sammenhengende navmesh-komponent.' : 'Klarte ikke å plassere agenten på en gyldig hovedkomponent.');
+  if (!a.spawnOk) fails++;
+
+  if (fails === 0 && warns === 0) setOverallStatus('good', 'USABLE', 'Navmesh-en ser sunn ut for YUKA i denne vieweren.');
+  else if (fails === 0) setOverallStatus('warn', 'LIKELY USABLE', 'Den fungerer her, men det finnes fortsatt noen advarsler.');
+  else setOverallStatus('bad', 'PROBLEM FOUND', 'Minst én hard feil tyder på at navmesh-en ikke er trygg for YUKA ennå.');
+}
+
+function runSmokeTests(component, total = 30) {
+  if (!navMesh || !component || component.length < 2) return { total: 0, failed: 0 };
+  let failed = 0;
+  for (let i = 0; i < total; i++) {
+    const ia = component[Math.floor(Math.random() * component.length)];
+    const ib = component[Math.floor(Math.random() * component.length)];
+    const from = centroidForRegion(navMesh.regions[ia]);
+    const to = centroidForRegion(navMesh.regions[ib]);
+    const path = safeFindPath(from, to);
+    if (!path.length) failed++;
+  }
+  return { total, failed };
+}
+
+function respawnOnMainComponent() {
+  if (!navMesh || !mainComponent?.length) return;
+  const region = chooseSpawnRegion(navMesh.regions, mainComponent);
+  if (!region) return;
+  const startPos = centroidForRegion(region);
+  makeAgent(startPos);
+  log(`Agent respawned on main component (${mainComponent.length} regioner).`);
+}
+
+async function loadAndAnalyze(levelUrl, navUrl) {
+  resetScene();
+  clearLog();
+  setOverallStatus('warn', 'LOADING', 'Leser level og navmesh...');
+  log(`Loading level: ${levelUrl}`);
+  log(`Loading navmesh: ${navUrl}`);
+
+  try {
+    const [levelGltf, navGltf] = await Promise.all([ loader.loadAsync(levelUrl), loader.loadAsync(navUrl) ]);
+
+    levelRoot = levelGltf.scene;
+    levelRoot.traverse((obj) => {
+      if (!obj.isMesh) return;
+      obj.castShadow = true;
+      obj.receiveShadow = true;
+      if (obj.material && !Array.isArray(obj.material)) obj.material.side = THREE.FrontSide;
+    });
+    scene.add(levelRoot);
+    frameObject(levelRoot);
+    log('Visible level loaded.');
+
+    const firstMesh = analyzeFirstMesh(navGltf);
+    navRoot = buildNavVisual(navGltf);
+    scene.add(navRoot);
+    setNavVisibility(true);
+    log('Navmesh visual loaded.');
+
+    let yukaLoaded = false, yukaError = null, regionCount = 0, minRegionVerts = 0, maxRegionVerts = 0, twinEdges = 0;
+    let componentCount = 0, disconnectedCount = 0, spawnOk = false;
+    let smoke = { total: 0, failed: 0 };
+
+    try {
+      navMesh = await new YUKA.NavMeshLoader().load(navUrl, {
+        epsilonCoplanarTest: 0.25,
+        mergeConvexRegions: false,
+      });
+      yukaLoaded = true;
+      regionCount = navMesh.regions.length;
+      let minV = Infinity, maxV = -Infinity;
+      for (const region of navMesh.regions) {
+        const c = countRegionVertices(region);
+        minV = Math.min(minV, c); maxV = Math.max(maxV, c);
+      }
+      minRegionVerts = Number.isFinite(minV) ? minV : 0;
+      maxRegionVerts = Number.isFinite(maxV) ? maxV : 0;
+      const built = buildAdjacency(navMesh.regions);
+      regionIndexMap = built.map;
+      adjacency = built.adj;
+      twinEdges = built.twinEdges;
+      components = computeComponents(adjacency);
+      componentCount = components.length;
+      mainComponent = components[0] || null;
+      mainComponentSet = new Set(mainComponent || []);
+      disconnectedCount = regionCount - (mainComponent ? mainComponent.length : 0);
+      colorNavByComponents();
+      if (mainComponent?.length) {
+        const spawnRegion = chooseSpawnRegion(navMesh.regions, mainComponent);
+        const startPos = centroidForRegion(spawnRegion);
+        makeAgent(startPos);
+        spawnOk = !!(navMesh.getRegionForPoint(startPos, 0.5) || navMesh.getClosestRegion(startPos));
+        smoke = runSmokeTests(mainComponent, 30);
+        log(`Main component size: ${mainComponent.length}/${regionCount} regions.`);
+        log(`Smoke tests in main component: ${smoke.total - smoke.failed}/${smoke.total} succeeded.`);
+      }
+    } catch (err) {
+      yukaError = err?.message || String(err);
+      log(`YUKA loader error: ${yukaError}`);
+    }
+
+    navAnalysis = { firstMesh, yukaLoaded, yukaError, regionCount, minRegionVerts, maxRegionVerts, twinEdges, componentCount, disconnectedCount, spawnOk, smoke };
+    evaluateUsability(navAnalysis);
+
+    smokeBtn.disabled = !navMesh || !mainComponent?.length;
+    toggleNavBtn.disabled = !navRoot;
+    frameBtn.disabled = !levelRoot;
+    respawnBtn.disabled = !mainComponent?.length;
+  } catch (err) {
+    const msg = err?.message || String(err);
+    clearResults();
+    addResult('bad', 'Load', msg);
+    setOverallStatus('bad', 'LOAD FAILED', 'Vieweren klarte ikke å laste filene.');
+    log(`Load failed: ${msg}`);
+  }
+}
+
+function yukaPathFromClick(point) {
+  if (!navMesh || !vehicle || !followPath) return;
+  const clickedRegion = navMesh.getRegionForPoint(new YUKA.Vector3(point.x, point.y, point.z), 0.5) || navMesh.getClosestRegion(new YUKA.Vector3(point.x, point.y, point.z));
+  if (!clickedRegion) {
+    log('Klikkpunktet kunne ikke kobles til noen YUKA-region.');
+    setTargetMarker(point, false);
+    return;
+  }
+  const clickedIndex = regionIndexMap?.get(clickedRegion);
+  if (clickedIndex != null && mainComponent && !mainComponentSet.has(clickedIndex)) {
+    log('Klikket traff en isolert navmesh-øy, ikke hovedkomponenten. Ingen bevegelse.');
+    setTargetMarker(point, false);
+    return;
+  }
+  const from = vehicle.position.clone();
+  const to = new YUKA.Vector3(point.x, point.y, point.z);
+  const rawPath = safeFindPath(from, to);
+  if (!rawPath.length) {
+    log('Klikkpunktet ga ingen YUKA-path fra agentens nåværende posisjon.');
+    setTargetMarker(point, false);
+    return;
+  }
+  const finalPath = simplifyPathPoints(rawPath);
+  pathStats = { rawPoints: rawPath.length, finalPoints: finalPath.length };
+  lastPlannedPath = finalPath.map((p) => (p.clone ? p.clone() : new YUKA.Vector3(p.x, p.y, p.z)));
+  followPath.path.clear();
+  for (const p of lastPlannedPath) followPath.path.add(p.clone ? p.clone() : new YUKA.Vector3(p.x, p.y, p.z));
+  followPath.active = true;
+  if (onPath) onPath.active = true;
+  applyMoveSettingsToVehicle();
+  drawPath(lastPlannedPath);
+  setTargetMarker(point, true);
+  log(`Path created. raw=${rawPath.length}, final=${finalPath.length}, nextWaypoint=${moveSettings.nextWaypointDistance.toFixed(2)}, onPathRadius=${moveSettings.pathRadius.toFixed(2)}, heightFactor=${moveSettings.heightChangeFactor.toFixed(2)}`);
+}
+
+function onPointerDown(event) {
+  if (!navClickable.length || !navMesh || !vehicle) return;
+  const rect = renderer.domElement.getBoundingClientRect();
+  mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+  mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+  raycaster.setFromCamera(mouse, camera);
+  const hits = raycaster.intersectObjects(navClickable, true);
+  if (!hits.length) return;
+  yukaPathFromClick(hits[0].point);
+}
+
+function syncInputWithSingleFile(input, file) {
+  try {
+    const dt = new DataTransfer();
+    dt.items.add(file);
+    input.files = dt.files;
+  } catch {}
+}
+function fileLooksLikeNav(file) {
+  const lower = file.name.toLowerCase();
+  return lower.includes('navmesh') || lower.includes('_nav') || lower.includes('-nav') || lower.includes(' nav') || lower.includes('navigation');
+}
+function updateDropZoneLabel() {
+  const parts = [];
+  if (droppedLevelFile) parts.push(`Level: ${droppedLevelFile.name}`);
+  if (droppedNavFile) parts.push(`Navmesh: ${droppedNavFile.name}`);
+  dropZone.innerHTML = parts.length ? `<strong>Dropped files ready</strong>${parts.join('<br>')}` : '<strong>Drag & drop GLB/GLTF-filer her</strong>Slipp begge samtidig, eller én etter én. Appen prøver å kjenne igjen navmesh-filen automatisk.';
+}
+function assignDroppedFiles(files) {
+  const supported = Array.from(files).filter((f) => /\.(glb|gltf)$/i.test(f.name));
+  if (!supported.length) { log('Ingen .glb- eller .gltf-filer ble funnet i slippet.'); return; }
+  let levelFile = null, navFile = null;
+  for (const file of supported) {
+    if (!navFile && fileLooksLikeNav(file)) navFile = file;
+    else if (!levelFile) levelFile = file;
+    else if (!navFile) navFile = file;
+  }
+  if (!levelFile && supported[0]) levelFile = supported[0];
+  if (!navFile && supported[1]) navFile = supported[1];
+  if (levelFile) { droppedLevelFile = levelFile; syncInputWithSingleFile(levelFileEl, levelFile); log(`Level-fil registrert: ${levelFile.name}`); }
+  if (navFile) { droppedNavFile = navFile; syncInputWithSingleFile(navFileEl, navFile); log(`Navmesh-fil registrert: ${navFile.name}`); }
+  updateDropZoneLabel();
+  if (droppedLevelFile && droppedNavFile) loadFromFiles().catch((err) => log(`Lasting av droppede filer feilet: ${err?.message || String(err)}`));
+}
+
+async function loadFromFiles() {
+  const levelFile = droppedLevelFile || levelFileEl.files?.[0];
+  const navFile = droppedNavFile || navFileEl.files?.[0];
+  if (!levelFile || !navFile) { log('Velg eller slipp både level-filen og navmesh-filen først.'); return; }
+  const levelObjectUrl = URL.createObjectURL(levelFile);
+  const navObjectUrl = URL.createObjectURL(navFile);
+  try {
+    await loadAndAnalyze(levelObjectUrl, navObjectUrl);
+    currentLevelObjectUrl = levelObjectUrl;
+    currentNavObjectUrl = navObjectUrl;
+  } catch (err) {
+    URL.revokeObjectURL(levelObjectUrl); URL.revokeObjectURL(navObjectUrl); throw err;
+  }
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+  const now = performance.now() * 0.001;
+  const dt = Math.min(now - lastFrameTime, 0.05);
+  lastFrameTime = now;
+  controls.update();
+
+  if (vehicle) {
+    moveStart.copy(vehicle.position);
+    entityManager.update(dt);
+    moveEnd.copy(vehicle.position);
+
+    if (navMesh) {
+      currentRegion = currentRegion || navMesh.getRegionForPoint(moveStart, 0.5) || navMesh.getClosestRegion(moveStart) || null;
+      if (currentRegion) {
+        try {
+          currentRegion = navMesh.clampMovement(currentRegion, moveStart, moveEnd, vehicle.position) || currentRegion;
+        } catch {
+          currentRegion = navMesh.getRegionForPoint(vehicle.position, 0.5) || navMesh.getClosestRegion(vehicle.position) || currentRegion;
+        }
+      } else {
+        currentRegion = navMesh.getRegionForPoint(vehicle.position, 0.5) || navMesh.getClosestRegion(vehicle.position) || null;
+      }
+
+      if (currentRegion?.plane && typeof currentRegion.plane.distanceToPoint === 'function') {
+        const distance = currentRegion.plane.distanceToPoint(vehicle.position);
+        vehicle.position.y -= distance * moveSettings.heightChangeFactor;
+      }
+    }
+
+    if (followPath?.active && lastPlannedPath.length) {
+      const goal = lastPlannedPath[lastPlannedPath.length - 1];
+      if (vehicle.position.squaredDistanceTo(goal) <= moveSettings.arrivalDistance * moveSettings.arrivalDistance) {
+        followPath.active = false;
+        if (onPath) onPath.active = false;
+        vehicle.velocity.set(0, 0, 0);
+        vehicle.position.x = goal.x;
+        vehicle.position.z = goal.z;
+        log(`Agent reached target. raw=${pathStats.rawPoints}, final=${pathStats.finalPoints}`);
+      }
+    }
+    updateAgentMesh();
+  }
+  renderer.render(scene, camera);
+}
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+renderer.domElement.addEventListener('pointerdown', onPointerDown);
+
+loadUrlsBtn.addEventListener('click', async () => { await loadAndAnalyze(levelUrlEl.value.trim(), navUrlEl.value.trim()); });
+loadFilesBtn.addEventListener('click', async () => { await loadFromFiles(); });
+smokeBtn.addEventListener('click', () => {
+  if (!navMesh || !mainComponent?.length || !navAnalysis) return;
+  const smoke = runSmokeTests(mainComponent, 60);
+  navAnalysis.smoke = smoke;
+  evaluateUsability(navAnalysis);
+  log(`Manual smoke tests in main component: ${smoke.total - smoke.failed}/${smoke.total} succeeded.`);
+});
+toggleNavBtn.addEventListener('click', () => setNavVisibility(!navVisible));
+frameBtn.addEventListener('click', () => { if (levelRoot) frameObject(levelRoot); });
+respawnBtn.addEventListener('click', () => respawnOnMainComponent());
+resetBtn.addEventListener('click', () => {
+  resetScene(); clearLog(); clearResults(); setOverallStatus('warn', 'VENTER', 'Last inn level og navmesh.');
+  droppedLevelFile = null; droppedNavFile = null; updateDropZoneLabel(); globalDragDepth = 0; dropOverlay.classList.remove('visible');
+});
+
+function dragHasFiles(event) { const types = event.dataTransfer?.types; return !!types && Array.from(types).includes('Files'); }
+function showDropOverlay() { dropOverlay.classList.add('visible'); dropZone.classList.add('dragover'); }
+function hideDropOverlay() { dropOverlay.classList.remove('visible'); dropZone.classList.remove('dragover'); }
+['dragenter', 'dragover', 'drop'].forEach((type) => window.addEventListener(type, (event) => { if (!dragHasFiles(event)) return; event.preventDefault(); }));
+window.addEventListener('dragenter', (event) => { if (!dragHasFiles(event)) return; event.preventDefault(); globalDragDepth += 1; showDropOverlay(); });
+window.addEventListener('dragover', (event) => { if (!dragHasFiles(event)) return; event.preventDefault(); showDropOverlay(); });
+window.addEventListener('dragleave', (event) => { if (!dragHasFiles(event)) return; event.preventDefault(); globalDragDepth = Math.max(0, globalDragDepth - 1); if (globalDragDepth === 0) hideDropOverlay(); });
+window.addEventListener('drop', (event) => { if (!dragHasFiles(event)) return; event.preventDefault(); globalDragDepth = 0; hideDropOverlay(); assignDroppedFiles(event.dataTransfer?.files || []); });
+['dragenter', 'dragover'].forEach((type) => dropZone.addEventListener(type, (event) => { if (!dragHasFiles(event)) return; event.preventDefault(); event.stopPropagation(); showDropOverlay(); }));
+dropZone.addEventListener('drop', (event) => { if (!dragHasFiles(event)) return; event.preventDefault(); event.stopPropagation(); globalDragDepth = 0; hideDropOverlay(); assignDroppedFiles(event.dataTransfer?.files || []); });
+levelFileEl.addEventListener('change', () => { if (levelFileEl.files?.[0]) { droppedLevelFile = null; updateDropZoneLabel(); } });
+navFileEl.addEventListener('change', () => { if (navFileEl.files?.[0]) { droppedNavFile = null; updateDropZoneLabel(); } });
+applyMoveBtn.addEventListener('click', () => { readMoveUiIntoState(); log(`Movement settings applied: speed=${moveSettings.maxSpeed.toFixed(2)}, nextWp=${moveSettings.nextWaypointDistance.toFixed(2)}, decel=${moveSettings.arriveDeceleration.toFixed(2)}, pathRadius=${moveSettings.pathRadius.toFixed(2)}, heightFactor=${moveSettings.heightChangeFactor.toFixed(2)}`); if (lastPlannedPath.length) drawPath(lastPlannedPath); });
+defaultMoveBtn.addEventListener('click', () => { resetMoveSettings(); log('Movement settings reset to defaults.'); if (lastPlannedPath.length) drawPath(lastPlannedPath); });
+
+syncMoveUiFromState();
+updateDropZoneLabel();
+animate();
+</script>
+</body>
+</html>

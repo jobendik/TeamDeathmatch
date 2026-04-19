@@ -18,8 +18,8 @@ export class PathPlannerTask extends YUKA.Task {
     super();
     this.planner = planner;
     this.vehicle = vehicle;
-    this.from = from;
-    this.to = to;
+    this.from = from.clone();
+    this.to = to.clone();
     this.callback = callback;
   }
 

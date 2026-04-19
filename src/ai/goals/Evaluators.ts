@@ -238,6 +238,7 @@ export class HuntEvaluator extends YUKA.GoalEvaluator<TDMAgent> {
     const ammoRatio = ag.ammo / ag.magSize;
 
     let desire = gameState.mode === 'ctf' ? 0.5 : 0.35;
+    if (gameState.mode === 'tdm' || gameState.mode === 'elimination') desire += 0.12;
     desire += hpRatio * 0.15;
     desire += ammoRatio * 0.1;
     desire += (ag.confidence / 100) * 0.1;
@@ -329,6 +330,23 @@ export class HoldAngleEvaluator extends YUKA.GoalEvaluator<TDMAgent> {
 
     const p = ag.personality;
     if (!p) return 0;
+
+    const hasCallout = !!ag.teamCallout && (gameState.worldElapsed - ag.teamCalloutTime < 5);
+    let hasMemory = ag.hasLastKnown;
+    if (!hasMemory) {
+      for (const [, entry] of ag.enemyMemory) {
+        if (entry.confidence > 0.25) {
+          hasMemory = true;
+          break;
+        }
+      }
+    }
+
+    // In TDM, blind angle-holding before the teams have contact makes bots camp or drift
+    // around defensive positions instead of contesting the arena.
+    if ((gameState.mode === 'tdm' || gameState.mode === 'elimination') && !hasCallout && !hasMemory) {
+      return 0;
+    }
 
     // Only Anchor, Picker, and patient archetypes should want this
     const isHolder = p.archetype === 'Anchor' || p.archetype === 'Picker' || p.archetype === 'Veteran';
